@@ -1,6 +1,7 @@
 """Slint front end. Workspace and model mutations run on the event-loop thread only."""
 
 import asyncio
+from collections import Counter, deque
 from datetime import datetime, timedelta
 import json
 import os
@@ -77,6 +78,25 @@ def filter_rows(rows, *, file=None, query="", scope="both", regex=False, case=Fa
     return indices, counts
 
 
+def bars(values, count=60):
+    """The last `count` values scaled to 0..1, left-padded with zeros so bars keep their width."""
+    recent = list(values)[-count:]
+    top = max(recent, default=0) or 1
+    return [0.0] * (count - len(recent)) + [value / top for value in recent]
+
+
+def compact(number) -> str:
+    for size, suffix in ((1_000_000, "M"), (1_000, "k")):
+        if number >= size:
+            return f"{number / size:.1f}{suffix}"
+    return str(number)
+
+
+def duration(seconds) -> str:
+    seconds = int(seconds)
+    return f"{seconds // 3600}:{seconds // 60 % 60:02}:{seconds % 60:02}" if seconds >= 3600 else f"{seconds // 60}:{seconds % 60:02}"
+
+
 def oneline(text: str) -> str:
     return text.replace("\n", " ⏎ ")
 
@@ -117,6 +137,9 @@ class Window(UI.AppWindow):
         self.run = None
         self.cancel = threading.Event()
         self.log = slint.ListModel([])
+        self.batches = slint.ListModel([])
+        self.batch_views = []
+        self.rate_samples = deque(maxlen=120)
         self.debounce = slint.Timer()
         self.section_timer = slint.Timer()
         self.rules_timer = slint.Timer()
@@ -124,6 +147,7 @@ class Window(UI.AppWindow):
         self.settings = config.load()
         self.profiles = [Profile.load(value) for value in self.settings.get("profiles", [])]
         self.ui.log = self.log
+        self.ui.batches = self.batches
         self.show_recent()
         self.show_profiles()
         self.profile_new()
@@ -733,7 +757,8 @@ class Window(UI.AppWindow):
         ui = self.ui
         return Profile(ui.pf_name.strip(), list(PROVIDERS)[ui.pf_provider], ui.pf_model.strip(),
                        [key.strip() for key in re.split(r"[,\s]+", ui.pf_keys) if key.strip()],
-                       round(ui.pf_temperature, 2), ui.pf_max_tokens, REASONING[ui.pf_reasoning], ui.pf_timeout)
+                       round(ui.pf_temperature, 2), ui.pf_max_tokens, REASONING[ui.pf_reasoning], ui.pf_timeout,
+                       ui.pf_thinking)
 
     @slint.callback(global_name="App")
     def profile_select(self, index):
@@ -744,6 +769,7 @@ class Window(UI.AppWindow):
         ui.pf_provider = list(PROVIDERS).index(profile.provider)
         ui.pf_temperature, ui.pf_max_tokens, ui.pf_timeout = profile.temperature, profile.max_output_tokens, profile.timeout
         ui.pf_reasoning = REASONING.index(profile.reasoning)
+        ui.pf_thinking = profile.show_thinking
         ui.pf_models = slint.ListModel([])
         ui.pf_status = ""
 
@@ -756,6 +782,7 @@ class Window(UI.AppWindow):
         ui.pf_provider = 0
         ui.pf_temperature, ui.pf_max_tokens, ui.pf_timeout = defaults.temperature, defaults.max_output_tokens, defaults.timeout
         ui.pf_reasoning = 0
+        ui.pf_thinking = defaults.show_thinking
         ui.pf_models = slint.ListModel([])
 
     def profile_status(self, text, error=False):
@@ -867,13 +894,74 @@ class Window(UI.AppWindow):
         ui.run_total, ui.run_done, ui.run_failed = stats.total, stats.done, stats.failed
         elapsed = time.monotonic() - stats.started
         finished = stats.done + stats.failed
-        meta = [f"{stats.requests} requests", f"{stats.tokens_in:,} in / {stats.tokens_out:,} out tokens",
-                f"{elapsed // 60:.0f}:{elapsed % 60:02.0f} elapsed"]
-        if finished and self.ui.running:
-            left = elapsed / finished * (stats.total - finished)
-            meta.append(f"~{left // 60:.0f}:{left % 60:02.0f} left")
-        ui.run_meta = " · ".join(meta)
+        left = elapsed / finished * (stats.total - finished) if finished and ui.running else None
+        ui.run_meta = f"{self.run.profile.name} · {self.run.profile.model} · {duration(elapsed)} elapsed"
+        ui.m_percent = f"{100 * finished / stats.total:.0f}%" if stats.total else "—"
+        ui.m_progress = finished / stats.total if stats.total else 0
+        ui.m_progress_detail = f"{stats.done:,} done · {stats.failed:,} failed · {stats.total:,} total"
+        ui.m_eta = f"~{duration(left)} left" if left is not None else "" if ui.running else f"took {duration(elapsed)}"
+        rate = stats.rate() if ui.running else 0.0
+        self.rate_samples.append(rate)
+        ui.m_rate = f"{rate:,.0f}"
+        ui.m_spark = slint.ListModel(bars(self.rate_samples))
+        ui.m_rate_detail = (f"peak {max(self.rate_samples):,.0f} · {stats.latency / stats.replies:.1f} s avg reply"
+                            if stats.replies else "waiting for the first reply" if ui.running else "no replies")
+        ui.m_active = stats.active
+        busy = [f"{stats.queued:,} queued"] + ([f"{stats.cooling} cooling down"] if stats.cooling else [])
+        ui.m_active_detail = " · ".join(busy) if ui.running else "idle"
+        ui.m_usage = f"{compact(stats.tokens_in)} / {compact(stats.tokens_out)}"
+        ui.m_usage_detail = f"{stats.requests:,} requests · {stats.replies:,} replies"
         self.update_stats()
+
+    def batch_done(self, batch):
+        self.batch_views.insert(0, batch)
+        del self.batch_views[200:]
+        accepted = sum(record[3] in ("ok", "changed") for record in batch.records)
+        failed = sum(record[3] == "failed" for record in batch.records)
+        outcome = "failed" if batch.error or (failed and not accepted) else "partial" if failed else "ok"
+        rate = batch.tokens_out / batch.latency if batch.latency else 0
+        detail = batch.error or f"{len(batch.records)} lines · {batch.latency:.1f} s · {rate:,.0f} tok/s"
+        self.batches.insert(0, dict(number=batch.number, outcome=outcome, detail=detail,
+                                    title=f"#{batch.number} · {Path(batch.file).name}"
+                                    + (f" · retry {batch.attempt}" if batch.attempt else "")))
+        if len(self.batches) > 200:
+            del self.batches[200]
+        if self.ui.batch_follow or self.ui.batch_current < 0:
+            self.batch_select(0)
+        elif self.ui.batch_current + 1 < len(self.batch_views):
+            self.ui.batch_current += 1
+
+    @slint.callback(global_name="App")
+    def batch_select(self, index):
+        if not 0 <= index < len(self.batch_views):
+            return
+        ui, batch = self.ui, self.batch_views[index]
+        ui.batch_current = index
+        task = dict(translate="Translation", review="Review", discover="Term discovery")[batch.task]
+        meta = [task, f"{len(batch.records)} {'terms' if batch.task == 'discover' else 'lines'}"]
+        if batch.latency:
+            meta += [f"{batch.latency:.1f} s", f"{batch.tokens_out / batch.latency:,.0f} tok/s",
+                     f"{batch.tokens_in:,} in / {batch.tokens_out:,} out"]
+        if batch.context:
+            meta.append(f"{batch.context} context lines")
+        if batch.attempt:
+            meta.append(f"retry {batch.attempt}")
+        ui.insp_title = f"Batch {batch.number} · {batch.file}"
+        ui.insp_meta = " · ".join(meta)
+        ui.insp_error = batch.error
+        ui.insp_records = slint.ListModel(dict(speaker=speaker, source=source, output=output, outcome=outcome, note=note)
+                                          for speaker, source, output, outcome, note in batch.records)
+        ui.insp_thinking = batch.thinking
+        outcomes = Counter(record[3] for record in batch.records)
+        checks = {"translate": [f"{outcomes['ok']} accepted and saved"],
+                  "review": [f"{outcomes['changed']} suggestions", f"{outcomes['ok']} left as they are"],
+                  "discover": [f"{outcomes['ok']} new draft terms", f"{outcomes['skipped']} skipped"]}[batch.task]
+        checks += [f"{count} failed: {reason}" for reason, count in
+                   Counter(record[4] for record in batch.records if record[3] == "failed").most_common()]
+        if batch.task == "translate" and not batch.thinking and not batch.error:
+            checks.append("The model returned no thinking")
+        ui.insp_checks = slint.ListModel(checks)
+        ui.insp_terms = slint.ListModel(batch.terms)
 
     @slint.callback(global_name="App")
     async def run_start(self):
@@ -897,12 +985,20 @@ class Window(UI.AppWindow):
             profile = self.profiles[ui.run_profile]
             self.run = runner.Run(self.ws, self.rows, indices, profile=profile, provider=PROVIDERS[profile.provider],
                                   sections=self.sections, terms=self.terms, settings=self.run_settings(), task=task,
-                                  rules=rules, on_event=self.log_event, on_commit=self.row_committed)
+                                  rules=rules, on_event=self.log_event, on_commit=self.row_committed,
+                                  on_batch=self.batch_done)
         except (VnTransError, IndexError) as exc:
             self.log_event("error", str(exc) or "Choose a profile")
             return
         ui.running = True
         ui.stopping = False
+        self.batch_views.clear()
+        self.batches = slint.ListModel([])
+        ui.batches = self.batches
+        ui.batch_current = -1
+        ui.batch_follow = True
+        self.rate_samples.clear()
+        ui.m_slots = self.run.settings["concurrency"]
         self.log_event("info", f"Started with {profile.name} ({profile.model})")
         self.run_timer.start(slint.TimerMode.Repeated, timedelta(milliseconds=500), self.show_run)
         try:

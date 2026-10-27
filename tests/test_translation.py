@@ -136,15 +136,17 @@ class ProviderTests(unittest.TestCase):
     def test_gemini_mapping(self):
         gemini = Gemini()
         body = gemini.payload(Profile("p", model="gemini-2.5-flash", reasoning="minimal"), "S", "U")
-        self.assertEqual(body["generationConfig"]["thinkingConfig"], {"thinkingBudget": 0})
+        self.assertEqual(body["generationConfig"]["thinkingConfig"], {"thinkingBudget": 0, "includeThoughts": True})
+        body = gemini.payload(Profile("p", model="gemini-2.0-flash"), "S", "U")
+        self.assertNotIn("thinkingConfig", body["generationConfig"])
         self.assertEqual(body["generationConfig"]["responseSchema"]["type"], "OBJECT")
         self.assertNotIn("additionalProperties", json.dumps(body))
-        body = gemini.payload(Profile("p", model="gemini-3-flash", reasoning="low"), "S", "U")
+        body = gemini.payload(Profile("p", model="gemini-3-flash", reasoning="low", show_thinking=False), "S", "U")
         self.assertEqual(body["generationConfig"]["thinkingConfig"], {"thinkingLevel": "LOW"})
         reply = gemini.parse({"candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": [
             {"text": "think", "thought": True}, {"text": "{}"}]}}],
             "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 4, "thoughtsTokenCount": 5}})
-        self.assertEqual(reply, Reply("{}", "length", 3, 9))
+        self.assertEqual(reply, Reply("{}", "length", 3, 9, "think"))
         with self.assertRaises(ProviderError) as caught:
             gemini.parse({"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}})
         self.assertEqual(caught.exception.kind, "blocked")
@@ -152,11 +154,14 @@ class ProviderTests(unittest.TestCase):
     def test_openrouter_mapping(self):
         router = OpenRouter()
         body = router.payload(Profile("p", provider="openrouter", model="x/y", reasoning="high"), "S", "U")
-        self.assertEqual(body["reasoning"], {"effort": "high", "exclude": True})
+        self.assertEqual(body["reasoning"], {"effort": "high", "exclude": False})
+        body = router.payload(Profile("p", provider="openrouter", model="x/y", show_thinking=False), "S", "U")
+        self.assertEqual(body["reasoning"], {"exclude": True})
         self.assertEqual([m["role"] for m in body["messages"]], ["system", "user"])
-        self.assertEqual(router.parse({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+        self.assertEqual(router.parse({"choices": [{"message": {"content": "ok", "reasoning": "hmm"},
+                                                    "finish_reason": "stop"}],
                                        "usage": {"prompt_tokens": 1, "completion_tokens": 2}}),
-                         Reply("ok", "stop", 1, 2))
+                         Reply("ok", "stop", 1, 2, "hmm"))
         with self.assertRaises(ProviderError) as caught:
             router.parse({"error": {"code": 402, "message": "no credits"}})
         self.assertEqual(caught.exception.kind, "auth")
@@ -305,6 +310,27 @@ class RunnerTests(WorkspaceCase):
         with self.assertRaises(VnTransError):
             self.ws.save_many([(rows["Bye."], "ok"), (rows["Hello⟦0⟧world"], "broken")])
         self.assertIsNone(rows["Bye."].translation)
+
+    def test_batches_and_live_counters(self):
+        fake = FakeProvider(lambda record, call: "broken" if record["text"] == "Hello⟦0⟧world" else None)
+        batches = []
+        run = runner.Run(self.ws, self.rows, [i for i, r in enumerate(self.rows) if r.kind != "speaker"],
+                         profile=Profile("p", model="m", keys=["k"]), provider=fake, sections=prompts.chain({}),
+                         terms=[Term("Alice", "Arisu", "character")], settings=dict(concurrency=2),
+                         on_batch=batches.append)
+        asyncio.run(run.run())
+        self.assertEqual([b.number for b in batches], list(range(1, len(batches) + 1)))
+        first = batches[0]
+        self.assertEqual((first.task, first.file, first.tokens_in, first.tokens_out), ("translate", "a.ks", 10, 5))
+        self.assertIn("Alice → Arisu", first.terms)
+        outcomes = {source: (output, outcome, note) for _, source, output, outcome, note in first.records}
+        self.assertEqual(outcomes["How are you?"], ("T:How are you?", "ok", ""))
+        self.assertEqual(outcomes["Hello⟦0⟧world"][:2], ("broken", "failed"))
+        self.assertIn("placeholders", outcomes["Hello⟦0⟧world"][2])
+        self.assertTrue(any(b.attempt > 0 for b in batches))
+        self.assertEqual((run.stats.active, run.stats.queued, run.stats.cooling), (0, 0, 0))
+        self.assertEqual(run.stats.replies, len(fake.calls))
+        self.assertGreater(run.stats.rate(), 0)
 
     def test_missing_key_is_rejected(self):
         with self.assertRaisesRegex(VnTransError, "no API key"):

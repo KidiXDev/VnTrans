@@ -47,6 +47,7 @@ class Profile:
     max_output_tokens: int = 8192
     reasoning: str = "default"
     timeout: int = 120
+    show_thinking: bool = True
 
     @classmethod
     def load(cls, value: dict) -> "Profile":
@@ -69,6 +70,8 @@ class Reply:
     finish: str
     tokens_in: int | None = None
     tokens_out: int | None = None
+    thinking: str = ""
+    latency: float = 0.0
 
 
 class ProviderError(Exception):
@@ -144,11 +147,15 @@ class Gemini:
     def payload(self, profile, system, user, schema=SCHEMA):
         config = dict(temperature=profile.temperature, maxOutputTokens=profile.max_output_tokens,
                       responseMimeType="application/json", responseSchema=upper_types(schema))
+        model = profile.model.removeprefix("models/")
         if profile.reasoning != "default":
             # thinkingLevel is rejected by Gemini 2.x models, which take a token budget instead.
             config["thinkingConfig"] = (dict(thinkingBudget=self.budgets[profile.reasoning])
-                                        if profile.model.removeprefix("models/").startswith("gemini-2")
+                                        if model.startswith("gemini-2")
                                         else dict(thinkingLevel=profile.reasoning.upper()))
+        # Gemini 1.x and 2.0 models reject any thinking config.
+        if profile.show_thinking and not re.match(r"gemini-(1\.|2\.0)", model):
+            config.setdefault("thinkingConfig", {})["includeThoughts"] = True
         return dict(systemInstruction=dict(parts=[dict(text=system)]),
                     contents=[dict(role="user", parts=[dict(text=user)])],
                     generationConfig=config,
@@ -163,13 +170,15 @@ class Gemini:
             raise ProviderError("transient", "empty response")
         candidate = candidates[0]
         reason = candidate.get("finishReason", "STOP")
-        text = "".join(part.get("text", "") for part in candidate.get("content", {}).get("parts", [])
-                       if not part.get("thought"))
+        parts = candidate.get("content", {}).get("parts", [])
+        text = "".join(part.get("text", "") for part in parts if not part.get("thought"))
+        thinking = "".join(part.get("text", "") for part in parts if part.get("thought"))
         if reason not in ("STOP", "MAX_TOKENS") and not text:
             raise ProviderError("blocked", f"reply blocked: {reason}")
         usage = value.get("usageMetadata", {})
         out = (usage.get("candidatesTokenCount") or 0) + (usage.get("thoughtsTokenCount") or 0)
-        return Reply(text, "length" if reason == "MAX_TOKENS" else "stop", usage.get("promptTokenCount"), out or None)
+        return Reply(text, "length" if reason == "MAX_TOKENS" else "stop", usage.get("promptTokenCount"), out or None,
+                     thinking.strip())
 
     def complete(self, profile, key, system, user, schema=SCHEMA):
         model = profile.model.removeprefix("models/")
@@ -199,7 +208,9 @@ class OpenRouter:
                     response_format=dict(type="json_schema",
                                          json_schema=dict(name="reply", strict=True, schema=schema)))
         if profile.reasoning != "default":
-            body["reasoning"] = dict(effort=profile.reasoning, exclude=True)
+            body["reasoning"] = dict(effort=profile.reasoning, exclude=not profile.show_thinking)
+        elif not profile.show_thinking:
+            body["reasoning"] = dict(exclude=True)
         return body
 
     def parse(self, value) -> Reply:
@@ -212,13 +223,15 @@ class OpenRouter:
         choice = choices[0]
         if choice.get("error"):
             raise classify(int(choice["error"].get("code") or 502), json.dumps(choice), None)
-        text = choice.get("message", {}).get("content") or ""
+        message = choice.get("message", {})
+        text = message.get("content") or ""
+        thinking = message.get("reasoning") or ""
         reason = choice.get("finish_reason") or "stop"
         if reason == "content_filter" and not text:
             raise ProviderError("blocked", "reply blocked by content filter")
         usage = value.get("usage") or {}
         return Reply(text, "length" if reason == "length" else "stop",
-                     usage.get("prompt_tokens"), usage.get("completion_tokens"))
+                     usage.get("prompt_tokens"), usage.get("completion_tokens"), thinking.strip())
 
     def complete(self, profile, key, system, user, schema=SCHEMA):
         return self.parse(call(f"{self.base}/chat/completions",

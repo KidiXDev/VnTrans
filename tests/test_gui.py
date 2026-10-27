@@ -4,7 +4,7 @@ import unittest
 from vntrans.workspace import Row
 
 try:
-    from vntrans.gui.app import filter_rows
+    from vntrans.gui.app import bars, compact, duration, filter_rows
 except ImportError:
     filter_rows = None
 
@@ -46,6 +46,16 @@ class FilterTests(unittest.TestCase):
     def test_file_and_kind(self):
         self.assertEqual(filter_rows(self.rows, file="b.ks")[0], [2, 3])
         self.assertEqual(filter_rows(self.rows, kind="dialogue", status="failed")[0], [2])
+
+
+@unittest.skipIf(filter_rows is None, "gui extra not installed")
+class FormatTests(unittest.TestCase):
+    def test_bars_and_numbers(self):
+        self.assertEqual(bars([], count=3), [0.0, 0.0, 0.0])
+        self.assertEqual(bars([0, 10, 5], count=4), [0.0, 0.0, 1.0, 0.5])
+        self.assertEqual(bars(range(10), count=2), [8 / 9, 1.0])
+        self.assertEqual((compact(999), compact(12_345), compact(2_500_000)), ("999", "12.3k", "2.5M"))
+        self.assertEqual((duration(75), duration(3725)), ("1:15", "1:02:05"))
 
 
 if __name__ == "__main__":

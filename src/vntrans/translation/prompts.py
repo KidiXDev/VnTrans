@@ -148,6 +148,7 @@ class Prompt:
     rows: list
     terms: list
     version: str
+    context: int = 0
 
     @property
     def tokens(self) -> int:
@@ -206,7 +207,7 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
     user.append(heading + "\n" + "\n".join(record(number, row) for number, row in enumerate(records, 1)))
     system_text = "\n\n".join(system)
     return Prompt(system_text, "\n\n".join(user), records, matched,
-                  hashlib.sha256(system_text.encode()).hexdigest()[:12])
+                  hashlib.sha256(system_text.encode()).hexdigest()[:12], len(earlier) + len(later))
 
 
 def discovery(languages, rows, batch) -> Prompt:

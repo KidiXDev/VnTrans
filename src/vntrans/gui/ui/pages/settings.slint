@@ -1,4 +1,4 @@
-import { LineEdit, ComboBox, SpinBox, Slider, ListView } from "../widgets.slint";
+import { LineEdit, ComboBox, SpinBox, Slider, ListView, CheckBox } from "../widgets.slint";
 import { AboutSlint } from "std-widgets.slint";
 import { Theme, Card, AppButton, Field, Label, EmptyState, Badge } from "../theme.slint";
 import { App } from "../app.slint";
@@ -187,6 +187,10 @@ export component SettingsPage inherits Rectangle {
                                 value <=> App.pf-timeout;
                             }
                         }
+                    }
+                    CheckBox {
+                        text: "Show the model's thinking in the Translate page (when the model provides it)";
+                        checked <=> App.pf-thinking;
                     }
                     Rectangle {
                         height: 1px;

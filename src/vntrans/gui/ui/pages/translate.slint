@@ -1,39 +1,203 @@
-import { ComboBox, SpinBox, ListView } from "../widgets.slint";
-import { Theme, Card, AppButton, Field, Label, Meter, Divider, EmptyState, FadeIn } from "../theme.slint";
-import { App } from "../app.slint";
+import { ComboBox, SpinBox, ListView, ScrollView } from "../widgets.slint";
+import { Theme, Card, AppButton, Field, Label, Meter, Divider, EmptyState, Chip, Badge } from "../theme.slint";
+import { App, BatchRow, RecordRow } from "../app.slint";
 
 component Number inherits SpinBox {
     edited => { App.run-settings-changed(); }
 }
 
-component StatTile inherits Rectangle {
+component MetricCard inherits Rectangle {
     in property <string> label;
-    in property <int> value;
+    in property <string> value;
+    in property <string> unit;
+    in property <string> detail;
     in property <color> tint: Theme.text;
-    in property <color> bg-tint: root.tint.transparentize(0.92);
-    height: 70px;
     horizontal-stretch: 1;
-    border-radius: 8px;
-    background: Theme.field;
+    height: 138px;
+    border-radius: 10px;
+    background: Theme.panel;
     border-width: 1px;
     border-color: Theme.border;
+    clip: true;
     VerticalLayout {
         padding-left: 16px;
         padding-right: 16px;
-        alignment: center;
-        spacing: 2px;
-        Text {
-            text: root.value;
-            color: root.tint;
-            font-size: 22px;
-            font-weight: 800;
+        padding-top: 14px;
+        padding-bottom: 12px;
+        spacing: 6px;
+        Label { text: root.label; }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Text {
+                text: root.value;
+                color: root.tint;
+                font-size: 24px;
+                font-weight: 800;
+                animate color { duration: 200ms; }
+            }
+            VerticalLayout {
+                alignment: end;
+                padding-bottom: 4px;
+                Text {
+                    text: root.unit;
+                    color: Theme.faint;
+                    font-size: 12px;
+                }
+            }
         }
+        @children
+        Rectangle { vertical-stretch: 1; }
         Text {
-            text: root.label;
+            text: root.detail;
             color: Theme.faint;
             font-size: 11px;
-            font-weight: 600;
+            overflow: elide;
         }
+    }
+}
+
+component SectionTitle inherits HorizontalLayout {
+    in property <string> text;
+    in property <string> count;
+    spacing: 8px;
+    Text {
+        text: root.text;
+        color: Theme.faint;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.8px;
+        vertical-alignment: center;
+    }
+    if root.count != "": Text {
+        text: root.count;
+        color: Theme.dim;
+        font-size: 11px;
+        vertical-alignment: center;
+    }
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 1;
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+}
+
+component RecordView inherits Rectangle {
+    in property <RecordRow> record;
+    property <color> tone: root.record.outcome == "failed" ? Theme.danger
+        : root.record.outcome == "changed" ? Theme.violet
+        : root.record.outcome == "skipped" ? Theme.faint : Theme.success;
+    border-radius: 8px;
+    background: root.record.outcome == "failed" ? Theme.danger-soft : Theme.field;
+    border-width: 1px;
+    border-color: root.record.outcome == "ok" || root.record.outcome == "skipped" ? Theme.border : root.tone.transparentize(0.55);
+    VerticalLayout {
+        padding: 10px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0;
+                preferred-width: 0;
+                spacing: 3px;
+                if root.record.speaker != "": Text {
+                    text: root.record.speaker;
+                    color: Theme.violet;
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: root.record.source;
+                    color: Theme.dim;
+                    wrap: word-wrap;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Image {
+                    source: @image-url("../icons/chevron-right.svg");
+                    width: 14px;
+                    height: 14px;
+                    colorize: Theme.faint;
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0;
+                preferred-width: 0;
+                alignment: center;
+                Text {
+                    text: root.record.output == "" ? "—" : root.record.output;
+                    color: root.record.outcome == "failed" ? #FCA5A5 : root.record.output == "" ? Theme.faint : Theme.text;
+                    wrap: word-wrap;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: root.tone;
+                }
+            }
+        }
+        if root.record.note != "": Text {
+            text: root.record.note;
+            color: root.tone == Theme.success ? Theme.faint : root.tone;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component BatchItem inherits Rectangle {
+    in property <BatchRow> item;
+    in property <bool> selected;
+    callback clicked;
+    height: 52px;
+    border-radius: 8px;
+    background: root.selected ? Theme.selected : touch.has-hover ? Theme.raised : transparent;
+    animate background { duration: 120ms; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.item.outcome == "failed" ? Theme.danger : root.item.outcome == "partial" ? Theme.warning
+                    : Theme.success;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.item.title;
+                color: Theme.text;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.item.detail;
+                color: Theme.faint;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
     }
 }
 
@@ -177,87 +341,126 @@ export component TranslatePage inherits Rectangle {
             }
         }
 
-        if App.running || App.run-total > 0: FadeIn {
+        HorizontalLayout {
+            spacing: 12px;
             vertical-stretch: 0;
-            Card {
-                border-radius: 10px;
-                border-color: Theme.border;
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 14px;
-                    HorizontalLayout {
-                        spacing: 12px;
-                        StatTile {
-                            label: App.run-task == 0 ? "TRANSLATED" : "CHECKED";
-                            value: App.run-done;
-                            tint: Theme.accent-light;
+            MetricCard {
+                label: "PROGRESS";
+                value: App.m-percent;
+                detail: App.m-eta == "" ? App.m-progress-detail : App.m-progress-detail + " · " + App.m-eta;
+                Meter {
+                    height: 6px;
+                    value: App.m-progress;
+                    fill: App.run-failed > 0 ? Theme.warning : Theme.accent;
+                }
+            }
+            MetricCard {
+                label: "THROUGHPUT";
+                value: App.m-rate;
+                unit: "tok/s";
+                tint: App.running ? Theme.accent-light : Theme.text;
+                detail: App.m-rate-detail;
+                HorizontalLayout {
+                    height: 26px;
+                    spacing: 1px;
+                    for level[i] in App.m-spark: VerticalLayout {
+                        alignment: end;
+                        Rectangle {
+                            height: max(2px, level * 26px);
+                            border-radius: 1px;
+                            background: i == App.m-spark.length - 1 && App.running ? Theme.accent-light
+                                : Theme.accent-light.transparentize(level > 0 ? 0.5 : 0.85);
+                            animate height { duration: 300ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         }
-                        StatTile {
-                            label: "FAILED";
-                            value: App.run-failed;
-                            tint: App.run-failed > 0 ? Theme.danger : Theme.dim;
-                        }
-                        StatTile {
-                            label: "REMAINING";
-                            value: max(0, App.run-total - App.run-done - App.run-failed);
-                            tint: Theme.dim;
-                        }
-                        StatTile {
-                            label: "TOTAL IN BATCH";
-                            value: App.run-total;
-                            tint: Theme.text;
-                        }
-                    }
-                    Meter {
-                        height: 6px;
-                        value: App.run-total == 0 ? 0 : (App.run-done + App.run-failed) / App.run-total;
-                        fill: App.run-failed > 0 ? Theme.warning : Theme.accent;
                     }
                 }
             }
-        }
-
-        Card {
-            vertical-stretch: 1;
-            border-radius: 10px;
-            border-color: Theme.border;
-            VerticalLayout {
-                padding: 16px;
-                spacing: 10px;
+            MetricCard {
+                label: "ACTIVE REQUESTS";
+                value: App.m-active + " / " + App.m-slots;
+                tint: App.m-active > 0 ? Theme.success : Theme.text;
+                detail: App.m-active-detail;
                 HorizontalLayout {
-                    Label {
-                        text: "ACTIVITY LOG";
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    if App.log.length > 0: Text {
-                        text: App.log.length + " events";
-                        color: Theme.faint;
-                        font-size: 11px;
-                        vertical-alignment: center;
+                    spacing: 4px;
+                    alignment: start;
+                    for slot in min(App.m-slots, 24): Rectangle {
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 3px;
+                        background: slot < App.m-active ? Theme.success : Theme.field;
+                        border-width: 1px;
+                        border-color: slot < App.m-active ? Theme.success.transparentize(0.4) : Theme.border;
+                        animate background, border-color { duration: 180ms; }
                     }
                 }
-                if App.log.length == 0: EmptyState { text: "No translation activity recorded yet"; }
-                if App.log.length > 0: Rectangle {
-                    background: Theme.field;
-                    border-radius: 8px;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    clip: true;
-                    ListView {
+            }
+            MetricCard {
+                label: "TOKEN USAGE";
+                value: App.m-usage;
+                unit: "in / out";
+                detail: App.m-usage-detail;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+            vertical-stretch: 1;
+            Card {
+                width: 330px;
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 10px;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Chip {
+                            text: "Batches";
+                            count: App.batches.length > 0 ? App.batches.length : "";
+                            checked: App.run-tab == 0;
+                            clicked => { App.run-tab = 0; }
+                        }
+                        Chip {
+                            text: "Log";
+                            count: App.log.length > 0 ? App.log.length : "";
+                            checked: App.run-tab == 1;
+                            clicked => { App.run-tab = 1; }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        if App.run-tab == 0: AppButton {
+                            ghost: true;
+                            height: 28px;
+                            checked: App.batch-follow;
+                            icon: @image-url("../icons/play.svg");
+                            text: "Live";
+                            clicked => {
+                                App.batch-follow = !App.batch-follow;
+                                if (App.batch-follow && App.batches.length > 0) {
+                                    App.batch-select(0);
+                                }
+                            }
+                        }
+                    }
+                    if App.run-tab == 0 && App.batches.length == 0: EmptyState { text: "No batches yet"; }
+                    if App.run-tab == 0 && App.batches.length > 0: ListView {
+                        for item[i] in App.batches: BatchItem {
+                            item: item;
+                            selected: App.batch-current == i;
+                            clicked => {
+                                App.batch-follow = i == 0;
+                                App.batch-select(i);
+                            }
+                        }
+                    }
+                    if App.run-tab == 1 && App.log.length == 0: EmptyState { text: "No activity yet"; }
+                    if App.run-tab == 1 && App.log.length > 0: ListView {
                         for entry in App.log: HorizontalLayout {
-                            spacing: 12px;
-                            padding-left: 12px;
-                            padding-right: 12px;
+                            spacing: 10px;
                             padding-top: 5px;
                             padding-bottom: 5px;
                             Text {
-                                width: 70px;
+                                width: 58px;
                                 text: entry.time;
                                 color: Theme.faint;
                                 font-size: 11px;
-                                vertical-alignment: center;
                             }
                             Text {
                                 horizontal-stretch: 1;
@@ -266,6 +469,112 @@ export component TranslatePage inherits Rectangle {
                                 wrap: word-wrap;
                                 color: entry.kind == "error" ? Theme.danger : entry.kind == "retry" ? Theme.warning
                                     : entry.kind == "done" ? Theme.success : Theme.text;
+                            }
+                        }
+                    }
+                }
+            }
+            Card {
+                horizontal-stretch: 1;
+                if App.batch-current < 0: EmptyState {
+                    width: parent.width;
+                    height: parent.height;
+                    text: "Each batch's source, output, thinking and checks appear here";
+                }
+                if App.batch-current >= 0: VerticalLayout {
+                    padding: 16px;
+                    padding-right: 6px;
+                    spacing: 12px;
+                    HorizontalLayout {
+                        padding-right: 10px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 3px;
+                            Text {
+                                text: App.insp-title;
+                                color: Theme.text;
+                                font-size: 15px;
+                                font-weight: 700;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: App.insp-meta;
+                                color: Theme.faint;
+                                font-size: 12px;
+                                overflow: elide;
+                            }
+                        }
+                        if App.insp-error != "": VerticalLayout {
+                            alignment: center;
+                            Badge {
+                                text: "Failed";
+                                tint: Theme.danger;
+                            }
+                        }
+                    }
+                    inspector := ScrollView {
+                        content-width: self.visible-width;
+                        content-height: body.preferred-height + 8px;
+                        body := VerticalLayout {
+                            width: inspector.visible-width - 6px;
+                            spacing: 10px;
+                            if App.insp-error != "": Text {
+                                text: App.insp-error;
+                                color: Theme.danger;
+                                wrap: word-wrap;
+                            }
+                            SectionTitle {
+                                text: "SOURCE → OUTPUT";
+                                count: App.insp-records.length;
+                            }
+                            for record in App.insp-records: RecordView {
+                                record: record;
+                            }
+                            if App.insp-thinking != "": SectionTitle { text: "THINKING"; }
+                            if App.insp-thinking != "": Rectangle {
+                                border-radius: 8px;
+                                background: Theme.violet-soft;
+                                border-width: 1px;
+                                border-color: Theme.violet.transparentize(0.6);
+                                HorizontalLayout {
+                                    padding: 12px;
+                                    Text {
+                                        text: App.insp-thinking;
+                                        color: Theme.dim;
+                                        font-italic: true;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                            SectionTitle { text: "CHECKS"; }
+                            for check in App.insp-checks: HorizontalLayout {
+                                spacing: 8px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 6px;
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: Theme.accent-light;
+                                    }
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: check;
+                                    color: Theme.dim;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            if App.insp-terms.length > 0: SectionTitle {
+                                text: "GLOSSARY USED";
+                                count: App.insp-terms.length;
+                            }
+                            for term in App.insp-terms: Text {
+                                text: term;
+                                color: Theme.accent-light;
+                                font-size: 12px;
+                                wrap: word-wrap;
                             }
                         }
                     }

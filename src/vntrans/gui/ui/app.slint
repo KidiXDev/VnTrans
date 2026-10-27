@@ -53,6 +53,21 @@ export struct LogRow {
     text: string,
 }
 
+export struct BatchRow {
+    number: int,
+    title: string,
+    detail: string,
+    outcome: string,
+}
+
+export struct RecordRow {
+    speaker: string,
+    source: string,
+    output: string,
+    outcome: string,
+    note: string,
+}
+
 export global App {
     in-out property <string> page: "texts";
     in property <bool> has-project;
@@ -188,6 +203,7 @@ export global App {
     in-out property <float> pf-temperature: 0.3;
     in-out property <int> pf-max-tokens: 8192;
     in-out property <int> pf-reasoning;
+    in-out property <bool> pf-thinking: true;
     in-out property <int> pf-timeout: 120;
     in property <[string]> pf-models;
     in property <string> pf-status;
@@ -220,4 +236,29 @@ export global App {
     callback run-start();
     callback run-stop();
     callback run-settings-changed();
+
+    in property <string> m-percent: "—";
+    in property <float> m-progress;
+    in property <string> m-progress-detail: "No run yet";
+    in property <string> m-eta;
+    in property <string> m-rate: "0";
+    in property <string> m-rate-detail: "output tokens per second";
+    in property <[float]> m-spark;
+    in property <int> m-active;
+    in property <int> m-slots: 4;
+    in property <string> m-active-detail: "idle";
+    in property <string> m-usage: "0 / 0";
+    in property <string> m-usage-detail: "input / output tokens";
+    in property <[BatchRow]> batches;
+    in-out property <int> batch-current: -1;
+    in-out property <bool> batch-follow: true;
+    in-out property <int> run-tab;
+    in property <string> insp-title;
+    in property <string> insp-meta;
+    in property <string> insp-error;
+    in property <[RecordRow]> insp-records;
+    in property <string> insp-thinking;
+    in property <[string]> insp-checks;
+    in property <[string]> insp-terms;
+    callback batch-select(int);
 }
