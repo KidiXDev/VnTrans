@@ -56,13 +56,69 @@ component UnitColumns inherits HorizontalLayout {
     spacing: 12px;
 }
 
+component MenuItem inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <string> shortcut;
+    in property <bool> danger;
+    in property <bool> enabled: true;
+    callback activated;
+    height: 32px;
+    border-radius: 6px;
+    background: touch.has-hover && root.enabled ? (root.danger ? Theme.danger-soft : Theme.raised) : transparent;
+    animate background { duration: 90ms; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: root.icon;
+                width: 15px;
+                height: 15px;
+                colorize: !root.enabled ? Theme.faint : root.danger ? Theme.danger : Theme.dim;
+            }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.text;
+            color: !root.enabled ? Theme.faint : root.danger ? #FCA5A5 : Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if root.shortcut != "": Text {
+            text: root.shortcut;
+            color: Theme.faint;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.activated(); }
+    }
+}
+
+component MenuSeparator inherits Rectangle {
+    height: 9px;
+    Rectangle {
+        y: 4px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
 component UnitItem inherits Rectangle {
     in property <UnitRow> item;
     in property <bool> selected;
-    callback clicked;
+    callback pressed(bool, bool);
+    callback menu(length, length);
     callback opened;
     height: 42px;
-    background: root.selected ? Theme.selected : touch.has-hover ? Theme.raised : transparent;
+    background: root.selected ? Theme.selected : root.item.picked ? Theme.accent-soft
+        : touch.has-hover ? Theme.raised : transparent;
     animate background { duration: 90ms; }
     UnitColumns {
         VerticalLayout {
@@ -125,8 +181,21 @@ component UnitItem inherits Rectangle {
         height: 1px;
         background: Theme.border.transparentize(0.65);
     }
+    if root.item.picked: Rectangle {
+        x: 0;
+        width: 2px;
+        background: Theme.accent-light;
+    }
     touch := TouchArea {
-        clicked => { root.clicked(); }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                if (event.button == PointerEventButton.left) {
+                    root.pressed(event.modifiers.control || event.modifiers.meta, event.modifiers.shift);
+                } else if (event.button == PointerEventButton.right) {
+                    root.menu(self.mouse-x, self.mouse-y);
+                }
+            }
+        }
         double-clicked => { root.opened(); }
     }
 }
@@ -331,6 +400,15 @@ export component UnitEditor inherits VerticalLayout {
 
 export component TextsPage inherits Rectangle {
     property <length> row-height: 42px;
+    property <length> menu-x;
+    property <length> menu-y;
+    // Opens the context menu at a point in the list area, flipping it up when it would leave the page.
+    function open-menu(x: length, y: length) {
+        let page-y = list-area.absolute-position.y - root.absolute-position.y + y;
+        root.menu-x = min(x, list-area.width - 254px);
+        root.menu-y = page-y + 370px > root.height ? y - 360px : y;
+        context.show();
+    }
     property <int> current: App.current;
     property <int> search-request: App.search-request;
     changed current => { root.reveal(); }
@@ -544,15 +622,27 @@ export component TextsPage inherits Rectangle {
                 border-color: Theme.border;
                 VerticalLayout {
                     ListHeader { }
-                    Rectangle {
+                    list-area := Rectangle {
                         focus := FocusScope {
                             key-pressed(event) => {
                                 if (event.text == Key.UpArrow && App.current > 0) {
-                                    App.select(App.current - 1);
+                                    App.row-pressed(App.current - 1, false, event.modifiers.shift);
                                     return accept;
                                 }
                                 if (event.text == Key.DownArrow && App.current + 1 < App.units.length) {
-                                    App.select(App.current + 1);
+                                    App.row-pressed(App.current + 1, false, event.modifiers.shift);
+                                    return accept;
+                                }
+                                if ((event.modifiers.control || event.modifiers.meta) && event.text == "a") {
+                                    App.select-all();
+                                    return accept;
+                                }
+                                if ((event.modifiers.control || event.modifiers.meta) && event.text == "z") {
+                                    App.undo();
+                                    return accept;
+                                }
+                                if (event.text == Key.Delete && App.sel-has-translation) {
+                                    App.menu-action("clear");
                                     return accept;
                                 }
                                 if (event.text == Key.Return && App.current >= 0) {
@@ -565,13 +655,110 @@ export component TextsPage inherits Rectangle {
                                 for row[i] in App.units: UnitItem {
                                     item: row;
                                     selected: App.current == i;
-                                    clicked => {
+                                    pressed(toggle, extend) => {
                                         focus.focus();
-                                        App.select(i);
+                                        App.row-pressed(i, toggle, extend);
+                                    }
+                                    menu(x, y) => {
+                                        focus.focus();
+                                        App.row-menu(i);
+                                        root.open-menu(x, i * root.row-height + list.content-y + y);
                                     }
                                     opened => {
                                         App.select(i);
                                         App.editor-open = true;
+                                    }
+                                }
+                            }
+                        }
+                        context := PopupWindow {
+                            x: root.menu-x;
+                            y: root.menu-y;
+                            width: 250px;
+                            height: menu-body.preferred-height;
+                            close-policy: close-on-click-outside;
+                            menu-panel := Rectangle {
+                                property <bool> started;
+                                Timer {
+                                    interval: 1ms;
+                                    running: !menu-panel.started;
+                                    triggered => { menu-panel.started = true; }
+                                }
+                                opacity: menu-panel.started ? 1 : 0;
+                                transform-scale: menu-panel.started ? 1 : 0.96;
+                                animate opacity, transform-scale { duration: 140ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                                background: Theme.popup;
+                                border-radius: 10px;
+                                border-width: 1px;
+                                border-color: Theme.border-strong;
+                                menu-body := VerticalLayout {
+                                    padding: 6px;
+                                    if App.sel-count > 1: Text {
+                                        text: App.sel-count + " units selected";
+                                        color: Theme.faint;
+                                        font-size: 11px;
+                                        height: 24px;
+                                        vertical-alignment: center;
+                                        x: 10px;
+                                    }
+                                    MenuItem {
+                                        icon: @image-url("../icons/maximize-2.svg");
+                                        text: "Open in editor";
+                                        shortcut: "Enter";
+                                        enabled: App.sel-count == 1;
+                                        activated => { context.close(); App.menu-action("open"); }
+                                    }
+                                    MenuSeparator { }
+                                    MenuItem {
+                                        icon: @image-url("../icons/copy.svg");
+                                        text: "Copy source";
+                                        activated => { context.close(); App.menu-action("copy-source"); }
+                                    }
+                                    MenuItem {
+                                        icon: @image-url("../icons/copy.svg");
+                                        text: "Copy translation";
+                                        enabled: App.sel-has-translation;
+                                        activated => { context.close(); App.menu-action("copy-translation"); }
+                                    }
+                                    MenuSeparator { }
+                                    MenuItem {
+                                        icon: @image-url("../icons/play.svg");
+                                        text: App.sel-count > 1 ? "Translate " + App.sel-count + " units" : "Translate";
+                                        enabled: App.profile-names.length > 0 && !App.running;
+                                        activated => { context.close(); App.menu-action("translate"); }
+                                    }
+                                    MenuItem {
+                                        icon: @image-url("../icons/sparkles.svg");
+                                        text: "Review translation";
+                                        enabled: App.profile-names.length > 0 && !App.running && App.sel-has-translation;
+                                        activated => { context.close(); App.menu-action("review"); }
+                                    }
+                                    MenuItem {
+                                        icon: @image-url("../icons/check.svg");
+                                        text: "Use suggestion";
+                                        enabled: App.sel-has-suggestion;
+                                        activated => { context.close(); App.menu-action("suggest"); }
+                                    }
+                                    MenuSeparator { }
+                                    MenuItem {
+                                        icon: App.sel-all-excluded ? @image-url("../icons/eye.svg") : @image-url("../icons/eye-off.svg");
+                                        text: App.sel-all-excluded ? "Include" : "Exclude";
+                                        activated => { context.close(); App.menu-action("exclude"); }
+                                    }
+                                    MenuItem {
+                                        icon: @image-url("../icons/trash-2.svg");
+                                        text: App.sel-count > 1 ? "Clear translations" : "Clear translation";
+                                        shortcut: "Del";
+                                        danger: true;
+                                        enabled: App.sel-has-translation;
+                                        activated => { context.close(); App.menu-action("clear"); }
+                                    }
+                                    MenuSeparator { }
+                                    MenuItem {
+                                        icon: @image-url("../icons/check.svg");
+                                        text: "Select all";
+                                        shortcut: "Ctrl+A";
+                                        activated => { context.close(); App.select-all(); }
                                     }
                                 }
                             }

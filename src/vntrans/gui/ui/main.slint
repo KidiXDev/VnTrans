@@ -292,7 +292,8 @@ component StatusBar inherits Rectangle {
                 }
             }
             Text {
-                text: App.status-text + (App.page == "texts" ? " · " + App.shown-text + " shown" : "");
+                text: App.status-text + (App.page == "texts" ? " · " + App.shown-text + " shown" : "")
+                    + (App.page == "texts" && App.sel-count > 1 ? " · " + App.sel-count + " selected" : "");
                 color: Theme.dim;
                 font-size: 12px;
                 vertical-alignment: center;
@@ -351,6 +352,15 @@ component StatusBar inherits Rectangle {
                     vertical-alignment: center;
                     overflow: elide;
                 }
+            }
+        }
+        if App.can-undo: VerticalLayout {
+            alignment: center;
+            AppButton {
+                height: 22px;
+                icon: @image-url("icons/rotate-ccw.svg");
+                text: App.undo-text;
+                clicked => { App.undo(); }
             }
         }
     }
@@ -475,12 +485,24 @@ export component AppWindow inherits Window {
     min-height: 700px;
     background: Theme.bg;
     default-font-size: 13px;
+    // Clipboard writes go through a hidden TextInput, the only clipboard access Slint offers.
+    public function copy-text(text: string) {
+        clipboard.text = text;
+        clipboard.select-all();
+        clipboard.copy();
+        clipboard.clear-selection();
+    }
+    clipboard := TextInput {
+        visible: false;
+    }
     // Clicking anywhere that isn't an input moves focus here, so fields lose focus as expected.
     FocusScope {
         capture-key-pressed(event) => {
             if (event.text == Key.Escape) {
                 if (App.editor-open) {
                     App.editor-open = false;
+                } else {
+                    App.clear-selection();
                 }
                 self.focus();
                 return accept;

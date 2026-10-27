@@ -112,6 +112,21 @@ class WorkspaceTests(unittest.TestCase):
         self.assertNotEqual(second, target)
 
 
+    def test_snapshot_restore_and_bulk_exclude(self):
+        ws = self.create()
+        rows = [r for r in ws.rows() if r.file == "test.ks"]
+        dialogue = next(r for r in rows if r.kind == "dialogue")
+        ws.save(dialogue, "Halo⟦0⟧dunia")
+        dialogue.error = None
+        snapshot = ws.snapshot(rows)
+        ws.save_many([(row, None) for row in rows])
+        ws.exclude_many(rows, True)
+        self.assertTrue(all(r.status == "excluded" and r.translation is None for r in rows))
+        ws.restore(snapshot)
+        stored = {r.id: (r.translation, r.status) for r in ws.rows() if r.file == "test.ks"}
+        self.assertEqual(stored[dialogue.id], ("Halo⟦0⟧dunia", "edited"))
+        self.assertTrue(all(value == (None, "new") for key, value in stored.items() if key != dialogue.id))
+
     def test_cancelled_build_leaves_nothing_behind(self):
         ws = self.create()
 

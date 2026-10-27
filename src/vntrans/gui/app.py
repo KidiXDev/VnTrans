@@ -102,10 +102,11 @@ def oneline(text: str) -> str:
 
 
 class UnitModel(slint.Model):
-    def __init__(self, rows, indices):
+    def __init__(self, rows, indices, picked=frozenset()):
         super().__init__()
         self.rows = rows
         self.indices = indices
+        self.picked = picked
 
     def row_count(self):
         return len(self.indices)
@@ -114,7 +115,7 @@ class UnitModel(slint.Model):
         position = self.indices[index]
         row = self.rows[position]
         return dict(n=position + 1, kind=row.kind, speaker=row.speaker, source=oneline(row.source),
-                    translation=oneline(row.translation or ""), state=state(row))
+                    translation=oneline(row.translation or ""), state=state(row), picked=position in self.picked)
 
 
 class Window(UI.AppWindow):
@@ -131,6 +132,9 @@ class Window(UI.AppWindow):
         self.sections = []
         self.build_reports = []
         self.positions = {}
+        self.picked = set()
+        self.anchor = None
+        self.undo_entry = None
         self.tags = {}
         self.suggestions = {}
         self.checker = None
@@ -361,7 +365,9 @@ class Window(UI.AppWindow):
             return
         ui.regex_error = False
         selected = self.model.indices[ui.current] if 0 <= ui.current < len(self.model.indices) else None
-        self.model = UnitModel(self.rows, indices)
+        self.picked.clear()
+        self.anchor = None
+        self.model = UnitModel(self.rows, indices, self.picked)
         self.positions = {index: position for position, index in enumerate(indices)}
         ui.units = self.model
         self.show_counts(counts)
@@ -469,6 +475,7 @@ class Window(UI.AppWindow):
             return
         try:
             self.ws.save(row, text or None)
+            self.forget_undo()
         except VnTransError as exc:
             self.ui.cur_error = str(exc).removeprefix(f"{row.id}: ")
             return
@@ -966,7 +973,6 @@ class Window(UI.AppWindow):
     @slint.callback(global_name="App")
     async def run_start(self):
         ui = self.ui
-        self.run_settings_changed()
         task = TASKS[ui.run_task]
         pool = range(len(self.rows)) if ui.run_scope == 0 else self.model.indices
         if task == "translate":
@@ -976,6 +982,12 @@ class Window(UI.AppWindow):
             indices = [i for i in pool if self.rows[i].translation is not None and self.rows[i].status != "excluded"]
         else:
             indices = list(pool)
+        await self.start_run(task, indices)
+
+    async def start_run(self, task, indices):
+        ui = self.ui
+        self.run_settings_changed()
+        self.forget_undo()
         try:
             rules = glossary.Rules.parse(self.ws.manifest.get("replacements", ""))
         except VnTransError as exc:
@@ -1064,6 +1076,7 @@ class Window(UI.AppWindow):
         except re.error as exc:
             self.fail(f"Replace: {exc}")
             return
+        self.remember_undo("replace", [row for row, _ in pairs])
         self.ws.save_many(pairs)
         for row, _ in pairs:
             index = self.index_of[(row.file, row.id)]
@@ -1093,3 +1106,154 @@ class Window(UI.AppWindow):
             self.ws.save_manifest()
         except OSError as exc:
             self.fail(exc)
+
+    def targets(self) -> list[int]:
+        """Row indices an action applies to: the multi-selection in list order, else the current row."""
+        if self.picked:
+            return [index for index in self.model.indices if index in self.picked]
+        row = self.current_row()
+        return [self.model.indices[self.ui.current]] if row is not None else []
+
+    def repaint(self, indices):
+        for index in indices:
+            position = self.positions.get(index)
+            if position is not None:
+                self.model.notify_row_changed(position)
+
+    def show_selection(self):
+        rows = [self.rows[index] for index in self.targets()]
+        ui = self.ui
+        ui.sel_count = len(rows)
+        ui.sel_has_translation = any(row.translation is not None for row in rows)
+        ui.sel_has_suggestion = any((row.file, row.id) in self.suggestions for row in rows)
+        ui.sel_all_excluded = bool(rows) and all(row.status == "excluded" for row in rows)
+
+    @slint.callback(global_name="App")
+    def row_pressed(self, position, toggle, extend):
+        indices = self.model.indices
+        if not 0 <= position < len(indices):
+            return
+        before = set(self.picked)
+        current = self.ui.current
+        if extend:
+            anchor = self.anchor if self.anchor is not None else max(current, 0)
+            low, high = sorted((anchor, position))
+            if not toggle:
+                self.picked.clear()
+            self.picked.update(indices[low:high + 1])
+            self.anchor = anchor
+        elif toggle:
+            if not self.picked and 0 <= current < len(indices):
+                self.picked.add(indices[current])
+            self.picked ^= {indices[position]}
+            self.anchor = position
+        else:
+            self.picked.clear()
+            self.anchor = position
+        if len(self.picked) == 1 and indices[position] in self.picked:
+            self.picked.clear()
+        self.repaint(before ^ self.picked)
+        self.select(position)
+        self.show_selection()
+
+    @slint.callback(global_name="App")
+    def row_menu(self, position):
+        if self.model.indices[position] not in self.picked:
+            self.row_pressed(position, False, False)
+        self.show_selection()
+
+    @slint.callback(global_name="App")
+    def select_all(self):
+        self.picked.update(self.model.indices)
+        self.repaint(self.model.indices)
+        self.show_selection()
+
+    @slint.callback(global_name="App")
+    def clear_selection(self):
+        if self.picked:
+            before = set(self.picked)
+            self.picked.clear()
+            self.repaint(before)
+            self.show_selection()
+
+    def remember_undo(self, label, rows):
+        self.undo_entry = (label, self.ws.snapshot(rows))
+        self.ui.can_undo = True
+        self.ui.undo_text = f"Undo {label}"
+
+    def forget_undo(self):
+        self.undo_entry = None
+        self.ui.can_undo = False
+
+    def changed_rows(self, rows):
+        indices = [self.index_of[(row.file, row.id)] for row in rows]
+        for index in indices:
+            self.retag(index)
+        self.repaint(indices)
+        row = self.current_row()
+        if row is not None:
+            self.select(self.ui.current)
+        self.update_stats()
+        self.refresh_counts()
+        self.show_selection()
+
+    @slint.callback(global_name="App")
+    def undo(self):
+        if self.undo_entry is None:
+            return
+        label, snapshot = self.undo_entry
+        self.ws.restore(snapshot)
+        self.forget_undo()
+        self.changed_rows([row for row, *_ in snapshot])
+        self.say(f"Undid {label}")
+
+    @slint.callback(global_name="App")
+    def menu_action(self, action):
+        indices = self.targets()
+        rows = [self.rows[index] for index in indices]
+        if not rows:
+            return
+        count = f"{len(rows):,} unit{'s' * (len(rows) != 1)}"
+        if action == "open":
+            self.ui.editor_open = True
+        elif action in ("copy-source", "copy-translation"):
+            texts = [row.source if action == "copy-source" else row.translation or "" for row in rows]
+            self.copy_text("\n".join(texts))
+            self.say(f"Copied {count}")
+        elif action == "clear":
+            rows = [row for row in rows if row.translation is not None]
+            self.remember_undo("clear", rows)
+            self.ws.save_many([(row, None) for row in rows])
+            self.changed_rows(rows)
+            self.say(f"Cleared {len(rows):,} translation{'s' * (len(rows) != 1)}")
+        elif action == "exclude":
+            excluded = not all(row.status == "excluded" for row in rows)
+            self.remember_undo("exclude" if excluded else "include", rows)
+            self.ws.exclude_many(rows, excluded)
+            self.changed_rows(rows)
+            self.say(f"{'Excluded' if excluded else 'Included'} {count}")
+        elif action == "suggest":
+            pairs = [(row, self.suggestions[(row.file, row.id)][0]) for row in rows if (row.file, row.id) in self.suggestions]
+            self.remember_undo("suggestions", [row for row, _ in pairs])
+            try:
+                self.ws.save_many(pairs)
+            except VnTransError as exc:
+                self.fail(exc)
+                return
+            for row, _ in pairs:
+                self.suggestions.pop((row.file, row.id), None)
+                self.ws.dismiss(row)
+            self.changed_rows([row for row, _ in pairs])
+            self.say(f"Applied {len(pairs):,} suggestion{'s' * (len(pairs) != 1)}")
+        elif action in ("translate", "review"):
+            if action == "translate":
+                chosen = [i for i in indices if self.rows[i].status in ("new", "machine")]
+                skipped = len(indices) - len(chosen)
+            else:
+                chosen = [i for i in indices if self.rows[i].translation is not None and self.rows[i].status != "excluded"]
+                skipped = 0
+            self.ui.run_task = TASKS.index(action)
+            self.navigate("translate")
+            if skipped:
+                self.log_event("info", f"Skipped {skipped:,} edited or excluded units; manual edits are never overwritten")
+            asyncio.ensure_future(self.start_run(action, chosen))

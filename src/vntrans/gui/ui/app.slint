@@ -5,6 +5,7 @@ export struct UnitRow {
     source: string,
     translation: string,
     state: string,
+    picked: bool,
 }
 
 export struct FileRow {
@@ -123,6 +124,19 @@ export global App {
     callback accept-suggestion();
     callback dismiss-suggestion();
     callback replace-all();
+
+    in property <int> sel-count;
+    in property <bool> sel-has-translation;
+    in property <bool> sel-has-suggestion;
+    in property <bool> sel-all-excluded;
+    in property <bool> can-undo;
+    in property <string> undo-text;
+    callback row-pressed(int, bool, bool);
+    callback row-menu(int);
+    callback select-all();
+    callback clear-selection();
+    callback menu-action(string);
+    callback undo();
     in-out property <int> current: -1;
     in property <string> cur-source;
     in property <string> cur-legend;

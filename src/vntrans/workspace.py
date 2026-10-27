@@ -211,6 +211,25 @@ class Workspace:
         with self.db:
             self.db.execute("DELETE FROM suggestions WHERE file = ? AND id = ?", (row.file, row.id))
 
+    def snapshot(self, rows) -> list[tuple]:
+        return [(row, row.translation, row.status, row.error) for row in rows]
+
+    def restore(self, snapshot):
+        """Put rows back exactly as `snapshot()` recorded them (translation, status and error)."""
+        with self.db:
+            self.db.executemany("UPDATE units SET translation = ?, status = ?, error = ? WHERE file = ? AND id = ?",
+                                [(text, status, error, row.file, row.id) for row, text, status, error in snapshot])
+        for row, text, status, error in snapshot:
+            row.translation, row.status, row.error = text, status, error
+
+    def exclude_many(self, rows, excluded: bool):
+        values = [("excluded" if excluded else ("new" if row.translation is None else "edited"), row) for row in rows]
+        with self.db:
+            self.db.executemany("UPDATE units SET status = ? WHERE file = ? AND id = ?",
+                                [(status, row.file, row.id) for status, row in values])
+        for status, row in values:
+            row.status = status
+
     def exclude(self, row: Row, excluded: bool):
         status = "excluded" if excluded else ("new" if row.translation is None else "edited")
         with self.db:
