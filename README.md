@@ -7,8 +7,9 @@ GARbro / external unpacker → original scripts → translation JSON → rebuilt
 ```
 
 V1 supports unencrypted PSB v3 Kirikiri scenarios (`.scn`, including `.ks.scn`)
-and plain Kirikiri/KAG `.ks` scripts. It uses only the Python standard library at
-runtime and works through a CLI or a Python API. Python 3.13 or newer is required.
+and plain Kirikiri/KAG `.ks` scripts. The core uses only the Python standard library
+and works through a CLI or a Python API. An optional desktop app adds project
+workspaces and LLM translation (Gemini and OpenRouter). Python 3.13 or newer is required.
 
 ## Quick start
 
@@ -52,6 +53,65 @@ You can also install with `pip install .`, or run directly from the source tree:
 ```sh
 PYTHONPATH=src python -m vntrans --help
 ```
+
+## Desktop app
+
+```sh
+uv sync --extra gui
+uv run vntrans-gui                 # or: uv run vntrans-gui path/to/workspace
+```
+
+The app is built with [Slint](https://slint.dev). Everything happens in a
+**workspace folder** that you choose when creating a project:
+
+```text
+<workspace>/
+  manifest.json        project settings (languages, prompt, batch and build options)
+  source/              copies of the supported game scripts; originals are only read
+  extracted/           translation JSON from extraction, never edited
+  project.db           SQLite: translations, glossary, review suggestions, request log
+  builds/<time>/json/  complete translation JSON, usable with the CLI
+  builds/<time>/patch/ rebuilt scripts
+  exports/             glossary exports
+```
+
+- **Texts**: every unit in a virtualized list. Search by source, translation,
+  speaker or ID, with plain text or regular expressions and case matching. Filter
+  by file, kind and status (new, machine, edited, failed, excluded, issues,
+  review). Edits are checked with the same placeholder rules as rebuild before
+  they are saved. Ctrl+Enter saves and moves to the next unit. Find & replace
+  works on the translations currently shown.
+- **Glossary**: terms and characters with notes. Only approved entries whose
+  source text appears in a batch are sent to the model. Import and export as JSON
+  (`source`/`target`/`notes`, or `src`/`dst`/`info`). Replacement rules, one per
+  line (`pre|post FIND => REPLACE`, `/FIND/` for a regex), rewrite source text
+  before sending (`pre`) or model output (`post`), outside placeholders only.
+- **Prompt**: an ordered chain of sections (role, style, project notes,
+  characters, glossary, context, fixed output rules). Toggle, reorder, edit or
+  reset each one, and preview the exact messages for the batch around the
+  selected unit, with an estimated token count.
+- **Translate**: runs a profile over new units or the current Texts filter, in
+  batches that stay within one scene, with nearby lines as context. Replies are
+  checked unit by unit. Valid units are saved immediately, and failed ones are
+  retried in smaller batches, then individually. Rate limits and network errors
+  are retried with backoff, and bad keys stop the run. Stopping or closing loses
+  nothing that was already accepted, and the next run continues with the rest.
+  Manual edits are never overwritten. Speaker names are filled from the glossary
+  or translated once per unique name. The same page runs **Review translations**
+  (suggestions you accept or dismiss in Texts) and **Discover terms** (draft
+  glossary entries with example lines, for you to approve).
+- **Build**: exports the JSON and rebuilds a patch with optional wrapping and
+  output encoding.
+- **Settings**: provider profiles for Google Gemini (native API) and OpenRouter:
+  model, keys (several rotate), temperature, output limit, reasoning level and
+  timeout, with model listing and a test request.
+
+Profiles are stored outside workspaces in your user config folder
+(`~/.config/vntrans/config.json` on Linux, mode 0600). Set
+`VNTRANS_<PROFILE_NAME>_KEY` (comma-separated) to keep keys out of the file.
+Token usage is shown as reported by the provider; the app doesn't estimate cost.
+The folder picker uses the desktop portal on Linux, which needs the `jeepney`
+package (installed with the `gui` extra); you can always type a path instead.
 
 ## Translation JSON
 
@@ -182,8 +242,8 @@ the public translation document. No plugin loader or external service is needed.
   multiline KS tags, TJS bytecode, and unsupported scenario layouts are rejected.
   Decode wrappers externally before using VnTrans.
 
-There is no archive extraction/packing, translation service, GUI, font patching,
-or game-runtime integration in v1. Use an external packer to put rebuilt files
+There is no archive extraction/packing, font patching, or game-runtime
+integration in v1. Use an external packer to put rebuilt files
 into a patch archive recognized by your game. Loose files may not override its
 archives; this depends on the game. Never overwrite the only copy of a game.
 
