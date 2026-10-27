@@ -227,6 +227,8 @@ export component ComboBox inherits Rectangle {
     background: touch.has-hover && root.enabled ? Theme.raised : Theme.field;
     border-width: 1px;
     border-color: touch.has-hover && root.enabled ? Theme.border-strong : Theme.border;
+    transform-scale: touch.pressed ? 0.985 : 1;
+    animate transform-scale { duration: 110ms; easing: ease-out; }
     opacity: root.enabled ? 1 : 0.5;
     animate background, border-color { duration: 120ms; }
     HorizontalLayout {
@@ -261,7 +263,17 @@ export component ComboBox inherits Rectangle {
         width: root.width;
         height: min(root.model.length * 32px + 10px, 300px);
         close-policy: close-on-click-outside;
-        Rectangle {
+        panel := Rectangle {
+            property <bool> started;
+            Timer {
+                interval: 1ms;
+                running: !panel.started;
+                triggered => { panel.started = true; }
+            }
+            y: panel.started ? 0 : -6px;
+            height: parent.height;
+            opacity: panel.started ? 1 : 0;
+            animate y, opacity { duration: 160ms; easing: cubic-bezier(0.2, 0, 0, 1); }
             background: Theme.popup;
             border-radius: 8px;
             border-width: 1px;
@@ -276,6 +288,7 @@ export component ComboBox inherits Rectangle {
                     height: 32px;
                     border-radius: 5px;
                     background: item.has-hover ? Theme.raised : i == root.current-index ? Theme.accent-soft : transparent;
+                    animate background { duration: 100ms; }
                     HorizontalLayout {
                         padding-left: 8px;
                         padding-right: 8px;
@@ -377,6 +390,7 @@ export component SpinBox inherits Rectangle {
                 height: 26px;
                 border-radius: 4px;
                 background: arrow.has-hover && root.enabled ? Theme.raised : transparent;
+                animate background { duration: 100ms; }
                 Image {
                     source: delta < 0 ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-up.svg");
                     width: 14px;
@@ -414,12 +428,16 @@ export component CheckBox inherits Rectangle {
                 border-width: root.checked ? 0 : 1.5px;
                 border-color: touch.has-hover && root.enabled ? Theme.dim : Theme.border-strong;
                 background: root.checked ? Theme.accent : Theme.field;
-                animate background { duration: 120ms; }
-                if root.checked: Image {
+                animate background, border-color { duration: 140ms; }
+                Image {
                     source: @image-url("icons/check.svg");
                     width: 13px;
                     height: 13px;
                     colorize: #FFFFFF;
+                    opacity: root.checked ? 1 : 0;
+                    transform-scale: root.checked ? 1 : 0.5;
+                    animate opacity { duration: 140ms; }
+                    animate transform-scale { duration: 180ms; easing: cubic-bezier(0.3, 1.6, 0.6, 1); }
                 }
             }
         }
@@ -481,6 +499,8 @@ export component Slider inherits Rectangle {
         background: Theme.text;
         border-width: 3px;
         border-color: touch.pressed || touch.has-hover ? Theme.accent-hover : Theme.accent;
+        transform-scale: touch.pressed ? 1.15 : touch.has-hover ? 1.08 : 1;
+        animate transform-scale { duration: 140ms; easing: ease-out; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;

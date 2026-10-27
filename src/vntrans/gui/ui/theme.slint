@@ -63,6 +63,24 @@ export component Card inherits Rectangle {
     border-color: Theme.border;
 }
 
+// Fades and settles its content in once, right after creation. Visual only, so layouts are unaffected.
+export component FadeIn inherits Rectangle {
+    in property <float> from-scale: 0.985;
+    in property <duration> duration: 220ms;
+    property <bool> started;
+    Timer {
+        interval: 1ms;
+        running: !root.started;
+        triggered => { root.started = true; }
+    }
+    opacity: root.started ? 1 : 0;
+    transform-scale: root.started ? 1 : root.from-scale;
+    animate opacity, transform-scale { duration: root.duration; easing: cubic-bezier(0.2, 0, 0, 1); }
+    HorizontalLayout {
+        @children
+    }
+}
+
 export component Divider inherits Rectangle {
     height: 1px;
     background: Theme.border;
@@ -87,7 +105,9 @@ export component AppButton inherits Rectangle {
         : root.checked ? Theme.accent-soft
         : root.ghost ? (touch.has-hover && root.enabled ? Theme.raised : transparent)
         : (touch.has-hover && root.enabled ? Theme.selected : Theme.raised);
-    animate background { duration: 120ms; }
+    transform-scale: touch.pressed ? 0.96 : 1;
+    animate background, border-color { duration: 140ms; }
+    animate transform-scale { duration: 110ms; easing: ease-out; }
     HorizontalLayout {
         padding-left: root.text == "" ? 8px : 12px;
         padding-right: root.text == "" ? 8px : 14px;
@@ -125,9 +145,11 @@ export component Toggle inherits Rectangle {
     height: 24px;
     border-radius: 5px;
     background: root.checked ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+    animate background { duration: 140ms; }
     Text {
         text: root.text;
         color: root.checked ? Theme.accent-hover : Theme.faint;
+        animate color { duration: 140ms; }
         font-size: 12px;
         font-weight: 700;
     }
@@ -150,8 +172,11 @@ export component Chip inherits Rectangle {
     horizontal-stretch: 0;
     border-radius: 14px;
     border-width: 1px;
-    border-color: root.checked ? Theme.accent : Theme.border;
+    border-color: root.checked ? Theme.accent : touch.has-hover ? Theme.border-strong : Theme.border;
     background: root.checked ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+    transform-scale: touch.pressed ? 0.95 : 1;
+    animate background, border-color { duration: 160ms; }
+    animate transform-scale { duration: 110ms; easing: ease-out; }
     HorizontalLayout {
         padding-left: 10px;
         padding-right: 10px;
@@ -170,6 +195,7 @@ export component Chip inherits Rectangle {
             color: root.checked ? Theme.text : Theme.dim;
             font-size: 12px;
             vertical-alignment: center;
+            animate color { duration: 160ms; }
         }
         if root.count != "": Text {
             text: root.count;
@@ -191,7 +217,8 @@ export component NavItem inherits Rectangle {
     callback clicked;
     height: 36px;
     border-radius: 6px;
-    background: root.active ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+    background: !root.active && touch.has-hover ? Theme.raised : transparent;
+    animate background { duration: 140ms; }
     HorizontalLayout {
         padding-left: 12px;
         spacing: 10px;
@@ -203,6 +230,7 @@ export component NavItem inherits Rectangle {
                 width: 18px;
                 height: 18px;
                 colorize: root.active ? Theme.accent-hover : Theme.dim;
+                animate colorize { duration: 200ms; }
             }
         }
         Text {
@@ -211,6 +239,7 @@ export component NavItem inherits Rectangle {
             font-size: 13px;
             font-weight: root.active ? 600 : 400;
             vertical-alignment: center;
+            animate color { duration: 200ms; }
         }
     }
     touch := TouchArea {
@@ -230,7 +259,8 @@ export component Meter inherits Rectangle {
         width: parent.width * clamp(root.value, 0, 1);
         border-radius: 2px;
         background: root.fill;
-        animate width { duration: 200ms; }
+        animate width { duration: 450ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+        animate background { duration: 300ms; }
     }
 }
 

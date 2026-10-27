@@ -16,6 +16,7 @@ component SectionItem inherits Rectangle {
     height: 40px;
     border-radius: 6px;
     background: root.selected ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+    animate background { duration: 140ms; }
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }

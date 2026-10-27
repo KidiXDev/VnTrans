@@ -17,6 +17,7 @@ component RecentItem inherits Rectangle {
     height: 48px;
     border-radius: 6px;
     background: touch.has-hover ? Theme.raised : transparent;
+    animate background { duration: 140ms; }
     HorizontalLayout {
         padding-left: 12px;
         padding-right: 12px;

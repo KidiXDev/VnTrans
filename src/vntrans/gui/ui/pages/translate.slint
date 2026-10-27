@@ -1,5 +1,5 @@
 import { ComboBox, SpinBox, ListView } from "../widgets.slint";
-import { Theme, Card, AppButton, Field, Label, Meter, Divider, EmptyState } from "../theme.slint";
+import { Theme, Card, AppButton, Field, Label, Meter, Divider, EmptyState, FadeIn } from "../theme.slint";
 import { App } from "../app.slint";
 
 component Number inherits SpinBox {
@@ -162,36 +162,38 @@ export component TranslatePage inherits Rectangle {
             }
         }
 
-        if App.running || App.run-total > 0: Card {
+        if App.running || App.run-total > 0: FadeIn {
             vertical-stretch: 0;
-            VerticalLayout {
-                padding: 16px;
-                spacing: 14px;
-                HorizontalLayout {
-                    spacing: 48px;
-                    alignment: start;
-                    Stat {
-                        label: App.run-task == 0 ? "Translated" : "Checked";
-                        value: App.run-done;
-                        tint: Theme.accent-hover;
+            Card {
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 14px;
+                    HorizontalLayout {
+                        spacing: 48px;
+                        alignment: start;
+                        Stat {
+                            label: App.run-task == 0 ? "Translated" : "Checked";
+                            value: App.run-done;
+                            tint: Theme.accent-hover;
+                        }
+                        Stat {
+                            label: "Failed";
+                            value: App.run-failed;
+                            tint: App.run-failed > 0 ? Theme.danger : Theme.text;
+                        }
+                        Stat {
+                            label: "Remaining";
+                            value: max(0, App.run-total - App.run-done - App.run-failed);
+                        }
+                        Stat {
+                            label: "In this run";
+                            value: App.run-total;
+                        }
                     }
-                    Stat {
-                        label: "Failed";
-                        value: App.run-failed;
-                        tint: App.run-failed > 0 ? Theme.danger : Theme.text;
+                    Meter {
+                        height: 6px;
+                        value: App.run-total == 0 ? 0 : (App.run-done + App.run-failed) / App.run-total;
                     }
-                    Stat {
-                        label: "Remaining";
-                        value: max(0, App.run-total - App.run-done - App.run-failed);
-                    }
-                    Stat {
-                        label: "In this run";
-                        value: App.run-total;
-                    }
-                }
-                Meter {
-                    height: 6px;
-                    value: App.run-total == 0 ? 0 : (App.run-done + App.run-failed) / App.run-total;
                 }
             }
         }

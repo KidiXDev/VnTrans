@@ -41,6 +41,7 @@ export component SettingsPage inherits Rectangle {
                             width: parent.width;
                             border-radius: 6px;
                             background: App.profile-current == i ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                            animate background { duration: 140ms; }
                             touch := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { App.profile-select(i); }

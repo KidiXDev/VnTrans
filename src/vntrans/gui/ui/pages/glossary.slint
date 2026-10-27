@@ -8,6 +8,7 @@ component TermItem inherits Rectangle {
     callback clicked;
     height: 40px;
     background: root.selected ? Theme.selected : touch.has-hover ? Theme.raised : transparent;
+    animate background { duration: 100ms; }
     HorizontalLayout {
         padding-left: 14px;
         padding-right: 14px;

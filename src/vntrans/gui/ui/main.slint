@@ -1,4 +1,4 @@
-import { Theme, NavItem, AppButton, Meter, Card } from "theme.slint";
+import { Theme, NavItem, AppButton, Meter, Card, FadeIn } from "theme.slint";
 import { App } from "app.slint";
 import { WelcomePage, Languages } from "pages/welcome.slint";
 import { TextsPage, UnitEditor } from "pages/texts.slint";
@@ -11,6 +11,15 @@ import { SettingsPage, Providers } from "pages/settings.slint";
 export { App, Languages, Encodings, Providers }
 
 component Sidebar inherits Rectangle {
+    property <int> index: App.page == "texts" ? 0 : App.page == "glossary" ? 1 : App.page == "prompt" ? 2
+        : App.page == "translate" ? 3 : App.page == "build" ? 4 : -1;
+    // Last main-page slot, so the indicator fades in place instead of jumping while Settings is open.
+    property <int> slot: max(0, root.index);
+    changed index => {
+        if (root.index >= 0) {
+            root.slot = root.index;
+        }
+    }
     width: 184px;
     background: Theme.surface;
     VerticalLayout {
@@ -42,42 +51,74 @@ component Sidebar inherits Rectangle {
                 vertical-alignment: center;
             }
         }
-        NavItem {
-            icon: @image-url("icons/file-text.svg");
-            text: "Texts";
-            active: App.page == "texts";
-            clicked => { App.navigate("texts"); }
-        }
-        NavItem {
-            icon: @image-url("icons/book-open.svg");
-            text: "Glossary";
-            active: App.page == "glossary";
-            clicked => { App.navigate("glossary"); }
-        }
-        NavItem {
-            icon: @image-url("icons/sparkles.svg");
-            text: "Prompt";
-            active: App.page == "prompt";
-            clicked => { App.navigate("prompt"); }
-        }
-        NavItem {
-            icon: @image-url("icons/play.svg");
-            text: App.running ? "Translating…" : "Translate";
-            active: App.page == "translate";
-            clicked => { App.navigate("translate"); }
-        }
-        NavItem {
-            icon: @image-url("icons/package.svg");
-            text: "Build";
-            active: App.page == "build";
-            clicked => { App.navigate("build"); }
+        Rectangle {
+            height: 5 * 36px + 4 * 4px;
+            Rectangle {
+                y: root.slot * 40px;
+                height: 36px;
+                border-radius: 6px;
+                background: Theme.accent-soft;
+                opacity: root.index >= 0 ? 1 : 0;
+                animate y { duration: 260ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                animate opacity { duration: 180ms; }
+                Rectangle {
+                    x: 0;
+                    y: 9px;
+                    width: 3px;
+                    height: 18px;
+                    border-radius: 1.5px;
+                    background: Theme.accent;
+                }
+            }
+            VerticalLayout {
+                spacing: 4px;
+                NavItem {
+                    icon: @image-url("icons/file-text.svg");
+                    text: "Texts";
+                    active: root.index == 0;
+                    clicked => { App.navigate("texts"); }
+                }
+                NavItem {
+                    icon: @image-url("icons/book-open.svg");
+                    text: "Glossary";
+                    active: root.index == 1;
+                    clicked => { App.navigate("glossary"); }
+                }
+                NavItem {
+                    icon: @image-url("icons/sparkles.svg");
+                    text: "Prompt";
+                    active: root.index == 2;
+                    clicked => { App.navigate("prompt"); }
+                }
+                NavItem {
+                    icon: @image-url("icons/play.svg");
+                    text: App.running ? "Translating…" : "Translate";
+                    active: root.index == 3;
+                    clicked => { App.navigate("translate"); }
+                }
+                NavItem {
+                    icon: @image-url("icons/package.svg");
+                    text: "Build";
+                    active: root.index == 4;
+                    clicked => { App.navigate("build"); }
+                }
+            }
         }
         Rectangle { vertical-stretch: 1; }
-        NavItem {
-            icon: @image-url("icons/settings.svg");
-            text: "Settings";
-            active: App.page == "settings";
-            clicked => { App.navigate("settings"); }
+        Rectangle {
+            height: 36px;
+            Rectangle {
+                border-radius: 6px;
+                background: Theme.accent-soft;
+                opacity: App.page == "settings" ? 1 : 0;
+                animate opacity { duration: 180ms; }
+            }
+            NavItem {
+                icon: @image-url("icons/settings.svg");
+                text: "Settings";
+                active: App.page == "settings";
+                clicked => { App.navigate("settings"); }
+            }
         }
     }
     Rectangle {
@@ -215,7 +256,16 @@ component StatusBar inherits Rectangle {
 }
 
 component EditorDialog inherits Rectangle {
-    background: #060A12B8;
+    in property <bool> open;
+    changed open => {
+        if (root.open) {
+            editor.focus-translation();
+        }
+    }
+    property <float> shown: root.open ? 1 : 0;
+    animate shown { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+    visible: root.shown > 0.01;
+    background: #060A12B8.with-alpha(0.72 * root.shown);
     // Swallows clicks so they don't reach the page underneath; a click on the backdrop closes.
     TouchArea {
         clicked => { App.editor-open = false; }
@@ -224,7 +274,9 @@ component EditorDialog inherits Rectangle {
         width: min(parent.width - 96px, 1100px);
         height: min(parent.height - 96px, 680px);
         x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
+        y: (parent.height - self.height) / 2 + (1 - root.shown) * 18px;
+        opacity: root.shown;
+        transform-scale: 0.97 + 0.03 * root.shown;
         background: Theme.panel;
         border-color: Theme.border-strong;
         drop-shadow-blur: 32px;
@@ -275,7 +327,7 @@ component EditorDialog inherits Rectangle {
                 height: 1px;
                 background: Theme.border;
             }
-            UnitEditor {
+            editor := UnitEditor {
                 text-size: 16px;
                 Text {
                     text: "Ctrl+Enter saves and moves on · Esc closes";
@@ -316,24 +368,41 @@ export component AppWindow inherits Window {
             reject
         }
         VerticalLayout {
-            if !App.has-project: WelcomePage { }
+            if !App.has-project: FadeIn {
+                from-scale: 0.97;
+                duration: 300ms;
+                WelcomePage { }
+            }
             if App.has-project: HorizontalLayout {
                 Sidebar { }
                 VerticalLayout {
                     Header { }
-                    if App.page == "texts": TextsPage { }
-                    if App.page == "glossary": GlossaryPage { }
-                    if App.page == "prompt": PromptPage { }
-                    if App.page == "translate": TranslatePage { }
-                    if App.page == "build": BuildPage { }
-                    if App.page == "settings": SettingsPage { }
+                    if App.page == "texts": FadeIn {
+                        TextsPage { }
+                    }
+                    if App.page == "glossary": FadeIn {
+                        GlossaryPage { }
+                    }
+                    if App.page == "prompt": FadeIn {
+                        PromptPage { }
+                    }
+                    if App.page == "translate": FadeIn {
+                        TranslatePage { }
+                    }
+                    if App.page == "build": FadeIn {
+                        BuildPage { }
+                    }
+                    if App.page == "settings": FadeIn {
+                        SettingsPage { }
+                    }
                     StatusBar { }
                 }
             }
         }
-        if App.editor-open && App.has-project && App.current >= 0: EditorDialog {
+        if App.has-project: EditorDialog {
             width: parent.width;
             height: parent.height;
+            open: App.editor-open && App.current >= 0;
         }
     }
 }

@@ -1,5 +1,5 @@
 import { LineEdit, ComboBox, ListView, TextEdit } from "../widgets.slint";
-import { Theme, Card, AppButton, Toggle, Chip, Label, Meter, Divider, EmptyState } from "../theme.slint";
+import { Theme, Card, AppButton, Toggle, Chip, Label, Meter, Divider, EmptyState, FadeIn } from "../theme.slint";
 import { App, UnitRow } from "../app.slint";
 
 component FileItem inherits Rectangle {
@@ -11,6 +11,7 @@ component FileItem inherits Rectangle {
     height: 46px;
     border-radius: 6px;
     background: root.active ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+    animate background { duration: 140ms; }
     VerticalLayout {
         padding-left: 10px;
         padding-right: 10px;
@@ -57,6 +58,7 @@ component UnitItem inherits Rectangle {
     callback opened;
     height: 40px;
     background: root.selected ? Theme.selected : touch.has-hover ? Theme.raised : transparent;
+    animate background { duration: 90ms; }
     UnitColumns {
         VerticalLayout {
             alignment: center;
@@ -165,6 +167,9 @@ component ListHeader inherits Rectangle {
 
 export component UnitEditor inherits VerticalLayout {
     in property <length> text-size: 14px;
+    public function focus-translation() {
+        translation.focus();
+    }
     spacing: 10px;
     HorizontalLayout {
         spacing: 14px;
@@ -226,7 +231,7 @@ export component UnitEditor inherits VerticalLayout {
                     reject
                 }
                 VerticalLayout {
-                    TextEdit {
+                    translation := TextEdit {
                         text <=> App.cur-translation;
                         font-size: root.text-size;
                         enabled: App.current >= 0;
@@ -236,41 +241,44 @@ export component UnitEditor inherits VerticalLayout {
             }
         }
     }
-    if App.cur-suggestion != "": Rectangle {
-        border-radius: 6px;
-        background: Theme.violet.transparentize(0.88);
-        border-width: 1px;
-        border-color: Theme.violet.transparentize(0.5);
-        HorizontalLayout {
-            padding: 10px;
-            spacing: 10px;
-            VerticalLayout {
-                horizontal-stretch: 1;
-                alignment: center;
-                spacing: 3px;
-                Text {
-                    text: App.cur-suggestion;
-                    color: Theme.text;
-                    wrap: word-wrap;
-                }
-                Text {
-                    text: App.cur-reason;
-                    color: Theme.violet;
-                    font-size: 11px;
-                    wrap: word-wrap;
-                }
-            }
-            VerticalLayout {
-                alignment: center;
-                HorizontalLayout {
-                    spacing: 8px;
-                    AppButton {
-                        text: "Dismiss";
-                        clicked => { App.dismiss-suggestion(); }
+    if App.cur-suggestion != "": FadeIn {
+        from-scale: 0.98;
+        Rectangle {
+            border-radius: 6px;
+            background: Theme.violet.transparentize(0.88);
+            border-width: 1px;
+            border-color: Theme.violet.transparentize(0.5);
+            HorizontalLayout {
+                padding: 10px;
+                spacing: 10px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 3px;
+                    Text {
+                        text: App.cur-suggestion;
+                        color: Theme.text;
+                        wrap: word-wrap;
                     }
-                    AppButton {
-                        text: "Use suggestion";
-                        clicked => { App.accept-suggestion(); }
+                    Text {
+                        text: App.cur-reason;
+                        color: Theme.violet;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        AppButton {
+                            text: "Dismiss";
+                            clicked => { App.dismiss-suggestion(); }
+                        }
+                        AppButton {
+                            text: "Use suggestion";
+                            clicked => { App.accept-suggestion(); }
+                        }
                     }
                 }
             }
@@ -388,75 +396,90 @@ export component TextsPage inherits Rectangle {
         VerticalLayout {
             padding: 16px;
             spacing: 12px;
-            HorizontalLayout {
-                spacing: 8px;
-                search := LineEdit {
-                    icon: @image-url("../icons/search.svg");
-                    placeholder-text: App.regex ? "Search with a regular expression" : "Search";
-                    invalid: App.regex-error;
-                    text <=> App.query;
-                    edited(text) => { App.query-edited(text); }
-                    if App.query != "": VerticalLayout {
-                        alignment: center;
-                        AppButton {
-                            ghost: true;
-                            height: 26px;
-                            icon: @image-url("../icons/x.svg");
-                            clicked => {
-                                App.query = "";
-                                App.query-edited("");
+            VerticalLayout {
+                HorizontalLayout {
+                    spacing: 8px;
+                    search := LineEdit {
+                        icon: @image-url("../icons/search.svg");
+                        placeholder-text: App.regex ? "Search with a regular expression" : "Search";
+                        invalid: App.regex-error;
+                        text <=> App.query;
+                        edited(text) => { App.query-edited(text); }
+                        if App.query != "": VerticalLayout {
+                            alignment: center;
+                            AppButton {
+                                ghost: true;
+                                height: 26px;
+                                icon: @image-url("../icons/x.svg");
+                                clicked => {
+                                    App.query = "";
+                                    App.query-edited("");
+                                }
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Toggle {
+                                text: ".*";
+                                checked <=> App.regex;
+                                toggled => { App.filter-changed(); }
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Toggle {
+                                text: "Aa";
+                                checked <=> App.match-case;
+                                toggled => { App.filter-changed(); }
                             }
                         }
                     }
-                    VerticalLayout {
-                        alignment: center;
-                        Toggle {
-                            text: ".*";
-                            checked <=> App.regex;
-                            toggled => { App.filter-changed(); }
-                        }
+                    ComboBox {
+                        width: 180px;
+                        model: ["Source", "Translation", "Source + translation", "Speaker", "Unit ID"];
+                        current-index <=> App.scope;
+                        selected => { App.filter-changed(); }
                     }
-                    VerticalLayout {
-                        alignment: center;
-                        Toggle {
-                            text: "Aa";
-                            checked <=> App.match-case;
-                            toggled => { App.filter-changed(); }
-                        }
+                    ComboBox {
+                        width: 140px;
+                        model: ["All kinds", "Dialogue", "Speaker", "Choice", "Title"];
+                        current-index <=> App.kind-index;
+                        selected => { App.filter-changed(); }
+                    }
+                    AppButton {
+                        icon: @image-url("../icons/replace.svg");
+                        text: "Replace";
+                        checked: App.replace-open;
+                        clicked => { App.replace-open = !App.replace-open; }
                     }
                 }
-                ComboBox {
-                    width: 180px;
-                    model: ["Source", "Translation", "Source + translation", "Speaker", "Unit ID"];
-                    current-index <=> App.scope;
-                    selected => { App.filter-changed(); }
-                }
-                ComboBox {
-                    width: 140px;
-                    model: ["All kinds", "Dialogue", "Speaker", "Choice", "Title"];
-                    current-index <=> App.kind-index;
-                    selected => { App.filter-changed(); }
-                }
-                AppButton {
-                    icon: @image-url("../icons/replace.svg");
-                    text: "Replace";
-                    checked: App.replace-open;
-                    clicked => { App.replace-open = !App.replace-open; }
-                }
-            }
 
-            if App.replace-open: HorizontalLayout {
-                spacing: 8px;
-                LineEdit {
-                    icon: @image-url("../icons/replace.svg");
-                    placeholder-text: App.regex ? "Replace with (\\1 inserts group 1)" : "Replace with";
-                    text <=> App.replace-with;
-                }
-                AppButton {
-                    primary: true;
-                    text: "Replace in " + App.shown-text + " shown";
-                    enabled: App.query != "" && !App.regex-error && !App.running && App.units.length > 0;
-                    clicked => { App.replace-all(); }
+                // Slides open; the 8px gap lives inside so a closed bar adds no spacing.
+                Rectangle {
+                    height: App.replace-open ? 42px : 0;
+                    clip: true;
+                    animate height { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                    Rectangle {
+                        y: App.replace-open ? 0 : -10px;
+                        height: 42px;
+                        opacity: App.replace-open ? 1 : 0;
+                        animate y, opacity { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                        HorizontalLayout {
+                            padding-top: 8px;
+                            spacing: 8px;
+                            LineEdit {
+                                icon: @image-url("../icons/replace.svg");
+                                placeholder-text: App.regex ? "Replace with (\\1 inserts group 1)" : "Replace with";
+                                text <=> App.replace-with;
+                            }
+                            AppButton {
+                                primary: true;
+                                text: "Replace in " + App.shown-text + " shown";
+                                enabled: App.replace-open && App.query != "" && !App.regex-error && !App.running && App.units.length > 0;
+                                clicked => { App.replace-all(); }
+                            }
+                        }
+                    }
                 }
             }
 
