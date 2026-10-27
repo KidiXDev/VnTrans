@@ -169,21 +169,38 @@ component StatusBar inherits Rectangle {
             vertical-alignment: center;
         }
         Rectangle { horizontal-stretch: 1; }
-        if App.busy: HorizontalLayout {
-            spacing: 10px;
-            Text {
-                text: App.busy-text;
-                color: Theme.dim;
-                font-size: 12px;
-                vertical-alignment: center;
-                overflow: elide;
-                max-width: 420px;
-            }
-            VerticalLayout {
-                alignment: center;
-                Meter {
-                    width: 140px;
-                    value: App.busy-progress;
+        if App.busy: busy-zone := Rectangle {
+            property <bool> hovered: zone.has-hover || cancel.hovered;
+            horizontal-stretch: 0;
+            zone := TouchArea { }
+            HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: App.busy-text;
+                    color: Theme.dim;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    max-width: 420px;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Meter {
+                        width: 140px;
+                        value: App.busy-progress;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    cancel := AppButton {
+                        ghost: true;
+                        height: 22px;
+                        horizontal-stretch: 0;
+                        icon: @image-url("icons/x.svg");
+                        opacity: busy-zone.hovered ? 1 : 0;
+                        animate opacity { duration: 140ms; }
+                        clicked => { App.cancel-busy(); }
+                    }
                 }
             }
         }

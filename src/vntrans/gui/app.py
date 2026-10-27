@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import threading
 import time
 
 import slint
@@ -37,6 +38,10 @@ ABOUT = {
     "context": "Nearby lines from the same scene, with existing translations, as read-only reference.",
     "contract": "Fixed. VnTrans relies on this format to read and check replies.",
 }
+
+
+class Cancelled(Exception):
+    """Raised from a progress callback to stop work running in a worker thread."""
 
 
 def state(row) -> str:
@@ -110,6 +115,7 @@ class Window(UI.AppWindow):
         self.suggestions = {}
         self.checker = None
         self.run = None
+        self.cancel = threading.Event()
         self.log = slint.ListModel([])
         self.debounce = slint.Timer()
         self.section_timer = slint.Timer()
@@ -145,6 +151,7 @@ class Window(UI.AppWindow):
         self.say(str(exc), error=True)
 
     def busy(self, text):
+        self.cancel.clear()
         self.ui.busy = True
         self.ui.busy_text = text
         self.ui.busy_progress = 0
@@ -157,11 +164,21 @@ class Window(UI.AppWindow):
         loop = asyncio.get_running_loop()
 
         def update(phase, completed, total, filename):
+            if self.cancel.is_set():
+                raise Cancelled
+
             def show():
-                self.ui.busy_text = f"{phase} {filename}".strip()
-                self.ui.busy_progress = completed / total if total else 0
+                if not self.cancel.is_set():
+                    self.ui.busy_text = f"{phase} {filename}".strip()
+                    self.ui.busy_progress = completed / total if total else 0
             loop.call_soon_threadsafe(show)
         return update
+
+    @slint.callback(global_name="App")
+    def cancel_busy(self):
+        if self.ui.busy:
+            self.cancel.set()
+            self.ui.busy_text = "Cancelling…"
 
     @slint.callback(global_name="App")
     async def browse(self, target):
@@ -194,6 +211,9 @@ class Window(UI.AppWindow):
                 language_index=ui.new_language_index,
                 source_language=list(self.Languages.sources)[ui.new_source],
                 target_language=list(self.Languages.targets)[ui.new_target], progress=self.progress())
+        except Cancelled:
+            self.say("Cancelled")
+            return
         except (VnTransError, OSError) as exc:
             self.fail(exc)
             return
@@ -491,6 +511,9 @@ class Window(UI.AppWindow):
         try:
             ws.save_manifest()
             target, report = await asyncio.to_thread(ws.build, ws.translations(), **settings, progress=self.progress())
+        except Cancelled:
+            self.say("Build cancelled")
+            return
         except (VnTransError, OSError) as exc:
             self.fail(f"Build failed: {exc}")
             return

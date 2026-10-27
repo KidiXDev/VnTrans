@@ -112,5 +112,21 @@ class WorkspaceTests(unittest.TestCase):
         self.assertNotEqual(second, target)
 
 
+    def test_cancelled_build_leaves_nothing_behind(self):
+        ws = self.create()
+
+        class Stop(Exception):
+            pass
+
+        def progress(phase, completed, total, name):
+            if phase == "Rebuilding" and completed:
+                raise Stop
+
+        with self.assertRaises(Stop):
+            ws.build(progress=progress)
+        self.assertEqual(list((self.ws_root / "builds").iterdir()), [])
+        self.assertEqual(ws.builds(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

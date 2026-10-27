@@ -167,13 +167,21 @@ export component BuildPage inherits Rectangle {
                 }
                 VerticalLayout {
                     alignment: center;
-                    AppButton {
-                        primary: true;
-                        height: 40px;
-                        icon: @image-url("../icons/package.svg");
-                        text: App.busy ? "Building…" : "Build patch";
-                        enabled: !App.busy;
-                        clicked => { App.build(); }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        AppButton {
+                            primary: true;
+                            height: 40px;
+                            icon: @image-url("../icons/package.svg");
+                            text: App.busy ? "Building…" : "Build patch";
+                            enabled: !App.busy;
+                            clicked => { App.build(); }
+                        }
+                        if App.busy: AppButton {
+                            height: 40px;
+                            icon: @image-url("../icons/x.svg");
+                            clicked => { App.cancel-busy(); }
+                        }
                     }
                 }
             }

@@ -75,6 +75,7 @@ export component AppButton inherits Rectangle {
     in property <bool> ghost;
     in property <bool> checked;
     in property <bool> enabled: true;
+    out property <bool> hovered: touch.has-hover;
     callback clicked;
     height: 34px;
     border-radius: 6px;

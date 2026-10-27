@@ -71,6 +71,7 @@ export global App {
     in property <string> message;
     in property <bool> message-error;
     callback close-project();
+    callback cancel-busy();
     callback navigate(string);
 
     in property <[RecentRow]> recent;
