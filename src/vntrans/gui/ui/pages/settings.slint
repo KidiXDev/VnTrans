@@ -1,0 +1,225 @@
+import { LineEdit, ComboBox, SpinBox, Slider, ListView } from "../widgets.slint";
+import { AboutSlint } from "std-widgets.slint";
+import { Theme, Card, AppButton, Field, Label, EmptyState } from "../theme.slint";
+import { App } from "../app.slint";
+
+export global Providers {
+    out property <[string]> labels: ["Google Gemini", "OpenRouter"];
+    out property <[string]> reasoning: ["Default", "Minimal", "Low", "High"];
+}
+
+export component SettingsPage inherits Rectangle {
+    background: Theme.bg;
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 12px;
+        Card {
+            width: 280px;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 4px;
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-bottom: 6px;
+                    Label {
+                        text: "Profiles";
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    AppButton {
+                        icon: @image-url("../icons/plus.svg");
+                        text: "Add";
+                        clicked => { App.profile-new(); }
+                    }
+                }
+                if App.profiles.length == 0: EmptyState { text: "No profiles"; }
+                if App.profiles.length > 0: ListView {
+                    for profile[i] in App.profiles: Rectangle {
+                        height: 52px;
+                        Rectangle {
+                            x: 0;
+                            width: parent.width;
+                            border-radius: 6px;
+                            background: App.profile-current == i ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+                            touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { App.profile-select(i); }
+                            }
+                            VerticalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: profile.name;
+                                    color: Theme.text;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: profile.detail;
+                                    color: Theme.faint;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 12px;
+            Card {
+                vertical-stretch: 0;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 14px;
+                    Text {
+                        text: App.profile-current < 0 ? "New profile" : "Edit profile";
+                        color: Theme.text;
+                        font-size: 15px;
+                        font-weight: 700;
+                    }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Field {
+                            label: "Name";
+                            LineEdit { text <=> App.pf-name; }
+                        }
+                        Field {
+                            label: "Provider";
+                            ComboBox {
+                                model: Providers.labels;
+                                current-index <=> App.pf-provider;
+                            }
+                        }
+                    }
+                    Field {
+                        label: "API keys (comma-separated, used in rotation)";
+                        LineEdit {
+                            input-type: password;
+                            text <=> App.pf-keys;
+                        }
+                    }
+                    Field {
+                        label: "Model";
+                        HorizontalLayout {
+                            spacing: 8px;
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text <=> App.pf-model;
+                            }
+                            if App.pf-models.length > 0: ComboBox {
+                                width: 260px;
+                                model: App.pf-models;
+                                selected(value) => { App.pf-model = value; }
+                            }
+                            AppButton {
+                                icon: @image-url("../icons/download.svg");
+                                text: "Fetch";
+                                enabled: !App.pf-working && App.pf-keys != "";
+                                clicked => { App.profile-fetch(); }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Field {
+                            label: "Temperature " + round(App.pf-temperature * 100) / 100;
+                            Slider {
+                                minimum: 0;
+                                maximum: 2;
+                                step: 0.05;
+                                value <=> App.pf-temperature;
+                            }
+                        }
+                        Field {
+                            label: "Max output tokens";
+                            SpinBox {
+                                minimum: 256;
+                                maximum: 65536;
+                                step-size: 1024;
+                                value <=> App.pf-max-tokens;
+                            }
+                        }
+                        Field {
+                            label: "Reasoning";
+                            ComboBox {
+                                model: Providers.reasoning;
+                                current-index <=> App.pf-reasoning;
+                            }
+                        }
+                        Field {
+                            label: "Timeout (s)";
+                            SpinBox {
+                                minimum: 10;
+                                maximum: 900;
+                                step-size: 10;
+                                value <=> App.pf-timeout;
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: App.pf-status;
+                            color: App.pf-status-error ? Theme.danger : Theme.success;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                        }
+                        AppButton {
+                            icon: @image-url("../icons/trash-2.svg");
+                            text: "Delete";
+                            enabled: App.profile-current >= 0;
+                            clicked => { App.profile-delete(); }
+                        }
+                        AppButton {
+                            icon: @image-url("../icons/play.svg");
+                            text: App.pf-working ? "Testing…" : "Test";
+                            enabled: !App.pf-working && App.pf-keys != "" && App.pf-model != "";
+                            clicked => { App.profile-test(); }
+                        }
+                        AppButton {
+                            primary: true;
+                            icon: @image-url("../icons/check.svg");
+                            text: "Save";
+                            enabled: App.pf-name != "";
+                            clicked => { App.profile-save(); }
+                        }
+                    }
+                }
+            }
+            Card {
+                vertical-stretch: 0;
+                HorizontalLayout {
+                    padding: 16px;
+                    spacing: 16px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 4px;
+                        Label { text: "About"; }
+                        Text {
+                            text: "VnTrans · MIT License";
+                            color: Theme.text;
+                        }
+                    }
+                    AboutSlint {
+                        width: 200px;
+                        height: 96px;
+                    }
+                }
+            }
+            Rectangle { vertical-stretch: 1; }
+        }
+    }
+}

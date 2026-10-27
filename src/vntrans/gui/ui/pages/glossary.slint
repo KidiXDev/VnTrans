@@ -1,0 +1,267 @@
+import { LineEdit, ComboBox, ListView, TextEdit, CheckBox } from "../widgets.slint";
+import { Theme, Card, AppButton, Field, Label, EmptyState } from "../theme.slint";
+import { App, TermRow } from "../app.slint";
+
+component TermItem inherits Rectangle {
+    in property <TermRow> term;
+    in property <bool> selected;
+    callback clicked;
+    height: 40px;
+    background: root.selected ? Theme.selected : touch.has-hover ? Theme.raised : transparent;
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 12px;
+        Text {
+            horizontal-stretch: 1;
+            min-width: 0;
+            preferred-width: 0;
+            text: root.term.source;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            horizontal-stretch: 1;
+            min-width: 0;
+            preferred-width: 0;
+            text: root.term.target == "" ? "—" : root.term.target;
+            color: root.term.target == "" ? Theme.faint : Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            width: 80px;
+            text: root.term.kind;
+            color: root.term.kind == "character" ? Theme.violet : Theme.info;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Text {
+            horizontal-stretch: 2;
+            min-width: 0;
+            preferred-width: 0;
+            text: root.term.notes;
+            color: Theme.dim;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            width: 70px;
+            text: root.term.approved ? "approved" : "draft";
+            color: root.term.approved ? Theme.success : Theme.warning;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border.transparentize(0.6);
+    }
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component GlossaryPage inherits Rectangle {
+    background: Theme.bg;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 8px;
+            LineEdit {
+                horizontal-stretch: 1;
+                icon: @image-url("../icons/search.svg");
+                placeholder-text: "Search terms, targets and notes";
+                text: App.term-query;
+                edited(text) => { App.term-query-edited(text); }
+            }
+            AppButton {
+                icon: @image-url("../icons/download.svg");
+                text: "Import";
+                clicked => { App.term-import(); }
+            }
+            AppButton {
+                icon: @image-url("../icons/upload.svg");
+                text: "Export";
+                enabled: App.term-total > 0;
+                clicked => { App.term-export(); }
+            }
+            AppButton {
+                primary: true;
+                icon: @image-url("../icons/plus.svg");
+                text: "Add";
+                clicked => { App.term-new(); }
+            }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 12px;
+                Card {
+                    vertical-stretch: 1;
+                    clip: true;
+                    VerticalLayout {
+                        Rectangle {
+                            height: 32px;
+                            background: Theme.surface;
+                            border-top-left-radius: 8px;
+                            border-top-right-radius: 8px;
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px + Theme.scrollbar;
+                                spacing: 12px;
+                                Label {
+                                    horizontal-stretch: 1;
+                                    min-width: 0;
+                                    preferred-width: 0;
+                                    text: "Source";
+                                    vertical-alignment: center;
+                                }
+                                Label {
+                                    horizontal-stretch: 1;
+                                    min-width: 0;
+                                    preferred-width: 0;
+                                    text: "Target";
+                                    vertical-alignment: center;
+                                }
+                                Label {
+                                    width: 80px;
+                                    text: "Kind";
+                                    vertical-alignment: center;
+                                }
+                                Label {
+                                    horizontal-stretch: 2;
+                                    min-width: 0;
+                                    preferred-width: 0;
+                                    text: "Notes";
+                                    vertical-alignment: center;
+                                }
+                                Label {
+                                    width: 70px;
+                                    text: App.terms.length + " / " + App.term-total;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                        if App.terms.length == 0: EmptyState {
+                            text: App.term-total == 0 ? "No entries" : "No matching entries";
+                        }
+                        if App.terms.length > 0: ListView {
+                            for term[i] in App.terms: TermItem {
+                                term: term;
+                                selected: App.term-current == i;
+                                clicked => { App.term-select(i); }
+                            }
+                        }
+                    }
+                }
+                Card {
+                    height: 170px;
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            Label {
+                                text: "Replacement rules";
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: App.rules-error != "" ? App.rules-error : "pre|post FIND => REPLACE · /regex/";
+                                color: App.rules-error != "" ? Theme.danger : Theme.faint;
+                                font-size: 11px;
+                            }
+                        }
+                        TextEdit {
+                            vertical-stretch: 1;
+                            text <=> App.rules-text;
+                            font-size: 12px;
+                            edited(text) => { App.rules-edited(text); }
+                        }
+                    }
+                }
+            }
+            Card {
+                width: 340px;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 14px;
+                    Text {
+                        text: App.term-current < 0 ? "New entry" : "Edit entry";
+                        color: Theme.text;
+                        font-size: 15px;
+                        font-weight: 700;
+                    }
+                    Field {
+                        label: "Source";
+                        LineEdit { text <=> App.t-source; }
+                    }
+                    Field {
+                        label: "Target";
+                        LineEdit { text <=> App.t-target; }
+                    }
+                    Field {
+                        label: "Kind";
+                        ComboBox {
+                            model: ["Term", "Character"];
+                            current-index <=> App.t-kind;
+                        }
+                    }
+                    Field {
+                        label: App.t-kind == 1 ? "Notes (gender, voice, relationships)" : "Notes";
+                        vertical-stretch: 1;
+                        TextEdit {
+                            min-height: 64px;
+                            text <=> App.t-notes;
+                            wrap: word-wrap;
+                        }
+                    }
+                    if App.t-evidence != "": Field {
+                        label: "Seen in";
+                        Text {
+                            text: App.t-evidence;
+                            color: Theme.dim;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                    CheckBox {
+                        text: "Match case";
+                        checked <=> App.t-case;
+                    }
+                    CheckBox {
+                        text: "Approved";
+                        checked <=> App.t-approved;
+                    }
+                    if App.t-error != "": Text {
+                        text: App.t-error;
+                        color: Theme.danger;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        AppButton {
+                            icon: @image-url("../icons/trash-2.svg");
+                            text: "Delete";
+                            enabled: App.term-current >= 0;
+                            clicked => { App.term-delete(); }
+                        }
+                        AppButton {
+                            primary: true;
+                            icon: @image-url("../icons/check.svg");
+                            text: "Save";
+                            enabled: App.t-source != "";
+                            clicked => { App.term-save(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,242 @@
+export global Theme {
+    out property <color> bg: #0F1522;
+    out property <color> surface: #151C2C;
+    out property <color> panel: #1A2235;
+    out property <color> raised: #212B40;
+    out property <color> selected: #26345A;
+    out property <color> border: #2A3550;
+    out property <color> border-strong: #3A4766;
+    out property <color> field: #131A28;
+    out property <color> popup: #1C2436;
+    out property <color> text: #E4E9F2;
+    out property <color> dim: #9AA6BD;
+    out property <color> faint: #66728A;
+    out property <color> accent: #5B8DEF;
+    out property <color> accent-hover: #77A1F5;
+    out property <color> accent-soft: #5B8DEF26;
+    out property <color> success: #3DBE8B;
+    out property <color> warning: #E6A94A;
+    out property <color> danger: #E35D6A;
+    out property <color> info: #4FC1E9;
+    out property <color> violet: #B48CF2;
+    // Gutter reserved by ScrollView for its scrollbar.
+    out property <length> scrollbar: 10px;
+
+    public pure function kind-color(kind: string) -> color {
+        if (kind == "speaker") { return violet; }
+        if (kind == "choice") { return warning; }
+        if (kind == "title") { return info; }
+        return accent;
+    }
+
+    public pure function state-color(state: string) -> color {
+        if (state == "machine") { return accent; }
+        if (state == "edited") { return success; }
+        if (state == "failed") { return danger; }
+        if (state == "excluded") { return faint; }
+        return border;
+    }
+}
+
+export component Label inherits Text {
+    color: Theme.dim;
+    font-size: 12px;
+    font-weight: 600;
+    overflow: elide;
+}
+
+export component EmptyState inherits VerticalLayout {
+    in property <string> text;
+    alignment: center;
+    vertical-stretch: 1;
+    Text {
+        text: root.text;
+        color: Theme.faint;
+        horizontal-alignment: center;
+    }
+}
+
+export component Card inherits Rectangle {
+    background: Theme.panel;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border;
+}
+
+export component Divider inherits Rectangle {
+    height: 1px;
+    background: Theme.border;
+}
+
+export component AppButton inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> primary;
+    in property <bool> ghost;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: 34px;
+    border-radius: 6px;
+    border-width: root.primary || root.ghost ? 0 : 1px;
+    border-color: root.checked ? Theme.accent : Theme.border;
+    opacity: root.enabled ? 1 : 0.45;
+    background: root.primary
+        ? (touch.has-hover && root.enabled ? Theme.accent-hover : Theme.accent)
+        : root.checked ? Theme.accent-soft
+        : root.ghost ? (touch.has-hover && root.enabled ? Theme.raised : transparent)
+        : (touch.has-hover && root.enabled ? Theme.selected : Theme.raised);
+    animate background { duration: 120ms; }
+    HorizontalLayout {
+        padding-left: root.text == "" ? 8px : 12px;
+        padding-right: root.text == "" ? 8px : 14px;
+        spacing: 6px;
+        alignment: center;
+        if root.icon.width > 0: VerticalLayout {
+            alignment: center;
+            Image {
+                source: root.icon;
+                width: 16px;
+                height: 16px;
+                colorize: root.primary ? #FFFFFF : Theme.text;
+            }
+        }
+        if root.text != "": Text {
+            text: root.text;
+            color: root.primary ? #FFFFFF : Theme.text;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Toggle inherits Rectangle {
+    in property <string> text;
+    in-out property <bool> checked;
+    callback toggled;
+    width: 28px;
+    height: 24px;
+    border-radius: 5px;
+    background: root.checked ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+    Text {
+        text: root.text;
+        color: root.checked ? Theme.accent-hover : Theme.faint;
+        font-size: 12px;
+        font-weight: 700;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+}
+
+export component Chip inherits Rectangle {
+    in property <string> text;
+    in property <string> count;
+    in property <bool> checked;
+    in property <color> dot: transparent;
+    callback clicked;
+    height: 28px;
+    horizontal-stretch: 0;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: root.checked ? Theme.accent : Theme.border;
+    background: root.checked ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 5px;
+        if root.dot != transparent: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                background: root.dot;
+            }
+        }
+        Text {
+            text: root.text;
+            color: root.checked ? Theme.text : Theme.dim;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        if root.count != "": Text {
+            text: root.count;
+            color: Theme.faint;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component NavItem inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> active;
+    callback clicked;
+    height: 36px;
+    border-radius: 6px;
+    background: root.active ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+    HorizontalLayout {
+        padding-left: 12px;
+        spacing: 10px;
+        alignment: start;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: root.icon;
+                width: 18px;
+                height: 18px;
+                colorize: root.active ? Theme.accent-hover : Theme.dim;
+            }
+        }
+        Text {
+            text: root.text;
+            color: root.active ? Theme.text : Theme.dim;
+            font-size: 13px;
+            font-weight: root.active ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Meter inherits Rectangle {
+    in property <float> value;
+    in property <color> fill: Theme.accent;
+    height: 4px;
+    border-radius: 2px;
+    background: Theme.raised;
+    Rectangle {
+        x: 0;
+        width: parent.width * clamp(root.value, 0, 1);
+        border-radius: 2px;
+        background: root.fill;
+        animate width { duration: 200ms; }
+    }
+}
+
+export component Field inherits VerticalLayout {
+    in property <string> label;
+    spacing: 6px;
+    vertical-stretch: 0;
+    Label { text: root.label; }
+    @children
+}

@@ -1,0 +1,557 @@
+import { LineEdit, ComboBox, ListView, TextEdit } from "../widgets.slint";
+import { Theme, Card, AppButton, Toggle, Chip, Label, Meter, Divider, EmptyState } from "../theme.slint";
+import { App, UnitRow } from "../app.slint";
+
+component FileItem inherits Rectangle {
+    in property <string> name;
+    in property <int> total;
+    in property <int> done;
+    in property <bool> active;
+    callback clicked;
+    height: 46px;
+    border-radius: 6px;
+    background: root.active ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+    VerticalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        alignment: center;
+        spacing: 5px;
+        HorizontalLayout {
+            spacing: 6px;
+            Text {
+                text: root.name;
+                color: root.active ? Theme.text : Theme.dim;
+                font-size: 12px;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: root.total == 0 ? "" : floor(100 * root.done / root.total) + "%";
+                color: root.done == root.total && root.total > 0 ? Theme.success : Theme.faint;
+                font-size: 11px;
+            }
+        }
+        Meter {
+            height: 3px;
+            value: root.total == 0 ? 0 : root.done / root.total;
+            fill: root.done == root.total ? Theme.success : Theme.accent;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Rows and header share these columns; the header adds the list's scrollbar gutter.
+component UnitColumns inherits HorizontalLayout {
+    padding-left: 8px;
+    padding-right: 14px;
+    spacing: 12px;
+}
+
+component UnitItem inherits Rectangle {
+    in property <UnitRow> item;
+    in property <bool> selected;
+    callback clicked;
+    callback opened;
+    height: 40px;
+    background: root.selected ? Theme.selected : touch.has-hover ? Theme.raised : transparent;
+    UnitColumns {
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 3px;
+                height: 20px;
+                border-radius: 1.5px;
+                background: Theme.kind-color(root.item.kind);
+            }
+        }
+        Text {
+            width: 52px;
+            text: root.item.n;
+            color: Theme.faint;
+            font-size: 11px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+        Text {
+            width: 110px;
+            text: root.item.speaker;
+            color: Theme.violet;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            horizontal-stretch: 1;
+            min-width: 0;
+            preferred-width: 0;
+            text: root.item.source;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            horizontal-stretch: 1;
+            min-width: 0;
+            preferred-width: 0;
+            text: root.item.translation == "" ? "—" : root.item.translation;
+            color: root.item.translation == "" || root.item.state == "excluded" ? Theme.faint : Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: Theme.state-color(root.item.state);
+            }
+        }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border.transparentize(0.6);
+    }
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+        double-clicked => { root.opened(); }
+    }
+}
+
+component ListHeader inherits Rectangle {
+    height: 32px;
+    background: Theme.surface;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    UnitColumns {
+        padding-right: 14px + Theme.scrollbar;
+        Rectangle { width: 3px; }
+        Label {
+            width: 52px;
+            text: "#";
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+        Label {
+            width: 110px;
+            text: "Speaker";
+            vertical-alignment: center;
+        }
+        Label {
+            horizontal-stretch: 1;
+            min-width: 0;
+            preferred-width: 0;
+            text: "Source";
+            vertical-alignment: center;
+        }
+        Label {
+            horizontal-stretch: 1;
+            min-width: 0;
+            preferred-width: 0;
+            text: "Translation";
+            vertical-alignment: center;
+        }
+        Rectangle { width: 8px; }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+export component UnitEditor inherits VerticalLayout {
+    in property <length> text-size: 14px;
+    spacing: 10px;
+    HorizontalLayout {
+        spacing: 14px;
+        vertical-stretch: 1;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0;
+            preferred-width: 0;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                Label {
+                    text: "Source";
+                    vertical-alignment: center;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: App.cur-meta;
+                    color: Theme.faint;
+                    font-size: 11px;
+                    overflow: elide;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
+            TextEdit {
+                read-only: true;
+                font-size: root.text-size;
+                text: App.cur-legend == "" ? App.cur-source : App.cur-source + "\n\n" + App.cur-legend;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0;
+            preferred-width: 0;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                Label {
+                    text: "Translation";
+                    vertical-alignment: center;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: App.cur-state;
+                    color: Theme.state-color(App.cur-state) == Theme.border ? Theme.faint : Theme.state-color(App.cur-state);
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
+            FocusScope {
+                capture-key-pressed(event) => {
+                    if (event.modifiers.control && event.text == Key.Return) {
+                        App.save(App.cur-translation, true);
+                        return accept;
+                    }
+                    reject
+                }
+                VerticalLayout {
+                    TextEdit {
+                        text <=> App.cur-translation;
+                        font-size: root.text-size;
+                        enabled: App.current >= 0;
+                        placeholder-text: App.current >= 0 ? "Type a translation" : "";
+                    }
+                }
+            }
+        }
+    }
+    if App.cur-suggestion != "": Rectangle {
+        border-radius: 6px;
+        background: Theme.violet.transparentize(0.88);
+        border-width: 1px;
+        border-color: Theme.violet.transparentize(0.5);
+        HorizontalLayout {
+            padding: 10px;
+            spacing: 10px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 3px;
+                Text {
+                    text: App.cur-suggestion;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: App.cur-reason;
+                    color: Theme.violet;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    spacing: 8px;
+                    AppButton {
+                        text: "Dismiss";
+                        clicked => { App.dismiss-suggestion(); }
+                    }
+                    AppButton {
+                        text: "Use suggestion";
+                        clicked => { App.accept-suggestion(); }
+                    }
+                }
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        Text {
+            horizontal-stretch: 1;
+            text: App.cur-error != "" ? App.cur-error : App.cur-issues;
+            color: App.cur-error != "" ? Theme.danger : Theme.warning;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        @children
+        AppButton {
+            icon: App.cur-state == "excluded" ? @image-url("../icons/eye.svg") : @image-url("../icons/eye-off.svg");
+            text: App.cur-state == "excluded" ? "Include" : "Exclude";
+            enabled: App.current >= 0;
+            clicked => { App.toggle-exclude(); }
+        }
+        AppButton {
+            icon: @image-url("../icons/rotate-ccw.svg");
+            text: "Revert";
+            enabled: App.current >= 0;
+            clicked => { App.revert(); }
+        }
+        AppButton {
+            primary: true;
+            icon: @image-url("../icons/check.svg");
+            text: "Save";
+            enabled: App.current >= 0;
+            clicked => { App.save(App.cur-translation, false); }
+        }
+    }
+}
+
+export component TextsPage inherits Rectangle {
+    property <length> row-height: 40px;
+    property <int> current: App.current;
+    property <int> search-request: App.search-request;
+    changed current => { root.reveal(); }
+    changed search-request => {
+        search.focus();
+        search.select-all();
+    }
+
+    function reveal() {
+        if (App.current < 0) {
+            return;
+        }
+        if (App.current * root.row-height < -list.content-y) {
+            list.content-y = -App.current * root.row-height;
+        } else if ((App.current + 1) * root.row-height > -list.content-y + list.visible-height) {
+            list.content-y = -((App.current + 1) * root.row-height - list.visible-height);
+        }
+    }
+
+    background: Theme.bg;
+    HorizontalLayout {
+        Rectangle {
+            width: 220px;
+            background: Theme.surface;
+            VerticalLayout {
+                padding: 10px;
+                padding-right: 6px;
+                spacing: 4px;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: Theme.scrollbar;
+                    Label {
+                        text: "Files";
+                        height: 24px;
+                        vertical-alignment: center;
+                    }
+                }
+                HorizontalLayout {
+                    padding-right: Theme.scrollbar;
+                    FileItem {
+                        name: "All files";
+                        total: App.total;
+                        done: App.translated;
+                        active: App.file-index == -1;
+                        clicked => {
+                            App.file-index = -1;
+                            App.filter-changed();
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    padding-right: Theme.scrollbar;
+                    Divider { }
+                }
+                ListView {
+                    for file[i] in App.files: FileItem {
+                        name: file.name;
+                        total: file.total;
+                        done: file.done;
+                        active: App.file-index == i;
+                        clicked => {
+                            App.file-index = i;
+                            App.filter-changed();
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Theme.border;
+            }
+        }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+            HorizontalLayout {
+                spacing: 8px;
+                search := LineEdit {
+                    icon: @image-url("../icons/search.svg");
+                    placeholder-text: App.regex ? "Search with a regular expression" : "Search";
+                    invalid: App.regex-error;
+                    text <=> App.query;
+                    edited(text) => { App.query-edited(text); }
+                    if App.query != "": VerticalLayout {
+                        alignment: center;
+                        AppButton {
+                            ghost: true;
+                            height: 26px;
+                            icon: @image-url("../icons/x.svg");
+                            clicked => {
+                                App.query = "";
+                                App.query-edited("");
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Toggle {
+                            text: ".*";
+                            checked <=> App.regex;
+                            toggled => { App.filter-changed(); }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Toggle {
+                            text: "Aa";
+                            checked <=> App.match-case;
+                            toggled => { App.filter-changed(); }
+                        }
+                    }
+                }
+                ComboBox {
+                    width: 180px;
+                    model: ["Source", "Translation", "Source + translation", "Speaker", "Unit ID"];
+                    current-index <=> App.scope;
+                    selected => { App.filter-changed(); }
+                }
+                ComboBox {
+                    width: 140px;
+                    model: ["All kinds", "Dialogue", "Speaker", "Choice", "Title"];
+                    current-index <=> App.kind-index;
+                    selected => { App.filter-changed(); }
+                }
+                AppButton {
+                    icon: @image-url("../icons/replace.svg");
+                    text: "Replace";
+                    checked: App.replace-open;
+                    clicked => { App.replace-open = !App.replace-open; }
+                }
+            }
+
+            if App.replace-open: HorizontalLayout {
+                spacing: 8px;
+                LineEdit {
+                    icon: @image-url("../icons/replace.svg");
+                    placeholder-text: App.regex ? "Replace with (\\1 inserts group 1)" : "Replace with";
+                    text <=> App.replace-with;
+                }
+                AppButton {
+                    primary: true;
+                    text: "Replace in " + App.shown-text + " shown";
+                    enabled: App.query != "" && !App.regex-error && !App.running && App.units.length > 0;
+                    clicked => { App.replace-all(); }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 6px;
+                for status[i] in [
+                    { key: "all", label: "All" },
+                    { key: "new", label: "New" },
+                    { key: "machine", label: "Machine" },
+                    { key: "edited", label: "Edited" },
+                    { key: "failed", label: "Failed" },
+                    { key: "excluded", label: "Excluded" },
+                    { key: "issues", label: "Issues" },
+                    { key: "review", label: "Review" },
+                ]: Chip {
+                    text: status.label;
+                    count: App.counts[i];
+                    checked: App.status-filter == status.key;
+                    dot: status.key == "all" ? transparent : status.key == "issues" ? Theme.warning
+                        : status.key == "review" ? Theme.violet : Theme.state-color(status.key);
+                    clicked => {
+                        App.status-filter = status.key;
+                        App.filter-changed();
+                    }
+                }
+                if App.status-filter == "issues": ComboBox {
+                    width: 190px;
+                    height: 28px;
+                    model: ["All issues", "Source script left", "Glossary term missing", "Same as source",
+                        "Line breaks differ", "Fails checks"];
+                    current-index <=> App.issue-index;
+                    selected => { App.filter-changed(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            Card {
+                vertical-stretch: 3;
+                clip: true;
+                VerticalLayout {
+                    ListHeader { }
+                    Rectangle {
+                        focus := FocusScope {
+                            key-pressed(event) => {
+                                if (event.text == Key.UpArrow && App.current > 0) {
+                                    App.select(App.current - 1);
+                                    return accept;
+                                }
+                                if (event.text == Key.DownArrow && App.current + 1 < App.units.length) {
+                                    App.select(App.current + 1);
+                                    return accept;
+                                }
+                                if (event.text == Key.Return && App.current >= 0) {
+                                    App.editor-open = true;
+                                    return accept;
+                                }
+                                reject
+                            }
+                            list := ListView {
+                                for row[i] in App.units: UnitItem {
+                                    item: row;
+                                    selected: App.current == i;
+                                    clicked => {
+                                        focus.focus();
+                                        App.select(i);
+                                    }
+                                    opened => {
+                                        App.select(i);
+                                        App.editor-open = true;
+                                    }
+                                }
+                            }
+                        }
+                        if App.units.length == 0: EmptyState {
+                            width: parent.width;
+                            height: parent.height;
+                            text: App.regex-error ? "Invalid regular expression" : "No matching units";
+                        }
+                    }
+                }
+            }
+
+            Card {
+                vertical-stretch: 2;
+                min-height: App.cur-suggestion != "" ? 270px : 190px;
+                UnitEditor {
+                    padding: 14px;
+                    AppButton {
+                        ghost: true;
+                        icon: @image-url("../icons/maximize-2.svg");
+                        enabled: App.current >= 0;
+                        clicked => { App.editor-open = true; }
+                    }
+                }
+            }
+        }
+    }
+}

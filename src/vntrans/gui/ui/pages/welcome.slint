@@ -1,0 +1,237 @@
+import { LineEdit, ComboBox, SpinBox, ListView } from "../widgets.slint";
+import { Theme, Card, AppButton, Field, Label, Meter } from "../theme.slint";
+import { App } from "../app.slint";
+
+export global Languages {
+    out property <[string]> sources: ["Japanese", "Chinese", "Korean", "English"];
+    out property <[string]> targets: [
+        "English", "Indonesian", "Chinese (Simplified)", "Chinese (Traditional)", "Korean", "Vietnamese",
+        "Thai", "Spanish", "Portuguese", "French", "German", "Russian"];
+    out property <[string]> encodings: ["Auto", "cp932", "utf-8", "utf-16"];
+}
+
+component RecentItem inherits Rectangle {
+    in property <string> name;
+    in property <string> path;
+    callback clicked;
+    height: 48px;
+    border-radius: 6px;
+    background: touch.has-hover ? Theme.raised : transparent;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("../icons/folder-open.svg");
+                width: 18px;
+                height: 18px;
+                colorize: Theme.accent;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.name;
+                color: Theme.text;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.path;
+                color: Theme.faint;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component PathField inherits Field {
+    in-out property <string> value;
+    in property <string> placeholder;
+    callback browse;
+    HorizontalLayout {
+        spacing: 8px;
+        LineEdit {
+            text <=> root.value;
+            placeholder-text: root.placeholder;
+        }
+        AppButton {
+            icon: @image-url("../icons/folder-open.svg");
+            text: "Browse";
+            enabled: !App.busy;
+            clicked => { root.browse(); }
+        }
+    }
+}
+
+export component WelcomePage inherits Rectangle {
+    background: Theme.bg;
+    VerticalLayout {
+        alignment: center;
+        HorizontalLayout {
+            alignment: center;
+            Card {
+                width: 580px;
+                VerticalLayout {
+                    padding: 32px;
+                    spacing: 20px;
+                    HorizontalLayout {
+                        spacing: 14px;
+                        alignment: start;
+                        Rectangle {
+                            width: 44px;
+                            height: 44px;
+                            border-radius: 10px;
+                            background: Theme.accent-soft;
+                            Image {
+                                source: @image-url("../icons/languages.svg");
+                                width: 24px;
+                                height: 24px;
+                                colorize: Theme.accent-hover;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: App.creating ? "New project" : "VnTrans";
+                                color: Theme.text;
+                                font-size: 22px;
+                                font-weight: 700;
+                            }
+                        }
+                    }
+
+                    if !App.creating: VerticalLayout {
+                        spacing: 20px;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: start;
+                            AppButton {
+                                primary: true;
+                                icon: @image-url("../icons/folder-plus.svg");
+                                text: "New project";
+                                enabled: !App.busy;
+                                clicked => {
+                                    App.message = "";
+                                    App.creating = true;
+                                }
+                            }
+                            AppButton {
+                                icon: @image-url("../icons/folder-open.svg");
+                                text: "Open workspace";
+                                enabled: !App.busy;
+                                clicked => { App.browse("open"); }
+                            }
+                        }
+                        if App.recent.length > 0: VerticalLayout {
+                            spacing: 6px;
+                            Label { text: "Recent"; }
+                            for item in App.recent: RecentItem {
+                                name: item.name;
+                                path: item.path;
+                                clicked => { App.open-workspace(item.path); }
+                            }
+                        }
+                    }
+
+                    if App.creating: VerticalLayout {
+                        spacing: 14px;
+                        Field {
+                            label: "Name";
+                            LineEdit { text <=> App.new-name; }
+                        }
+                        PathField {
+                            label: "Game scripts";
+                            placeholder: "Folder with .ks / .scn files";
+                            value <=> App.new-original;
+                            browse => { App.browse("original"); }
+                        }
+                        PathField {
+                            label: "Workspace";
+                            placeholder: "New or empty folder";
+                            value <=> App.new-workspace;
+                            browse => { App.browse("workspace"); }
+                        }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Field {
+                                label: "Source language";
+                                ComboBox {
+                                    model: Languages.sources;
+                                    current-index <=> App.new-source;
+                                }
+                            }
+                            Field {
+                                label: "Target language";
+                                ComboBox {
+                                    model: Languages.targets;
+                                    current-index <=> App.new-target;
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Field {
+                                label: "Encoding (KS)";
+                                ComboBox {
+                                    model: Languages.encodings;
+                                    current-index <=> App.new-encoding;
+                                }
+                            }
+                            Field {
+                                label: "Language index (SCN)";
+                                SpinBox {
+                                    minimum: 0;
+                                    maximum: 15;
+                                    value <=> App.new-language-index;
+                                }
+                            }
+                        }
+                        if App.busy: VerticalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: App.busy-text;
+                                color: Theme.dim;
+                                font-size: 12px;
+                                overflow: elide;
+                            }
+                            Meter { value: App.busy-progress; }
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: end;
+                            AppButton {
+                                text: "Cancel";
+                                enabled: !App.busy;
+                                clicked => {
+                                    App.message = "";
+                                    App.creating = false;
+                                }
+                            }
+                            AppButton {
+                                primary: true;
+                                text: "Create";
+                                enabled: !App.busy && App.new-name != "" && App.new-original != "" && App.new-workspace != "";
+                                clicked => { App.create-project(); }
+                            }
+                        }
+                    }
+
+                    if App.message != "": Text {
+                        text: App.message;
+                        color: App.message-error ? Theme.danger : Theme.dim;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}

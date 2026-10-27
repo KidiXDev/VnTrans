@@ -1,0 +1,197 @@
+import { ComboBox, TextEdit, CheckBox } from "../widgets.slint";
+import { Theme, Card, AppButton, Field, Label, Chip } from "../theme.slint";
+import { App } from "../app.slint";
+import { Languages } from "welcome.slint";
+
+component SectionItem inherits Rectangle {
+    in property <string> title;
+    in property <bool> enabled;
+    in property <bool> locked;
+    in property <bool> selected;
+    in property <bool> first;
+    in property <bool> last;
+    callback clicked;
+    callback toggled;
+    callback move(int);
+    height: 40px;
+    border-radius: 6px;
+    background: root.selected ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 4px;
+        spacing: 6px;
+        CheckBox {
+            checked: root.enabled;
+            enabled: !root.locked;
+            toggled => { root.toggled(); }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.title;
+            color: root.enabled ? Theme.text : Theme.faint;
+            vertical-alignment: center;
+        }
+        if !root.locked: HorizontalLayout {
+            spacing: 2px;
+            AppButton {
+                icon: @image-url("../icons/arrow-up.svg");
+                enabled: !root.first;
+                clicked => { root.move(-1); }
+            }
+            AppButton {
+                icon: @image-url("../icons/arrow-down.svg");
+                enabled: !root.last;
+                clicked => { root.move(1); }
+            }
+        }
+    }
+}
+
+export component PromptPage inherits Rectangle {
+    background: Theme.bg;
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 12px;
+        VerticalLayout {
+            width: 290px;
+            spacing: 12px;
+            Card {
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 12px;
+                    Field {
+                        label: "Source language";
+                        ComboBox {
+                            model: Languages.sources;
+                            current-index <=> App.p-source;
+                            selected => { App.languages-changed(); }
+                        }
+                    }
+                    Field {
+                        label: "Target language";
+                        ComboBox {
+                            model: Languages.targets;
+                            current-index <=> App.p-target;
+                            selected => { App.languages-changed(); }
+                        }
+                    }
+                }
+            }
+            Card {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 2px;
+                    alignment: start;
+                    Label {
+                        text: "Sections";
+                        height: 26px;
+                        vertical-alignment: center;
+                    }
+                    for section[i] in App.sections: SectionItem {
+                        title: section.title;
+                        enabled: section.enabled;
+                        locked: section.locked;
+                        selected: App.section-current == i;
+                        first: i == 0;
+                        last: i >= App.sections.length - 2;
+                        clicked => { App.section-select(i); }
+                        toggled => { App.section-toggle(i); }
+                        move(delta) => { App.section-move(i, delta); }
+                    }
+                }
+            }
+        }
+
+        Card {
+            horizontal-stretch: 1;
+            preferred-width: 0;
+            min-width: 300px;
+            VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Label {
+                        min-width: 80px;
+                        text: App.sections[App.section-current].title;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    if App.section-key == "style": AppButton {
+                        text: "Keep honorifics";
+                        clicked => { App.style-preset("Keep honorifics"); }
+                    }
+                    if App.section-key == "style": AppButton {
+                        text: "Localize";
+                        clicked => { App.style-preset("Localize"); }
+                    }
+                    if App.section-editable: AppButton {
+                        icon: @image-url("../icons/rotate-ccw.svg");
+                        text: "Default";
+                        clicked => { App.section-reset(); }
+                    }
+                }
+                if App.section-about != "": Text {
+                    text: App.section-about;
+                    color: Theme.dim;
+                    wrap: word-wrap;
+                }
+                if App.section-key == "contract" || App.section-editable: TextEdit {
+                    vertical-stretch: 1;
+                    text <=> App.section-text;
+                    read-only: !App.section-editable;
+                    placeholder-text: App.section-key == "instructions" ? "Tone, setting, names to keep, recurring jokes…" : "";
+                    wrap: word-wrap;
+                    edited(text) => { App.section-edited(text); }
+                }
+                if !App.section-editable && App.section-key != "contract": Rectangle { vertical-stretch: 1; }
+            }
+        }
+
+        Card {
+            horizontal-stretch: 1;
+            preferred-width: 0;
+            min-width: 300px;
+            VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Label {
+                        text: "Preview";
+                        vertical-alignment: center;
+                    }
+                    Chip {
+                        text: "System";
+                        checked: !App.preview-user-tab;
+                        clicked => { App.preview-user-tab = false; }
+                    }
+                    Chip {
+                        text: "User";
+                        checked: App.preview-user-tab;
+                        clicked => { App.preview-user-tab = true; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                Text {
+                    text: App.preview-stats;
+                    color: Theme.faint;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                TextEdit {
+                    vertical-stretch: 1;
+                    text: App.preview-user-tab ? App.preview-user : App.preview-system;
+                    read-only: true;
+                    wrap: word-wrap;
+                    font-size: 12px;
+                }
+            }
+        }
+    }
+}

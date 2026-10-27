@@ -1,0 +1,314 @@
+import { CheckBox, SpinBox, ComboBox, ListView } from "../widgets.slint";
+import { Theme, Card, AppButton, Label, Meter } from "../theme.slint";
+import { App, BuildRow } from "../app.slint";
+
+export global Encodings {
+    out property <[string]> output: ["Keep", "utf-8", "utf-8-sig", "utf-16-le", "cp932"];
+}
+
+component BuildColumns inherits HorizontalLayout {
+    padding-left: 14px;
+    padding-right: 8px;
+    spacing: 12px;
+}
+
+component BuildItem inherits Rectangle {
+    in property <BuildRow> item;
+    in property <bool> selected;
+    callback clicked;
+    height: 44px;
+    background: root.selected ? Theme.selected : touch.has-hover ? Theme.raised : transparent;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    BuildColumns {
+        Text {
+            horizontal-stretch: 2;
+            min-width: 0;
+            preferred-width: 0;
+            text: root.item.date;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            width: 70px;
+            text: root.item.files;
+            color: Theme.dim;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+        Text {
+            width: 90px;
+            text: root.item.units;
+            color: Theme.dim;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+        Text {
+            horizontal-stretch: 2;
+            min-width: 0;
+            preferred-width: 0;
+            text: root.item.settings;
+            color: Theme.faint;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            width: 80px;
+            text: root.item.warnings == 0 ? "—" : root.item.warnings;
+            color: root.item.warnings == 0 ? Theme.faint : Theme.warning;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+        VerticalLayout {
+            alignment: center;
+            AppButton {
+                ghost: true;
+                width: 82px;
+                height: 30px;
+                icon: @image-url("../icons/external-link.svg");
+                text: "Open";
+                clicked => { App.open-folder(root.item.path); }
+            }
+        }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border.transparentize(0.6);
+    }
+}
+
+export component BuildPage inherits Rectangle {
+    background: Theme.bg;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        alignment: start;
+        Card {
+            vertical-stretch: 0;
+            HorizontalLayout {
+                padding: 18px;
+                spacing: 24px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text {
+                            text: (App.total == 0 ? 0 : floor(1000 * App.translated / App.total) / 10) + "%";
+                            color: Theme.text;
+                            font-size: 22px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: App.progress-text + " units translated";
+                            color: Theme.dim;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    Meter {
+                        height: 6px;
+                        value: App.total == 0 ? 0 : App.translated / App.total;
+                    }
+                    Text {
+                        text: "Untranslated and excluded units keep their original text.";
+                        color: Theme.faint;
+                        font-size: 12px;
+                    }
+                }
+                Rectangle {
+                    width: 1px;
+                    background: Theme.border;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 10px;
+                    HorizontalLayout {
+                        spacing: 10px;
+                        CheckBox {
+                            width: 160px;
+                            text: "Wrap dialogue at";
+                            checked <=> App.wrap;
+                        }
+                        SpinBox {
+                            width: 110px;
+                            enabled: App.wrap;
+                            minimum: 10;
+                            maximum: 400;
+                            value <=> App.wrap-columns;
+                        }
+                        Text {
+                            width: 60px;
+                            text: "columns";
+                            color: Theme.dim;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text {
+                            width: 160px;
+                            text: "Output encoding (KS)";
+                            color: App.has-ks ? Theme.text : Theme.faint;
+                            vertical-alignment: center;
+                        }
+                        ComboBox {
+                            enabled: App.has-ks;
+                            model: Encodings.output;
+                            current-index <=> App.output-encoding;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    AppButton {
+                        primary: true;
+                        height: 40px;
+                        icon: @image-url("../icons/package.svg");
+                        text: App.busy ? "Building…" : "Build patch";
+                        enabled: !App.busy;
+                        clicked => { App.build(); }
+                    }
+                }
+            }
+        }
+
+        if App.builds.length == 0: Card {
+            height: 132px;
+            VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+                HorizontalLayout {
+                    alignment: center;
+                    Image {
+                        source: @image-url("../icons/package.svg");
+                        width: 26px;
+                        height: 26px;
+                        colorize: Theme.faint;
+                    }
+                }
+                Text {
+                    text: "No builds yet";
+                    color: Theme.dim;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Each build creates a new folder under builds/ in the workspace.";
+                    color: Theme.faint;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        if App.builds.length > 0: HorizontalLayout {
+            spacing: 12px;
+            vertical-stretch: 1;
+            Card {
+                horizontal-stretch: 3;
+                clip: true;
+                VerticalLayout {
+                    Rectangle {
+                        height: 44px;
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            Label {
+                                text: "Builds";
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: App.build-summary;
+                                color: Theme.faint;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 30px;
+                        background: Theme.surface;
+                        BuildColumns {
+                            padding-right: 8px + Theme.scrollbar;
+                            Label {
+                                horizontal-stretch: 2;
+                                min-width: 0;
+                                preferred-width: 0;
+                                text: "Built";
+                                vertical-alignment: center;
+                            }
+                            Label {
+                                width: 70px;
+                                text: "Files";
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                            Label {
+                                width: 90px;
+                                text: "Translated";
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                            Label {
+                                horizontal-stretch: 2;
+                                min-width: 0;
+                                preferred-width: 0;
+                                text: "Options";
+                                vertical-alignment: center;
+                            }
+                            Label {
+                                width: 80px;
+                                text: "Warnings";
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { width: 82px; }
+                        }
+                    }
+                    ListView {
+                        height: min(App.builds.length, 10) * 44px;
+                        for item[i] in App.builds: BuildItem {
+                            item: item;
+                            selected: App.build-current == i;
+                            clicked => { App.build-select(i); }
+                        }
+                    }
+                }
+            }
+            if App.build-warnings.length > 0: Card {
+                horizontal-stretch: 2;
+                VerticalLayout {
+                    padding: 14px;
+                    padding-right: 4px;
+                    spacing: 8px;
+                    Label {
+                        height: 16px;
+                        text: App.build-warnings.length + " warnings · " + App.builds[App.build-current].date;
+                    }
+                    ListView {
+                        for warning in App.build-warnings: HorizontalLayout {
+                            padding-top: 4px;
+                            padding-bottom: 4px;
+                            padding-right: 6px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: warning;
+                                color: Theme.warning;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

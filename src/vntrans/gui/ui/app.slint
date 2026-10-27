@@ -1,0 +1,222 @@
+export struct UnitRow {
+    n: int,
+    kind: string,
+    speaker: string,
+    source: string,
+    translation: string,
+    state: string,
+}
+
+export struct FileRow {
+    name: string,
+    total: int,
+    done: int,
+}
+
+export struct RecentRow {
+    name: string,
+    path: string,
+}
+
+export struct BuildRow {
+    name: string,
+    date: string,
+    path: string,
+    files: string,
+    units: string,
+    settings: string,
+    warnings: int,
+}
+
+export struct TermRow {
+    source: string,
+    target: string,
+    kind: string,
+    notes: string,
+    approved: bool,
+}
+
+export struct SectionRow {
+    title: string,
+    enabled: bool,
+    locked: bool,
+}
+
+export struct ProfileRow {
+    name: string,
+    detail: string,
+}
+
+export struct LogRow {
+    time: string,
+    kind: string,
+    text: string,
+}
+
+export global App {
+    in-out property <string> page: "texts";
+    in property <bool> has-project;
+    in property <string> project-name;
+    in property <string> project-info;
+    in property <int> total;
+    in property <int> translated;
+    in property <int> failed;
+    in property <string> progress-text;
+    in property <string> status-text;
+    in-out property <bool> editor-open;
+    in-out property <int> search-request;
+    in property <bool> busy;
+    in property <string> busy-text;
+    in property <float> busy-progress;
+    in property <string> message;
+    in property <bool> message-error;
+    callback close-project();
+    callback navigate(string);
+
+    in property <[RecentRow]> recent;
+    in-out property <bool> creating;
+    in-out property <string> new-name;
+    in-out property <string> new-original;
+    in-out property <string> new-workspace;
+    in-out property <int> new-source: 0;
+    in-out property <int> new-target: 0;
+    in-out property <int> new-encoding: 0;
+    in-out property <int> new-language-index: 0;
+    callback browse(string);
+    callback open-workspace(string);
+    callback create-project();
+
+    in property <[FileRow]> files;
+    in-out property <int> file-index: -1;
+    in property <[UnitRow]> units;
+    in-out property <string> query;
+    in-out property <int> scope: 2;
+    in-out property <bool> regex;
+    in-out property <bool> match-case;
+    in-out property <int> kind-index;
+    in-out property <string> status-filter: "all";
+    in property <bool> regex-error;
+    in property <[string]> counts: ["", "", "", "", "", "", "", ""];
+    in property <string> shown-text;
+    in-out property <int> issue-index;
+    in property <string> cur-issues;
+    in property <string> cur-suggestion;
+    in property <string> cur-reason;
+    in-out property <bool> replace-open;
+    in-out property <string> replace-with;
+    callback accept-suggestion();
+    callback dismiss-suggestion();
+    callback replace-all();
+    in-out property <int> current: -1;
+    in property <string> cur-source;
+    in property <string> cur-legend;
+    in property <string> cur-meta;
+    in property <string> cur-speaker;
+    in property <string> cur-number;
+    in property <string> cur-state;
+    in property <string> cur-error;
+    in-out property <string> cur-translation;
+    callback query-edited(string);
+    callback filter-changed();
+    callback select(int);
+    callback save(string, bool);
+    callback revert();
+    callback toggle-exclude();
+
+    in property <bool> has-ks;
+    in-out property <bool> wrap;
+    in-out property <int> wrap-columns: 48;
+    in-out property <int> output-encoding;
+    in property <[BuildRow]> builds;
+    in-out property <int> build-current;
+    in property <[string]> build-warnings;
+    in property <string> build-summary;
+    callback build();
+    callback build-select(int);
+    callback open-folder(string);
+
+    in property <[TermRow]> terms;
+    in property <int> term-total;
+    in-out property <int> term-current: -1;
+    in-out property <string> term-query;
+    in-out property <string> t-source;
+    in-out property <string> t-target;
+    in-out property <string> t-notes;
+    in-out property <int> t-kind;
+    in-out property <bool> t-case;
+    in-out property <bool> t-approved: true;
+    in property <string> t-error;
+    in property <string> t-evidence;
+    in-out property <string> rules-text;
+    in property <string> rules-error;
+    callback rules-edited(string);
+    callback term-query-edited(string);
+    callback term-select(int);
+    callback term-new();
+    callback term-save();
+    callback term-delete();
+    callback term-import();
+    callback term-export();
+
+    in-out property <int> p-source;
+    in-out property <int> p-target;
+    in property <[SectionRow]> sections;
+    in-out property <int> section-current: 0;
+    in property <string> section-key;
+    in property <bool> section-editable;
+    in property <string> section-about;
+    in-out property <string> section-text;
+    in property <string> preview-system;
+    in property <string> preview-user;
+    in property <string> preview-stats;
+    in-out property <bool> preview-user-tab;
+    callback languages-changed();
+    callback section-select(int);
+    callback section-toggle(int);
+    callback section-move(int, int);
+    callback section-edited(string);
+    callback section-reset();
+    callback style-preset(string);
+
+    in property <[ProfileRow]> profiles;
+    in-out property <int> profile-current: -1;
+    in-out property <string> pf-name;
+    in-out property <int> pf-provider;
+    in-out property <string> pf-keys;
+    in-out property <string> pf-model;
+    in-out property <float> pf-temperature: 0.3;
+    in-out property <int> pf-max-tokens: 8192;
+    in-out property <int> pf-reasoning;
+    in-out property <int> pf-timeout: 120;
+    in property <[string]> pf-models;
+    in property <string> pf-status;
+    in property <bool> pf-status-error;
+    in property <bool> pf-working;
+    callback profile-select(int);
+    callback profile-new();
+    callback profile-save();
+    callback profile-delete();
+    callback profile-test();
+    callback profile-fetch();
+
+    in property <[string]> profile-names;
+    in-out property <int> run-profile;
+    in-out property <int> run-scope;
+    in-out property <int> run-task;
+    in-out property <int> run-lines: 20;
+    in-out property <int> run-tokens: 1200;
+    in-out property <int> run-before: 5;
+    in-out property <int> run-after: 2;
+    in-out property <int> run-concurrency: 4;
+    in-out property <int> run-rpm: 0;
+    in property <bool> running;
+    in property <bool> stopping;
+    in property <int> run-total;
+    in property <int> run-done;
+    in property <int> run-failed;
+    in property <string> run-meta;
+    in property <[LogRow]> log;
+    callback run-start();
+    callback run-stop();
+    callback run-settings-changed();
+}

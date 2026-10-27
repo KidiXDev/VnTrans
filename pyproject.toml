@@ -13,6 +13,13 @@ license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 
 [project.scripts]
 vntrans = "vntrans:main"
+vntrans-gui = "vntrans.gui:main"
+
+[project.optional-dependencies]
+gui = [
+    "jeepney>=0.9 ; sys_platform == 'linux'",
+    "slint>=1.18.1b1,<1.19",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]

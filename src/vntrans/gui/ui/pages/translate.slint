@@ -1,0 +1,230 @@
+import { ComboBox, SpinBox, ListView } from "../widgets.slint";
+import { Theme, Card, AppButton, Field, Label, Meter, Divider, EmptyState } from "../theme.slint";
+import { App } from "../app.slint";
+
+component Number inherits SpinBox {
+    edited => { App.run-settings-changed(); }
+}
+
+component Stat inherits VerticalLayout {
+    in property <string> label;
+    in property <int> value;
+    in property <color> tint: Theme.text;
+    spacing: 2px;
+    alignment: start;
+    Text {
+        text: root.value;
+        color: root.tint;
+        font-size: 22px;
+        font-weight: 700;
+    }
+    Text {
+        text: root.label;
+        color: Theme.faint;
+        font-size: 12px;
+    }
+}
+
+export component TranslatePage inherits Rectangle {
+    background: Theme.bg;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        Card {
+            vertical-stretch: 0;
+            VerticalLayout {
+                padding: 16px;
+                spacing: 14px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    Field {
+                        horizontal-stretch: 1;
+                        label: "Profile";
+                        if App.profile-names.length > 0: ComboBox {
+                            enabled: !App.running;
+                            model: App.profile-names;
+                            current-index <=> App.run-profile;
+                            selected => { App.run-settings-changed(); }
+                        }
+                        if App.profile-names.length == 0: ComboBox {
+                            enabled: false;
+                            model: ["No profiles"];
+                        }
+                    }
+                    Field {
+                        horizontal-stretch: 1;
+                        label: "Task";
+                        ComboBox {
+                            enabled: !App.running;
+                            model: ["Translate", "Review translations", "Discover terms"];
+                            current-index <=> App.run-task;
+                        }
+                    }
+                    Field {
+                        horizontal-stretch: 1;
+                        label: "Units";
+                        ComboBox {
+                            enabled: !App.running;
+                            model: [App.run-task == 0 ? "New and failed" : "All", "Current Texts filter"];
+                            current-index <=> App.run-scope;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Field {
+                        horizontal-stretch: 1;
+                        label: "Lines per batch";
+                        Number {
+                            minimum: 1;
+                            maximum: 200;
+                            value <=> App.run-lines;
+                        }
+                    }
+                    Field {
+                        horizontal-stretch: 1;
+                        label: "Source tokens per batch";
+                        Number {
+                            minimum: 100;
+                            maximum: 20000;
+                            step-size: 100;
+                            value <=> App.run-tokens;
+                        }
+                    }
+                    Field {
+                        horizontal-stretch: 1;
+                        label: "Context before";
+                        Number {
+                            minimum: 0;
+                            maximum: 50;
+                            value <=> App.run-before;
+                        }
+                    }
+                    Field {
+                        horizontal-stretch: 1;
+                        label: "Context after";
+                        Number {
+                            minimum: 0;
+                            maximum: 50;
+                            value <=> App.run-after;
+                        }
+                    }
+                    Field {
+                        horizontal-stretch: 1;
+                        label: "Parallel requests";
+                        Number {
+                            minimum: 1;
+                            maximum: 64;
+                            value <=> App.run-concurrency;
+                        }
+                    }
+                    Field {
+                        horizontal-stretch: 1;
+                        label: "Requests/min (0 = off)";
+                        Number {
+                            minimum: 0;
+                            maximum: 10000;
+                            value <=> App.run-rpm;
+                        }
+                    }
+                }
+                Divider { }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: App.run-meta;
+                        color: Theme.dim;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if App.profile-names.length == 0: AppButton {
+                        primary: true;
+                        icon: @image-url("../icons/plus.svg");
+                        text: "Add profile";
+                        clicked => { App.navigate("settings"); }
+                    }
+                    if !App.running && App.profile-names.length > 0: AppButton {
+                        primary: true;
+                        icon: @image-url("../icons/play.svg");
+                        text: "Start";
+                        enabled: !App.busy;
+                        clicked => { App.run-start(); }
+                    }
+                    if App.running: AppButton {
+                        icon: @image-url("../icons/square.svg");
+                        text: App.stopping ? "Stopping…" : "Stop";
+                        enabled: !App.stopping;
+                        clicked => { App.run-stop(); }
+                    }
+                }
+            }
+        }
+
+        if App.running || App.run-total > 0: Card {
+            vertical-stretch: 0;
+            VerticalLayout {
+                padding: 16px;
+                spacing: 14px;
+                HorizontalLayout {
+                    spacing: 48px;
+                    alignment: start;
+                    Stat {
+                        label: App.run-task == 0 ? "Translated" : "Checked";
+                        value: App.run-done;
+                        tint: Theme.accent-hover;
+                    }
+                    Stat {
+                        label: "Failed";
+                        value: App.run-failed;
+                        tint: App.run-failed > 0 ? Theme.danger : Theme.text;
+                    }
+                    Stat {
+                        label: "Remaining";
+                        value: max(0, App.run-total - App.run-done - App.run-failed);
+                    }
+                    Stat {
+                        label: "In this run";
+                        value: App.run-total;
+                    }
+                }
+                Meter {
+                    height: 6px;
+                    value: App.run-total == 0 ? 0 : (App.run-done + App.run-failed) / App.run-total;
+                }
+            }
+        }
+
+        Card {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                Label { text: "Log"; }
+                if App.log.length == 0: EmptyState { text: "No activity yet"; }
+                if App.log.length > 0: ListView {
+                    for entry in App.log: HorizontalLayout {
+                        spacing: 10px;
+                        padding-top: 3px;
+                        padding-bottom: 3px;
+                        Text {
+                            width: 64px;
+                            text: entry.time;
+                            color: Theme.faint;
+                            font-size: 12px;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: entry.text;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                            color: entry.kind == "error" ? Theme.danger : entry.kind == "retry" ? Theme.warning
+                                : entry.kind == "done" ? Theme.success : Theme.dim;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

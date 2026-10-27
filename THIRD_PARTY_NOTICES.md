@@ -1,7 +1,8 @@
 # Source references and attribution
 
 VnTrans reimplements Kirikiri extraction and rebuilding in Python. It does not
-bundle or invoke the reference tools at runtime.
+bundle or invoke the reference tools at runtime. The optional GUI's bundled icons
+and its UI toolkit are listed at the end.
 
 ## VNTranslationTools
 
@@ -53,3 +54,46 @@ SOFTWARE.
 FreeMote was consulted as a cross-check of PSB format behavior and header
 checksum fields: https://github.com/UlyssesWu/FreeMote . No FreeMote library or
 implementation is included or required by VnTrans.
+
+## LinguaGacha
+
+Source: https://github.com/neavo/LinguaGacha
+
+The translation workflow (selective glossary injection, staged prompts, batch
+retries, review) was studied as a design reference. No LinguaGacha code, prompt
+templates or other assets are included; VnTrans's prompts are original.
+
+## Slint (GUI toolkit, `gui` extra)
+
+Source: https://slint.dev
+
+The optional desktop GUI uses the Slint Python package under the Slint
+Royalty-free Desktop, Mobile, and Web Applications License 2.0. As that license
+requires, the application shows the Slint attribution (`AboutSlint`) in
+Settings. Slint is installed as a dependency and is not bundled in this source
+tree.
+
+## Lucide icons
+
+Source: https://lucide.dev (`lucide-static` 1.56.0)
+
+The SVG icons in `src/vntrans/gui/ui/icons/` are from Lucide.
+
+ISC License
+
+Copyright (c) 2026 Lucide Icons and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+Some Lucide icons are derived from Feather (https://feathericons.com),
+Copyright (c) 2013-present Cole Bemis, under the MIT license text reproduced above.

@@ -1,0 +1,498 @@
+// Themed replacements for the std-widgets the app uses, with the same property names.
+import { Theme } from "theme.slint";
+
+component ScrollBar inherits Rectangle {
+    in property <length> content-size;
+    in property <length> view-size;
+    in-out property <length> offset;
+    property <length> max-offset: max(0px, root.content-size - root.view-size);
+    property <length> thumb-size: root.max-offset <= 0 ? 0px : max(28px, root.height * root.view-size / root.content-size);
+    property <length> track: max(1px, root.height - root.thumb-size);
+    property <length> start-offset;
+    width: Theme.scrollbar;
+    visible: root.max-offset > 0;
+    thumb := Rectangle {
+        x: parent.width - self.width - 2px;
+        y: root.max-offset <= 0 ? 0 : root.track * (-root.offset / root.max-offset);
+        width: touch.has-hover || touch.pressed ? 6px : 4px;
+        height: root.thumb-size;
+        border-radius: self.width / 2;
+        background: touch.pressed ? Theme.dim : touch.has-hover ? Theme.faint : Theme.border-strong;
+        animate width, background { duration: 120ms; }
+    }
+    touch := TouchArea {
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                if (self.mouse-y < thumb.y || self.mouse-y > thumb.y + thumb.height) {
+                    root.offset = -clamp((self.mouse-y - root.thumb-size / 2) / root.track, 0, 1) * root.max-offset;
+                }
+                root.start-offset = root.offset;
+            }
+        }
+        moved => {
+            if (self.pressed && root.max-offset > 0) {
+                root.offset = clamp(root.start-offset - (self.mouse-y - self.pressed-y) * root.max-offset / root.track,
+                    -root.max-offset, 0);
+            }
+        }
+    }
+}
+
+// The scrollbar keeps its own gutter so it never covers content.
+export component ScrollView {
+    out property <length> visible-width <=> flickable.width;
+    out property <length> visible-height <=> flickable.height;
+    in-out property <length> content-width <=> flickable.content-width;
+    in-out property <length> content-height <=> flickable.content-height;
+    in-out property <length> content-x <=> flickable.content-x;
+    in-out property <length> content-y <=> flickable.content-y;
+    min-height: 40px;
+    min-width: 40px;
+    horizontal-stretch: 1;
+    vertical-stretch: 1;
+    preferred-height: 100%;
+    preferred-width: 100%;
+    flickable := Flickable {
+        x: 0;
+        y: 0;
+        width: parent.width - Theme.scrollbar;
+        height: parent.height;
+        mouse-drag-pan-enabled: false;
+        @children
+    }
+    ScrollBar {
+        x: parent.width - self.width;
+        height: parent.height;
+        content-size: flickable.content-height;
+        view-size: flickable.height;
+        offset <=> flickable.content-y;
+    }
+}
+
+// Named ListView so the compiler virtualizes its `for` delegate.
+export component ListView inherits ScrollView { }
+
+export component LineEdit inherits Rectangle {
+    in property <string> placeholder-text;
+    in-out property <string> text <=> input.text;
+    in property <bool> enabled: true;
+    in property <bool> read-only <=> input.read-only;
+    in property <InputType> input-type <=> input.input-type;
+    in property <image> icon;
+    in property <bool> invalid;
+    in property <length> font-size: 13px;
+    out property <bool> has-focus: input.has-focus;
+    callback edited(string);
+    callback accepted(string);
+    forward-focus: input;
+    public function select-all() {
+        input.select-all();
+    }
+    property <length> computed-x;
+    height: 34px;
+    vertical-stretch: 0;
+    min-width: 60px;
+    horizontal-stretch: 1;
+    border-radius: 6px;
+    background: Theme.field;
+    border-width: 1px;
+    border-color: root.invalid ? Theme.danger : input.has-focus ? Theme.accent : Theme.border;
+    opacity: root.enabled ? 1 : 0.5;
+    animate border-color { duration: 120ms; }
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); }
+    }
+    HorizontalLayout {
+        padding-left: root.icon.width > 0 ? 9px : 10px;
+        padding-right: 4px;
+        spacing: 6px;
+        if root.icon.width > 0: VerticalLayout {
+            alignment: center;
+            Image {
+                source: root.icon;
+                width: 15px;
+                height: 15px;
+                colorize: input.has-focus ? Theme.dim : Theme.faint;
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            clip: true;
+            if input.text == "": Text {
+                width: parent.width;
+                height: parent.height;
+                text: root.placeholder-text;
+                color: Theme.faint;
+                font-size: root.font-size;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            input := TextInput {
+                x: min(0px, max(parent.width - self.width - self.text-cursor-width, root.computed-x));
+                width: max(parent.width - self.text-cursor-width, self.preferred-width);
+                height: parent.height;
+                vertical-alignment: center;
+                single-line: true;
+                enabled: root.enabled;
+                color: Theme.text;
+                font-size: root.font-size;
+                selection-background-color: Theme.accent.transparentize(0.5);
+                selection-foreground-color: Theme.text;
+                cursor-position-changed(position) => {
+                    if (position.x + root.computed-x < 4px) {
+                        root.computed-x = 4px - position.x;
+                    } else if (position.x + root.computed-x > parent.width - 4px - self.text-cursor-width) {
+                        root.computed-x = parent.width - position.x - 4px - self.text-cursor-width;
+                    }
+                }
+                edited => { root.edited(self.text); }
+                accepted => { root.accepted(self.text); }
+            }
+        }
+        @children
+    }
+}
+
+export component TextEdit inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <bool> read-only <=> input.read-only;
+    in property <bool> enabled: true;
+    in property <length> font-size: 13px;
+    in property <TextWrap> wrap: word-wrap;
+    in property <string> placeholder-text;
+    out property <bool> has-focus: input.has-focus;
+    callback edited(string);
+    forward-focus: input;
+    min-height: 60px;
+    horizontal-stretch: 1;
+    vertical-stretch: 1;
+    border-radius: 6px;
+    background: Theme.field;
+    border-width: 1px;
+    border-color: input.has-focus && !root.read-only ? Theme.accent : Theme.border;
+    opacity: root.enabled ? 1 : 0.5;
+    clip: true;
+    animate border-color { duration: 120ms; }
+    scroll := ScrollView {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        content-width: self.visible-width;
+        content-height: input.height + 16px;
+        input := TextInput {
+            x: 10px;
+            y: 8px;
+            width: scroll.visible-width - 14px;
+            height: max(scroll.visible-height - 16px, self.preferred-height);
+            single-line: false;
+            wrap: root.wrap;
+            enabled: root.enabled;
+            color: Theme.text;
+            font-size: root.font-size;
+            selection-background-color: Theme.accent.transparentize(0.5);
+            selection-foreground-color: Theme.text;
+            cursor-position-changed(position) => {
+                if (position.y + self.y + scroll.content-y < 0) {
+                    scroll.content-y = -(position.y + self.y) + 4px;
+                } else if (position.y + self.y + root.font-size * 1.6 + scroll.content-y > scroll.visible-height) {
+                    scroll.content-y = scroll.visible-height - (position.y + self.y + root.font-size * 1.6) - 4px;
+                }
+            }
+            edited => { root.edited(self.text); }
+        }
+    }
+    if input.text == "" && root.placeholder-text != "": Text {
+        x: 11px;
+        y: 8px;
+        text: root.placeholder-text;
+        color: Theme.faint;
+        font-size: root.font-size;
+    }
+}
+
+export component ComboBox inherits Rectangle {
+    in property <[string]> model;
+    in-out property <int> current-index: 0;
+    out property <string> current-value: root.model[root.current-index];
+    in property <bool> enabled: true;
+    callback selected(string);
+    height: 34px;
+    vertical-stretch: 0;
+    min-width: 80px;
+    horizontal-stretch: 1;
+    border-radius: 6px;
+    background: touch.has-hover && root.enabled ? Theme.raised : Theme.field;
+    border-width: 1px;
+    border-color: touch.has-hover && root.enabled ? Theme.border-strong : Theme.border;
+    opacity: root.enabled ? 1 : 0.5;
+    animate background, border-color { duration: 120ms; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 8px;
+        spacing: 6px;
+        Text {
+            horizontal-stretch: 1;
+            text: root.current-value;
+            color: Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("icons/chevron-down.svg");
+                width: 14px;
+                height: 14px;
+                colorize: Theme.dim;
+            }
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { popup.show(); }
+    }
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: root.width;
+        height: min(root.model.length * 32px + 10px, 300px);
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: Theme.popup;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            clip: true;
+            ListView {
+                x: 5px;
+                y: 5px;
+                width: parent.width - 6px;
+                height: parent.height - 10px;
+                for value[i] in root.model: Rectangle {
+                    height: 32px;
+                    border-radius: 5px;
+                    background: item.has-hover ? Theme.raised : i == root.current-index ? Theme.accent-soft : transparent;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 6px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: value;
+                            color: i == root.current-index ? Theme.text : Theme.dim;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        if i == root.current-index: VerticalLayout {
+                            alignment: center;
+                            Image {
+                                source: @image-url("icons/check.svg");
+                                width: 14px;
+                                height: 14px;
+                                colorize: Theme.accent-hover;
+                            }
+                        }
+                    }
+                    item := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            popup.close();
+                            if (i != root.current-index) {
+                                root.current-index = i;
+                                root.selected(value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component SpinBox inherits Rectangle {
+    in-out property <int> value;
+    in property <int> minimum: 0;
+    in property <int> maximum: 100;
+    in property <int> step-size: 1;
+    in property <bool> enabled: true;
+    callback edited(int);
+    property <bool> focused: input.has-focus;
+    changed value => {
+        if (!input.has-focus) {
+            input.text = root.value;
+        }
+    }
+    changed focused => {
+        if (!root.focused) {
+            input.text = root.value;
+        }
+    }
+    init => { input.text = root.value; }
+    function step(delta: int) {
+        root.value = clamp(root.value + delta, root.minimum, root.maximum);
+        input.text = root.value;
+        root.edited(root.value);
+    }
+    height: 34px;
+    vertical-stretch: 0;
+    min-width: 80px;
+    horizontal-stretch: 1;
+    border-radius: 6px;
+    background: Theme.field;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    opacity: root.enabled ? 1 : 0.5;
+    animate border-color { duration: 120ms; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 3px;
+        spacing: 2px;
+        input := TextInput {
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            input-type: number;
+            enabled: root.enabled;
+            color: Theme.text;
+            selection-background-color: Theme.accent.transparentize(0.5);
+            selection-foreground-color: Theme.text;
+            edited => {
+                if (self.text.is-float()) {
+                    root.value = clamp(round(self.text.to-float()), root.minimum, root.maximum);
+                    root.edited(root.value);
+                }
+            }
+            accepted => {
+                self.text = root.value;
+                self.clear-focus();
+            }
+        }
+        for delta in [-1, 1]: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 24px;
+                height: 26px;
+                border-radius: 4px;
+                background: arrow.has-hover && root.enabled ? Theme.raised : transparent;
+                Image {
+                    source: delta < 0 ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-up.svg");
+                    width: 14px;
+                    height: 14px;
+                    colorize: arrow.has-hover ? Theme.text : Theme.dim;
+                }
+                arrow := TouchArea {
+                    enabled: root.enabled;
+                    mouse-cursor: pointer;
+                    clicked => { root.step(delta * root.step-size); }
+                }
+            }
+        }
+    }
+}
+
+export component CheckBox inherits Rectangle {
+    in property <string> text;
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled;
+    min-height: 28px;
+    vertical-stretch: 0;
+    horizontal-stretch: 0;
+    opacity: root.enabled ? 1 : 0.5;
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border-width: root.checked ? 0 : 1.5px;
+                border-color: touch.has-hover && root.enabled ? Theme.dim : Theme.border-strong;
+                background: root.checked ? Theme.accent : Theme.field;
+                animate background { duration: 120ms; }
+                if root.checked: Image {
+                    source: @image-url("icons/check.svg");
+                    width: 13px;
+                    height: 13px;
+                    colorize: #FFFFFF;
+                }
+            }
+        }
+        if root.text != "": Text {
+            text: root.text;
+            color: Theme.text;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+}
+
+export component Slider inherits Rectangle {
+    in property <float> minimum: 0;
+    in property <float> maximum: 1;
+    in property <float> step: 0;
+    in-out property <float> value;
+    callback changed(float);
+    function set-from(position: length) {
+        let ratio = clamp((position - 8px) / max(1px, root.width - 16px), 0, 1);
+        let raw = root.minimum + (root.maximum - root.minimum) * ratio;
+        root.value = root.step > 0 ? round(raw / root.step) * root.step : raw;
+        root.changed(root.value);
+    }
+    height: 34px;
+    vertical-stretch: 0;
+    min-width: 80px;
+    horizontal-stretch: 1;
+    property <float> ratio: root.maximum <= root.minimum ? 0 : (root.value - root.minimum) / (root.maximum - root.minimum);
+    Rectangle {
+        x: 8px;
+        y: (parent.height - self.height) / 2;
+        width: parent.width - 16px;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.raised;
+    }
+    Rectangle {
+        x: 8px;
+        y: (parent.height - self.height) / 2;
+        width: (parent.width - 16px) * root.ratio;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.accent;
+    }
+    Rectangle {
+        x: (parent.width - 16px) * root.ratio;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: Theme.text;
+        border-width: 3px;
+        border-color: touch.pressed || touch.has-hover ? Theme.accent-hover : Theme.accent;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.set-from(self.mouse-x);
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                root.set-from(self.mouse-x);
+            }
+        }
+    }
+}
