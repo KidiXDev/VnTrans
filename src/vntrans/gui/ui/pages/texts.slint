@@ -1,5 +1,5 @@
 import { LineEdit, ComboBox, ListView, TextEdit } from "../widgets.slint";
-import { Theme, Card, AppButton, Toggle, Chip, Label, Meter, Divider, EmptyState, FadeIn } from "../theme.slint";
+import { Theme, Card, AppButton, Toggle, Chip, Label, Meter, Divider, EmptyState, FadeIn, Badge } from "../theme.slint";
 import { App, UnitRow } from "../app.slint";
 
 component FileItem inherits Rectangle {
@@ -8,28 +8,33 @@ component FileItem inherits Rectangle {
     in property <int> done;
     in property <bool> active;
     callback clicked;
-    height: 46px;
-    border-radius: 6px;
+    height: 48px;
+    border-radius: 7px;
     background: root.active ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
-    animate background { duration: 140ms; }
+    border-width: 1px;
+    border-color: root.active ? Theme.accent.transparentize(0.65) : transparent;
+    animate background, border-color { duration: 140ms; }
     VerticalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
+        padding-left: 12px;
+        padding-right: 12px;
         alignment: center;
         spacing: 5px;
         HorizontalLayout {
-            spacing: 6px;
+            spacing: 8px;
             Text {
                 text: root.name;
-                color: root.active ? Theme.text : Theme.dim;
-                font-size: 12px;
+                color: root.active ? Theme.text : touch.has-hover ? Theme.text : Theme.dim;
+                font-size: 13px;
+                font-weight: root.active ? 600 : 400;
                 overflow: elide;
                 horizontal-stretch: 1;
+                animate color { duration: 120ms; }
             }
             Text {
                 text: root.total == 0 ? "" : floor(100 * root.done / root.total) + "%";
                 color: root.done == root.total && root.total > 0 ? Theme.success : Theme.faint;
                 font-size: 11px;
+                font-weight: 600;
             }
         }
         Meter {
@@ -46,7 +51,7 @@ component FileItem inherits Rectangle {
 
 // Rows and header share these columns; the header adds the list's scrollbar gutter.
 component UnitColumns inherits HorizontalLayout {
-    padding-left: 8px;
+    padding-left: 10px;
     padding-right: 14px;
     spacing: 12px;
 }
@@ -56,7 +61,7 @@ component UnitItem inherits Rectangle {
     in property <bool> selected;
     callback clicked;
     callback opened;
-    height: 40px;
+    height: 42px;
     background: root.selected ? Theme.selected : touch.has-hover ? Theme.raised : transparent;
     animate background { duration: 90ms; }
     UnitColumns {
@@ -64,7 +69,7 @@ component UnitItem inherits Rectangle {
             alignment: center;
             Rectangle {
                 width: 3px;
-                height: 20px;
+                height: 22px;
                 border-radius: 1.5px;
                 background: Theme.kind-color(root.item.kind);
             }
@@ -78,9 +83,10 @@ component UnitItem inherits Rectangle {
             horizontal-alignment: right;
         }
         Text {
-            width: 110px;
+            width: 114px;
             text: root.item.speaker;
             color: Theme.violet;
+            font-weight: 600;
             vertical-alignment: center;
             overflow: elide;
         }
@@ -90,6 +96,7 @@ component UnitItem inherits Rectangle {
             preferred-width: 0;
             text: root.item.source;
             color: Theme.text;
+            font-size: 13px;
             vertical-alignment: center;
             overflow: elide;
         }
@@ -99,6 +106,7 @@ component UnitItem inherits Rectangle {
             preferred-width: 0;
             text: root.item.translation == "" ? "—" : root.item.translation;
             color: root.item.translation == "" || root.item.state == "excluded" ? Theme.faint : Theme.text;
+            font-size: 13px;
             vertical-alignment: center;
             overflow: elide;
         }
@@ -115,7 +123,7 @@ component UnitItem inherits Rectangle {
     Rectangle {
         y: parent.height - 1px;
         height: 1px;
-        background: Theme.border.transparentize(0.6);
+        background: Theme.border.transparentize(0.65);
     }
     touch := TouchArea {
         clicked => { root.clicked(); }
@@ -124,10 +132,10 @@ component UnitItem inherits Rectangle {
 }
 
 component ListHeader inherits Rectangle {
-    height: 32px;
+    height: 34px;
     background: Theme.surface;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
     UnitColumns {
         padding-right: 14px + Theme.scrollbar;
         Rectangle { width: 3px; }
@@ -138,22 +146,22 @@ component ListHeader inherits Rectangle {
             vertical-alignment: center;
         }
         Label {
-            width: 110px;
-            text: "Speaker";
+            width: 114px;
+            text: "SPEAKER";
             vertical-alignment: center;
         }
         Label {
             horizontal-stretch: 1;
             min-width: 0;
             preferred-width: 0;
-            text: "Source";
+            text: "SOURCE SCRIPT";
             vertical-alignment: center;
         }
         Label {
             horizontal-stretch: 1;
             min-width: 0;
             preferred-width: 0;
-            text: "Translation";
+            text: "TRANSLATION";
             vertical-alignment: center;
         }
         Rectangle { width: 8px; }
@@ -170,7 +178,7 @@ export component UnitEditor inherits VerticalLayout {
     public function focus-translation() {
         translation.focus();
     }
-    spacing: 10px;
+    spacing: 12px;
     HorizontalLayout {
         spacing: 14px;
         vertical-stretch: 1;
@@ -182,7 +190,7 @@ export component UnitEditor inherits VerticalLayout {
             HorizontalLayout {
                 spacing: 8px;
                 Label {
-                    text: "Source";
+                    text: "ORIGINAL SOURCE";
                     vertical-alignment: center;
                 }
                 Text {
@@ -209,7 +217,7 @@ export component UnitEditor inherits VerticalLayout {
             HorizontalLayout {
                 spacing: 8px;
                 Label {
-                    text: "Translation";
+                    text: "TRANSLATION";
                     vertical-alignment: center;
                 }
                 Text {
@@ -235,7 +243,7 @@ export component UnitEditor inherits VerticalLayout {
                         text <=> App.cur-translation;
                         font-size: root.text-size;
                         enabled: App.current >= 0;
-                        placeholder-text: App.current >= 0 ? "Type a translation" : "";
+                        placeholder-text: App.current >= 0 ? "Enter translation here (Ctrl+Enter to save & advance)..." : "";
                     }
                 }
             }
@@ -244,20 +252,22 @@ export component UnitEditor inherits VerticalLayout {
     if App.cur-suggestion != "": FadeIn {
         from-scale: 0.98;
         Rectangle {
-            border-radius: 6px;
-            background: Theme.violet.transparentize(0.88);
+            border-radius: 8px;
+            background: Theme.violet-soft;
             border-width: 1px;
             border-color: Theme.violet.transparentize(0.5);
             HorizontalLayout {
-                padding: 10px;
-                spacing: 10px;
+                padding: 12px;
+                spacing: 12px;
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
-                    spacing: 3px;
+                    spacing: 4px;
                     Text {
                         text: App.cur-suggestion;
                         color: Theme.text;
+                        font-size: 13px;
+                        font-weight: 600;
                         wrap: word-wrap;
                     }
                     Text {
@@ -276,6 +286,7 @@ export component UnitEditor inherits VerticalLayout {
                             clicked => { App.dismiss-suggestion(); }
                         }
                         AppButton {
+                            primary: true;
                             text: "Use suggestion";
                             clicked => { App.accept-suggestion(); }
                         }
@@ -285,12 +296,13 @@ export component UnitEditor inherits VerticalLayout {
         }
     }
     HorizontalLayout {
-        spacing: 8px;
+        spacing: 10px;
         Text {
             horizontal-stretch: 1;
             text: App.cur-error != "" ? App.cur-error : App.cur-issues;
             color: App.cur-error != "" ? Theme.danger : Theme.warning;
             font-size: 12px;
+            font-weight: 500;
             vertical-alignment: center;
             overflow: elide;
         }
@@ -318,7 +330,7 @@ export component UnitEditor inherits VerticalLayout {
 }
 
 export component TextsPage inherits Rectangle {
-    property <length> row-height: 40px;
+    property <length> row-height: 42px;
     property <int> current: App.current;
     property <int> search-request: App.search-request;
     changed current => { root.reveal(); }
@@ -341,18 +353,27 @@ export component TextsPage inherits Rectangle {
     background: Theme.bg;
     HorizontalLayout {
         Rectangle {
-            width: 220px;
+            width: 230px;
             background: Theme.surface;
             VerticalLayout {
-                padding: 10px;
-                padding-right: 6px;
-                spacing: 4px;
+                padding: 12px;
+                padding-right: 8px;
+                spacing: 6px;
                 HorizontalLayout {
-                    padding-left: 10px;
+                    padding-left: 8px;
                     padding-right: Theme.scrollbar;
                     Label {
-                        text: "Files";
+                        text: "SCRIPT FILES";
+                        font-size: 11px;
                         height: 24px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text {
+                        text: App.files.length + "";
+                        color: Theme.faint;
+                        font-size: 11px;
+                        font-weight: 600;
                         vertical-alignment: center;
                     }
                 }
@@ -401,7 +422,7 @@ export component TextsPage inherits Rectangle {
                     spacing: 8px;
                     search := LineEdit {
                         icon: @image-url("../icons/search.svg");
-                        placeholder-text: App.regex ? "Search with a regular expression" : "Search";
+                        placeholder-text: App.regex ? "Search regex pattern..." : "Search scripts...";
                         invalid: App.regex-error;
                         text <=> App.query;
                         edited(text) => { App.query-edited(text); }
@@ -456,12 +477,12 @@ export component TextsPage inherits Rectangle {
 
                 // Slides open; the 8px gap lives inside so a closed bar adds no spacing.
                 Rectangle {
-                    height: App.replace-open ? 42px : 0;
+                    height: App.replace-open ? 44px : 0;
                     clip: true;
                     animate height { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                     Rectangle {
                         y: App.replace-open ? 0 : -10px;
-                        height: 42px;
+                        height: 44px;
                         opacity: App.replace-open ? 1 : 0;
                         animate y, opacity { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         HorizontalLayout {
@@ -469,7 +490,7 @@ export component TextsPage inherits Rectangle {
                             spacing: 8px;
                             LineEdit {
                                 icon: @image-url("../icons/replace.svg");
-                                placeholder-text: App.regex ? "Replace with (\\1 inserts group 1)" : "Replace with";
+                                placeholder-text: App.regex ? "Enter replacement text (\\1 inserts group 1)..." : "Enter replacement text...";
                                 text <=> App.replace-with;
                             }
                             AppButton {
@@ -519,6 +540,8 @@ export component TextsPage inherits Rectangle {
             Card {
                 vertical-stretch: 3;
                 clip: true;
+                border-radius: 10px;
+                border-color: Theme.border;
                 VerticalLayout {
                     ListHeader { }
                     Rectangle {
@@ -556,7 +579,7 @@ export component TextsPage inherits Rectangle {
                         if App.units.length == 0: EmptyState {
                             width: parent.width;
                             height: parent.height;
-                            text: App.regex-error ? "Invalid regular expression" : "No matching units";
+                            text: App.regex-error ? "Invalid regular expression" : "No matching units found";
                         }
                     }
                 }
@@ -565,8 +588,10 @@ export component TextsPage inherits Rectangle {
             Card {
                 vertical-stretch: 2;
                 min-height: App.cur-suggestion != "" ? 270px : 190px;
+                border-radius: 10px;
+                border-color: Theme.border;
                 UnitEditor {
-                    padding: 14px;
+                    padding: 16px;
                     AppButton {
                         ghost: true;
                         icon: @image-url("../icons/maximize-2.svg");

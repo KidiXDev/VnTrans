@@ -1,6 +1,6 @@
 import { LineEdit, ComboBox, SpinBox, Slider, ListView } from "../widgets.slint";
 import { AboutSlint } from "std-widgets.slint";
-import { Theme, Card, AppButton, Field, Label, EmptyState } from "../theme.slint";
+import { Theme, Card, AppButton, Field, Label, EmptyState, Badge } from "../theme.slint";
 import { App } from "../app.slint";
 
 export global Providers {
@@ -14,53 +14,60 @@ export component SettingsPage inherits Rectangle {
         padding: 16px;
         spacing: 12px;
         Card {
-            width: 280px;
+            width: 300px;
+            border-radius: 10px;
+            border-color: Theme.border;
             VerticalLayout {
-                padding: 10px;
-                spacing: 4px;
+                padding: 12px;
+                spacing: 6px;
                 HorizontalLayout {
                     padding-left: 6px;
+                    padding-right: 4px;
                     padding-bottom: 6px;
                     Label {
-                        text: "Profiles";
+                        text: "AI TRANSLATION PROFILES";
+                        font-size: 11px;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                     }
                     AppButton {
                         icon: @image-url("../icons/plus.svg");
-                        text: "Add";
+                        text: "New";
                         clicked => { App.profile-new(); }
                     }
                 }
-                if App.profiles.length == 0: EmptyState { text: "No profiles"; }
+                if App.profiles.length == 0: EmptyState { text: "No profiles configured"; }
                 if App.profiles.length > 0: ListView {
                     for profile[i] in App.profiles: Rectangle {
-                        height: 52px;
+                        height: 56px;
                         Rectangle {
                             x: 0;
                             width: parent.width;
-                            border-radius: 6px;
+                            border-radius: 7px;
                             background: App.profile-current == i ? Theme.accent-soft : touch.has-hover ? Theme.raised : transparent;
-                            animate background { duration: 140ms; }
+                            border-width: 1px;
+                            border-color: App.profile-current == i ? Theme.accent.transparentize(0.65) : transparent;
+                            animate background, border-color { duration: 140ms; }
                             touch := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { App.profile-select(i); }
                             }
                             VerticalLayout {
-                                padding-left: 10px;
-                                padding-right: 10px;
+                                padding-left: 12px;
+                                padding-right: 12px;
                                 alignment: center;
                                 spacing: 2px;
                                 Text {
                                     text: profile.name;
                                     color: Theme.text;
+                                    font-size: 13px;
                                     font-weight: 600;
                                     overflow: elide;
                                 }
                                 Text {
                                     text: profile.detail;
                                     color: Theme.faint;
-                                    font-size: 12px;
+                                    font-size: 11px;
                                     overflow: elide;
                                 }
                             }
@@ -75,23 +82,39 @@ export component SettingsPage inherits Rectangle {
             spacing: 12px;
             Card {
                 vertical-stretch: 0;
+                border-radius: 10px;
+                border-color: Theme.border;
                 VerticalLayout {
-                    padding: 16px;
-                    spacing: 14px;
-                    Text {
-                        text: App.profile-current < 0 ? "New profile" : "Edit profile";
-                        color: Theme.text;
-                        font-size: 15px;
-                        font-weight: 700;
+                    padding: 18px;
+                    spacing: 16px;
+                    HorizontalLayout {
+                        Text {
+                            text: App.profile-current < 0 ? "New AI Profile" : "Edit AI Profile";
+                            color: Theme.text;
+                            font-size: 16px;
+                            font-weight: 700;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+                        if App.profile-current >= 0: VerticalLayout {
+                            alignment: center;
+                            Badge {
+                                text: "Active Profile";
+                                tint: Theme.accent-light;
+                            }
+                        }
                     }
                     HorizontalLayout {
                         spacing: 12px;
                         Field {
-                            label: "Name";
-                            LineEdit { text <=> App.pf-name; }
+                            label: "PROFILE NAME";
+                            LineEdit {
+                                text <=> App.pf-name;
+                                placeholder-text: "Enter profile name...";
+                            }
                         }
                         Field {
-                            label: "Provider";
+                            label: "AI PROVIDER";
                             ComboBox {
                                 model: Providers.labels;
                                 current-index <=> App.pf-provider;
@@ -99,19 +122,21 @@ export component SettingsPage inherits Rectangle {
                         }
                     }
                     Field {
-                        label: "API keys (comma-separated, used in rotation)";
+                        label: "API KEYS (COMMA-SEPARATED FOR AUTOMATIC KEY ROTATION)";
                         LineEdit {
                             input-type: password;
                             text <=> App.pf-keys;
+                            placeholder-text: "Enter API key(s), comma-separated for rotation...";
                         }
                     }
                     Field {
-                        label: "Model";
+                        label: "MODEL IDENTIFIER";
                         HorizontalLayout {
                             spacing: 8px;
                             LineEdit {
                                 horizontal-stretch: 1;
                                 text <=> App.pf-model;
+                                placeholder-text: "Enter model identifier...";
                             }
                             if App.pf-models.length > 0: ComboBox {
                                 width: 260px;
@@ -120,7 +145,7 @@ export component SettingsPage inherits Rectangle {
                             }
                             AppButton {
                                 icon: @image-url("../icons/download.svg");
-                                text: "Fetch";
+                                text: "Fetch Models";
                                 enabled: !App.pf-working && App.pf-keys != "";
                                 clicked => { App.profile-fetch(); }
                             }
@@ -129,7 +154,7 @@ export component SettingsPage inherits Rectangle {
                     HorizontalLayout {
                         spacing: 12px;
                         Field {
-                            label: "Temperature " + round(App.pf-temperature * 100) / 100;
+                            label: "TEMPERATURE: " + round(App.pf-temperature * 100) / 100;
                             Slider {
                                 minimum: 0;
                                 maximum: 2;
@@ -138,7 +163,7 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
                         Field {
-                            label: "Max output tokens";
+                            label: "MAX OUTPUT TOKENS";
                             SpinBox {
                                 minimum: 256;
                                 maximum: 65536;
@@ -147,14 +172,14 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
                         Field {
-                            label: "Reasoning";
+                            label: "REASONING EFFORT";
                             ComboBox {
                                 model: Providers.reasoning;
                                 current-index <=> App.pf-reasoning;
                             }
                         }
                         Field {
-                            label: "Timeout (s)";
+                            label: "TIMEOUT (SEC)";
                             SpinBox {
                                 minimum: 10;
                                 maximum: 900;
@@ -168,16 +193,29 @@ export component SettingsPage inherits Rectangle {
                         background: Theme.border;
                     }
                     HorizontalLayout {
-                        spacing: 8px;
-                        Text {
-                            horizontal-stretch: 1;
-                            text: App.pf-status;
-                            color: App.pf-status-error ? Theme.danger : Theme.success;
-                            font-size: 12px;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
+                        spacing: 10px;
+                        if App.pf-status != "": Rectangle {
+                            height: 32px;
+                            border-radius: 6px;
+                            background: App.pf-status-error ? Theme.danger-soft : Theme.success-soft;
+                            border-width: 1px;
+                            border-color: App.pf-status-error ? Theme.danger.transparentize(0.5) : Theme.success.transparentize(0.5);
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                Text {
+                                    text: App.pf-status;
+                                    color: App.pf-status-error ? Theme.danger : Theme.success;
+                                    font-size: 12px;
+                                    font-weight: 500;
+                                    vertical-alignment: center;
+                                }
+                            }
                         }
+                        if App.pf-status == "": Rectangle { horizontal-stretch: 1; }
+                        if App.pf-status != "": Rectangle { horizontal-stretch: 1; }
                         AppButton {
+                            danger: true;
                             icon: @image-url("../icons/trash-2.svg");
                             text: "Delete";
                             enabled: App.profile-current >= 0;
@@ -185,14 +223,14 @@ export component SettingsPage inherits Rectangle {
                         }
                         AppButton {
                             icon: @image-url("../icons/play.svg");
-                            text: App.pf-working ? "Testing…" : "Test";
+                            text: App.pf-working ? "Testing…" : "Test Connection";
                             enabled: !App.pf-working && App.pf-keys != "" && App.pf-model != "";
                             clicked => { App.profile-test(); }
                         }
                         AppButton {
                             primary: true;
                             icon: @image-url("../icons/check.svg");
-                            text: "Save";
+                            text: "Save Profile";
                             enabled: App.pf-name != "";
                             clicked => { App.profile-save(); }
                         }
@@ -201,17 +239,28 @@ export component SettingsPage inherits Rectangle {
             }
             Card {
                 vertical-stretch: 0;
+                border-radius: 10px;
+                border-color: Theme.border;
                 HorizontalLayout {
-                    padding: 16px;
-                    spacing: 16px;
+                    padding: 18px;
+                    spacing: 20px;
                     VerticalLayout {
                         horizontal-stretch: 1;
                         alignment: center;
                         spacing: 4px;
-                        Label { text: "About"; }
+                        Label {
+                            text: "ABOUT VNTRANS";
+                            font-size: 11px;
+                        }
                         Text {
-                            text: "VnTrans · MIT License";
+                            text: "VnTrans — Lossless visual novel script extraction & translation reinsertion";
                             color: Theme.text;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: "Open Source under the MIT License · Built with Slint UI & Python";
+                            color: Theme.dim;
+                            font-size: 12px;
                         }
                     }
                     AboutSlint {

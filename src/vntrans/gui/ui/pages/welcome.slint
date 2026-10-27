@@ -1,5 +1,5 @@
 import { LineEdit, ComboBox, SpinBox, ListView } from "../widgets.slint";
-import { Theme, Card, AppButton, Field, Label, Meter } from "../theme.slint";
+import { Theme, Card, AppButton, Field, Label, Meter, Divider } from "../theme.slint";
 import { App } from "../app.slint";
 
 export global Languages {
@@ -10,41 +10,124 @@ export global Languages {
     out property <[string]> encodings: ["Auto", "cp932", "utf-8", "utf-16"];
 }
 
+component ActionTile inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <image> icon;
+    in property <color> icon-tint: Theme.accent-light;
+    in property <bool> primary;
+    callback clicked;
+    height: 90px;
+    horizontal-stretch: 1;
+    border-radius: 9px;
+    background: root.primary
+        ? (touch.has-hover ? Theme.accent-soft.with-alpha(0.3) : Theme.accent-soft)
+        : (touch.has-hover ? Theme.raised : Theme.field);
+    border-width: 1px;
+    border-color: root.primary
+        ? (touch.has-hover ? Theme.accent : Theme.accent.transparentize(0.5))
+        : (touch.has-hover ? Theme.border-strong : Theme.border);
+    transform-scale: touch.pressed ? 0.985 : 1;
+    animate background, border-color { duration: 140ms; }
+    animate transform-scale { duration: 110ms; easing: ease-out; }
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 14px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 40px;
+                height: 40px;
+                border-radius: 8px;
+                background: root.icon-tint.transparentize(0.85);
+                border-width: 1px;
+                border-color: root.icon-tint.transparentize(0.65);
+                Image {
+                    source: root.icon;
+                    width: 20px;
+                    height: 20px;
+                    colorize: root.icon-tint;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 3px;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 700;
+            }
+            Text {
+                text: root.description;
+                color: Theme.dim;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 component RecentItem inherits Rectangle {
     in property <string> name;
     in property <string> path;
     callback clicked;
-    height: 48px;
-    border-radius: 6px;
-    background: touch.has-hover ? Theme.raised : transparent;
-    animate background { duration: 140ms; }
+    height: 52px;
+    border-radius: 7px;
+    background: touch.has-hover ? Theme.raised : Theme.field;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.border-strong : Theme.border;
+    animate background, border-color { duration: 140ms; }
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
+        padding-left: 14px;
+        padding-right: 14px;
         spacing: 12px;
         VerticalLayout {
             alignment: center;
-            Image {
-                source: @image-url("../icons/folder-open.svg");
-                width: 18px;
-                height: 18px;
-                colorize: Theme.accent;
+            Rectangle {
+                width: 30px;
+                height: 30px;
+                border-radius: 6px;
+                background: Theme.accent-soft;
+                Image {
+                    source: @image-url("../icons/folder-open.svg");
+                    width: 16px;
+                    height: 16px;
+                    colorize: touch.has-hover ? Theme.accent-light : Theme.accent;
+                }
             }
         }
         VerticalLayout {
             alignment: center;
             spacing: 2px;
+            horizontal-stretch: 1;
             Text {
                 text: root.name;
                 color: Theme.text;
+                font-size: 13px;
                 font-weight: 600;
                 overflow: elide;
             }
             Text {
                 text: root.path;
                 color: Theme.faint;
-                font-size: 12px;
+                font-size: 11px;
                 overflow: elide;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("../icons/chevron-right.svg");
+                width: 14px;
+                height: 14px;
+                colorize: touch.has-hover ? Theme.text : Theme.faint;
+                animate colorize { duration: 120ms; }
             }
         }
     }
@@ -80,32 +163,46 @@ export component WelcomePage inherits Rectangle {
         HorizontalLayout {
             alignment: center;
             Card {
-                width: 580px;
+                width: 620px;
+                border-radius: 12px;
+                border-color: Theme.border-strong;
                 VerticalLayout {
                     padding: 32px;
-                    spacing: 20px;
+                    spacing: 24px;
+
+                    // Brand Hero Header
                     HorizontalLayout {
-                        spacing: 14px;
+                        spacing: 16px;
                         alignment: start;
                         Rectangle {
-                            width: 44px;
-                            height: 44px;
-                            border-radius: 10px;
+                            width: 50px;
+                            height: 50px;
+                            border-radius: 12px;
                             background: Theme.accent-soft;
+                            border-width: 1px;
+                            border-color: Theme.accent.transparentize(0.5);
                             Image {
                                 source: @image-url("../icons/languages.svg");
-                                width: 24px;
-                                height: 24px;
-                                colorize: Theme.accent-hover;
+                                width: 26px;
+                                height: 26px;
+                                colorize: Theme.accent-light;
                             }
                         }
                         VerticalLayout {
                             alignment: center;
+                            spacing: 3px;
                             Text {
-                                text: App.creating ? "New project" : "VnTrans";
+                                text: App.creating ? "Create Project" : "VnTrans";
                                 color: Theme.text;
-                                font-size: 22px;
-                                font-weight: 700;
+                                font-size: 24px;
+                                font-weight: 800;
+                            }
+                            Text {
+                                text: App.creating
+                                    ? "Set up game script source and workspace localization settings"
+                                    : "Lossless visual novel translation & localization studio";
+                                color: Theme.dim;
+                                font-size: 13px;
                             }
                         }
                     }
@@ -113,28 +210,37 @@ export component WelcomePage inherits Rectangle {
                     if !App.creating: VerticalLayout {
                         spacing: 20px;
                         HorizontalLayout {
-                            spacing: 10px;
-                            alignment: start;
-                            AppButton {
-                                primary: true;
+                            spacing: 12px;
+                            ActionTile {
+                                title: "New Project";
+                                description: "Extract scripts (.ks / .scn) and start fresh";
                                 icon: @image-url("../icons/folder-plus.svg");
-                                text: "New project";
-                                enabled: !App.busy;
+                                icon-tint: Theme.accent-light;
+                                primary: true;
                                 clicked => {
                                     App.message = "";
                                     App.creating = true;
                                 }
                             }
-                            AppButton {
+                            ActionTile {
+                                title: "Open Workspace";
+                                description: "Resume work on an existing project folder";
                                 icon: @image-url("../icons/folder-open.svg");
-                                text: "Open workspace";
-                                enabled: !App.busy;
+                                icon-tint: Theme.info;
+                                primary: false;
                                 clicked => { App.browse("open"); }
                             }
                         }
+
                         if App.recent.length > 0: VerticalLayout {
-                            spacing: 6px;
-                            Label { text: "Recent"; }
+                            spacing: 8px;
+                            HorizontalLayout {
+                                Label {
+                                    text: "RECENT WORKSPACES";
+                                    font-size: 11px;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
                             for item in App.recent: RecentItem {
                                 name: item.name;
                                 path: item.path;
@@ -144,20 +250,23 @@ export component WelcomePage inherits Rectangle {
                     }
 
                     if App.creating: VerticalLayout {
-                        spacing: 14px;
+                        spacing: 16px;
                         Field {
-                            label: "Name";
-                            LineEdit { text <=> App.new-name; }
+                            label: "Project name";
+                            LineEdit {
+                                text <=> App.new-name;
+                                placeholder-text: "Enter project name...";
+                            }
                         }
                         PathField {
-                            label: "Game scripts";
-                            placeholder: "Folder with .ks / .scn files";
+                            label: "Game script folder";
+                            placeholder: "Select or enter directory containing .ks or .scn files...";
                             value <=> App.new-original;
                             browse => { App.browse("original"); }
                         }
                         PathField {
-                            label: "Workspace";
-                            placeholder: "New or empty folder";
+                            label: "Workspace directory";
+                            placeholder: "Select or enter directory for workspace data...";
                             value <=> App.new-workspace;
                             browse => { App.browse("workspace"); }
                         }
@@ -181,14 +290,14 @@ export component WelcomePage inherits Rectangle {
                         HorizontalLayout {
                             spacing: 12px;
                             Field {
-                                label: "Encoding (KS)";
+                                label: "Encoding (KS scripts)";
                                 ComboBox {
                                     model: Languages.encodings;
                                     current-index <=> App.new-encoding;
                                 }
                             }
                             Field {
-                                label: "Language index (SCN)";
+                                label: "Language index (SCN scripts)";
                                 SpinBox {
                                     minimum: 0;
                                     maximum: 15;
@@ -197,7 +306,7 @@ export component WelcomePage inherits Rectangle {
                             }
                         }
                         if App.busy: VerticalLayout {
-                            spacing: 6px;
+                            spacing: 8px;
                             Text {
                                 text: App.busy-text;
                                 color: Theme.dim;
@@ -219,17 +328,27 @@ export component WelcomePage inherits Rectangle {
                             }
                             AppButton {
                                 primary: true;
-                                text: "Create";
+                                text: "Create workspace";
                                 enabled: !App.busy && App.new-name != "" && App.new-original != "" && App.new-workspace != "";
                                 clicked => { App.create-project(); }
                             }
                         }
                     }
 
-                    if App.message != "": Text {
-                        text: App.message;
-                        color: App.message-error ? Theme.danger : Theme.dim;
-                        wrap: word-wrap;
+                    if App.message != "": Rectangle {
+                        border-radius: 6px;
+                        background: App.message-error ? Theme.danger-soft : Theme.accent-soft;
+                        border-width: 1px;
+                        border-color: App.message-error ? Theme.danger.transparentize(0.5) : Theme.accent.transparentize(0.5);
+                        HorizontalLayout {
+                            padding: 10px;
+                            Text {
+                                text: App.message;
+                                color: App.message-error ? Theme.danger : Theme.accent-light;
+                                wrap: word-wrap;
+                                font-size: 12px;
+                            }
+                        }
                     }
                 }
             }

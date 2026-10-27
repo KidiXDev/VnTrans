@@ -17,7 +17,7 @@ component ScrollBar inherits Rectangle {
         width: touch.has-hover || touch.pressed ? 6px : 4px;
         height: root.thumb-size;
         border-radius: self.width / 2;
-        background: touch.pressed ? Theme.dim : touch.has-hover ? Theme.faint : Theme.border-strong;
+        background: touch.pressed ? Theme.text : touch.has-hover ? Theme.dim : Theme.border-strong;
         animate width, background { duration: 120ms; }
     }
     touch := TouchArea {
@@ -89,32 +89,33 @@ export component LineEdit inherits Rectangle {
         input.select-all();
     }
     property <length> computed-x;
-    height: 34px;
+    height: 36px;
     vertical-stretch: 0;
     min-width: 60px;
     horizontal-stretch: 1;
-    border-radius: 6px;
+    border-radius: 7px;
     background: Theme.field;
     border-width: 1px;
-    border-color: root.invalid ? Theme.danger : input.has-focus ? Theme.accent : Theme.border;
+    border-color: root.invalid ? Theme.danger : input.has-focus ? Theme.accent : touch.has-hover && root.enabled ? Theme.border-strong : Theme.border;
     opacity: root.enabled ? 1 : 0.5;
     animate border-color { duration: 120ms; }
-    TouchArea {
+    touch := TouchArea {
         enabled: root.enabled;
         mouse-cursor: MouseCursor.text;
         clicked => { input.focus(); }
     }
     HorizontalLayout {
-        padding-left: root.icon.width > 0 ? 9px : 10px;
-        padding-right: 4px;
-        spacing: 6px;
+        padding-left: root.icon.width > 0 ? 10px : 12px;
+        padding-right: 6px;
+        spacing: 8px;
         if root.icon.width > 0: VerticalLayout {
             alignment: center;
             Image {
                 source: root.icon;
                 width: 15px;
                 height: 15px;
-                colorize: input.has-focus ? Theme.dim : Theme.faint;
+                colorize: input.has-focus ? Theme.accent-light : Theme.faint;
+                animate colorize { duration: 120ms; }
             }
         }
         Rectangle {
@@ -165,28 +166,33 @@ export component TextEdit inherits Rectangle {
     out property <bool> has-focus: input.has-focus;
     callback edited(string);
     forward-focus: input;
-    min-height: 60px;
+    min-height: 64px;
     horizontal-stretch: 1;
     vertical-stretch: 1;
-    border-radius: 6px;
+    border-radius: 8px;
     background: Theme.field;
     border-width: 1px;
-    border-color: input.has-focus && !root.read-only ? Theme.accent : Theme.border;
+    border-color: input.has-focus && !root.read-only ? Theme.accent : touch.has-hover && root.enabled ? Theme.border-strong : Theme.border;
     opacity: root.enabled ? 1 : 0.5;
     clip: true;
     animate border-color { duration: 120ms; }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); }
+    }
     scroll := ScrollView {
         x: 0;
         y: 0;
         width: parent.width;
         height: parent.height;
         content-width: self.visible-width;
-        content-height: input.height + 16px;
+        content-height: input.height + 18px;
         input := TextInput {
-            x: 10px;
-            y: 8px;
-            width: scroll.visible-width - 14px;
-            height: max(scroll.visible-height - 16px, self.preferred-height);
+            x: 12px;
+            y: 9px;
+            width: scroll.visible-width - 16px;
+            height: max(scroll.visible-height - 18px, self.preferred-height);
             single-line: false;
             wrap: root.wrap;
             enabled: root.enabled;
@@ -205,8 +211,8 @@ export component TextEdit inherits Rectangle {
         }
     }
     if input.text == "" && root.placeholder-text != "": Text {
-        x: 11px;
-        y: 8px;
+        x: 13px;
+        y: 9px;
         text: root.placeholder-text;
         color: Theme.faint;
         font-size: root.font-size;
@@ -219,11 +225,11 @@ export component ComboBox inherits Rectangle {
     out property <string> current-value: root.model[root.current-index];
     in property <bool> enabled: true;
     callback selected(string);
-    height: 34px;
+    height: 36px;
     vertical-stretch: 0;
     min-width: 80px;
     horizontal-stretch: 1;
-    border-radius: 6px;
+    border-radius: 7px;
     background: touch.has-hover && root.enabled ? Theme.raised : Theme.field;
     border-width: 1px;
     border-color: touch.has-hover && root.enabled ? Theme.border-strong : Theme.border;
@@ -232,13 +238,14 @@ export component ComboBox inherits Rectangle {
     opacity: root.enabled ? 1 : 0.5;
     animate background, border-color { duration: 120ms; }
     HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 8px;
+        padding-left: 12px;
+        padding-right: 10px;
         spacing: 6px;
         Text {
             horizontal-stretch: 1;
             text: root.current-value;
             color: Theme.text;
+            font-size: 13px;
             vertical-alignment: center;
             overflow: elide;
         }
@@ -248,7 +255,8 @@ export component ComboBox inherits Rectangle {
                 source: @image-url("icons/chevron-down.svg");
                 width: 14px;
                 height: 14px;
-                colorize: Theme.dim;
+                colorize: touch.has-hover && root.enabled ? Theme.text : Theme.dim;
+                animate colorize { duration: 120ms; }
             }
         }
     }
@@ -261,7 +269,7 @@ export component ComboBox inherits Rectangle {
         x: 0;
         y: root.height + 4px;
         width: root.width;
-        height: min(root.model.length * 32px + 10px, 300px);
+        height: min(root.model.length * 34px + 10px, 320px);
         close-policy: close-on-click-outside;
         panel := Rectangle {
             property <bool> started;
@@ -278,6 +286,8 @@ export component ComboBox inherits Rectangle {
             border-radius: 8px;
             border-width: 1px;
             border-color: Theme.border-strong;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000088;
             clip: true;
             ListView {
                 x: 5px;
@@ -286,17 +296,19 @@ export component ComboBox inherits Rectangle {
                 height: parent.height - 10px;
                 for value[i] in root.model: Rectangle {
                     height: 32px;
-                    border-radius: 5px;
+                    border-radius: 6px;
                     background: item.has-hover ? Theme.raised : i == root.current-index ? Theme.accent-soft : transparent;
                     animate background { duration: 100ms; }
                     HorizontalLayout {
-                        padding-left: 8px;
+                        padding-left: 10px;
                         padding-right: 8px;
                         spacing: 6px;
                         Text {
                             horizontal-stretch: 1;
                             text: value;
-                            color: i == root.current-index ? Theme.text : Theme.dim;
+                            color: i == root.current-index ? Theme.text : item.has-hover ? Theme.text : Theme.dim;
+                            font-weight: i == root.current-index ? 600 : 400;
+                            font-size: 13px;
                             vertical-alignment: center;
                             overflow: elide;
                         }
@@ -306,7 +318,7 @@ export component ComboBox inherits Rectangle {
                                 source: @image-url("icons/check.svg");
                                 width: 14px;
                                 height: 14px;
-                                colorize: Theme.accent-hover;
+                                colorize: Theme.accent-light;
                             }
                         }
                     }
@@ -350,26 +362,32 @@ export component SpinBox inherits Rectangle {
         input.text = root.value;
         root.edited(root.value);
     }
-    height: 34px;
+    height: 36px;
     vertical-stretch: 0;
     min-width: 80px;
     horizontal-stretch: 1;
-    border-radius: 6px;
+    border-radius: 7px;
     background: Theme.field;
     border-width: 1px;
-    border-color: input.has-focus ? Theme.accent : Theme.border;
+    border-color: input.has-focus ? Theme.accent : touch.has-hover && root.enabled ? Theme.border-strong : Theme.border;
     opacity: root.enabled ? 1 : 0.5;
     animate border-color { duration: 120ms; }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); }
+    }
     HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 3px;
-        spacing: 2px;
+        padding-left: 12px;
+        padding-right: 4px;
+        spacing: 3px;
         input := TextInput {
             horizontal-stretch: 1;
             vertical-alignment: center;
             input-type: number;
             enabled: root.enabled;
             color: Theme.text;
+            font-size: 13px;
             selection-background-color: Theme.accent.transparentize(0.5);
             selection-foreground-color: Theme.text;
             edited => {
@@ -388,13 +406,13 @@ export component SpinBox inherits Rectangle {
             Rectangle {
                 width: 24px;
                 height: 26px;
-                border-radius: 4px;
+                border-radius: 5px;
                 background: arrow.has-hover && root.enabled ? Theme.raised : transparent;
                 animate background { duration: 100ms; }
                 Image {
                     source: delta < 0 ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-up.svg");
-                    width: 14px;
-                    height: 14px;
+                    width: 13px;
+                    height: 13px;
                     colorize: arrow.has-hover ? Theme.text : Theme.dim;
                 }
                 arrow := TouchArea {
@@ -417,22 +435,22 @@ export component CheckBox inherits Rectangle {
     horizontal-stretch: 0;
     opacity: root.enabled ? 1 : 0.5;
     HorizontalLayout {
-        spacing: 8px;
+        spacing: 9px;
         alignment: start;
         VerticalLayout {
             alignment: center;
             Rectangle {
                 width: 18px;
                 height: 18px;
-                border-radius: 4px;
+                border-radius: 5px;
                 border-width: root.checked ? 0 : 1.5px;
                 border-color: touch.has-hover && root.enabled ? Theme.dim : Theme.border-strong;
                 background: root.checked ? Theme.accent : Theme.field;
                 animate background, border-color { duration: 140ms; }
                 Image {
                     source: @image-url("icons/check.svg");
-                    width: 13px;
-                    height: 13px;
+                    width: 12px;
+                    height: 12px;
                     colorize: #FFFFFF;
                     opacity: root.checked ? 1 : 0;
                     transform-scale: root.checked ? 1 : 0.5;
@@ -443,8 +461,10 @@ export component CheckBox inherits Rectangle {
         }
         if root.text != "": Text {
             text: root.text;
-            color: Theme.text;
+            color: touch.has-hover && root.enabled ? Theme.text : Theme.dim;
+            font-size: 13px;
             vertical-alignment: center;
+            animate color { duration: 120ms; }
         }
     }
     touch := TouchArea {

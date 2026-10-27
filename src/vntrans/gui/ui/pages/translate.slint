@@ -6,22 +6,34 @@ component Number inherits SpinBox {
     edited => { App.run-settings-changed(); }
 }
 
-component Stat inherits VerticalLayout {
+component StatTile inherits Rectangle {
     in property <string> label;
     in property <int> value;
     in property <color> tint: Theme.text;
-    spacing: 2px;
-    alignment: start;
-    Text {
-        text: root.value;
-        color: root.tint;
-        font-size: 22px;
-        font-weight: 700;
-    }
-    Text {
-        text: root.label;
-        color: Theme.faint;
-        font-size: 12px;
+    in property <color> bg-tint: root.tint.transparentize(0.92);
+    height: 70px;
+    horizontal-stretch: 1;
+    border-radius: 8px;
+    background: Theme.field;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        alignment: center;
+        spacing: 2px;
+        Text {
+            text: root.value;
+            color: root.tint;
+            font-size: 22px;
+            font-weight: 800;
+        }
+        Text {
+            text: root.label;
+            color: Theme.faint;
+            font-size: 11px;
+            font-weight: 600;
+        }
     }
 }
 
@@ -32,14 +44,16 @@ export component TranslatePage inherits Rectangle {
         spacing: 12px;
         Card {
             vertical-stretch: 0;
+            border-radius: 10px;
+            border-color: Theme.border;
             VerticalLayout {
-                padding: 16px;
-                spacing: 14px;
+                padding: 18px;
+                spacing: 16px;
                 HorizontalLayout {
                     spacing: 12px;
                     Field {
                         horizontal-stretch: 1;
-                        label: "Profile";
+                        label: "AI PROFILE";
                         if App.profile-names.length > 0: ComboBox {
                             enabled: !App.running;
                             model: App.profile-names;
@@ -48,12 +62,12 @@ export component TranslatePage inherits Rectangle {
                         }
                         if App.profile-names.length == 0: ComboBox {
                             enabled: false;
-                            model: ["No profiles"];
+                            model: ["No profiles configured"];
                         }
                     }
                     Field {
                         horizontal-stretch: 1;
-                        label: "Task";
+                        label: "TASK MODE";
                         ComboBox {
                             enabled: !App.running;
                             model: ["Translate", "Review translations", "Discover terms"];
@@ -62,7 +76,7 @@ export component TranslatePage inherits Rectangle {
                     }
                     Field {
                         horizontal-stretch: 1;
-                        label: "Units";
+                        label: "TARGET UNITS";
                         ComboBox {
                             enabled: !App.running;
                             model: [App.run-task == 0 ? "New and failed" : "All", "Current Texts filter"];
@@ -74,7 +88,7 @@ export component TranslatePage inherits Rectangle {
                     spacing: 12px;
                     Field {
                         horizontal-stretch: 1;
-                        label: "Lines per batch";
+                        label: "LINES / BATCH";
                         Number {
                             minimum: 1;
                             maximum: 200;
@@ -83,7 +97,7 @@ export component TranslatePage inherits Rectangle {
                     }
                     Field {
                         horizontal-stretch: 1;
-                        label: "Source tokens per batch";
+                        label: "MAX SOURCE TOKENS";
                         Number {
                             minimum: 100;
                             maximum: 20000;
@@ -93,7 +107,7 @@ export component TranslatePage inherits Rectangle {
                     }
                     Field {
                         horizontal-stretch: 1;
-                        label: "Context before";
+                        label: "CONTEXT BEFORE";
                         Number {
                             minimum: 0;
                             maximum: 50;
@@ -102,7 +116,7 @@ export component TranslatePage inherits Rectangle {
                     }
                     Field {
                         horizontal-stretch: 1;
-                        label: "Context after";
+                        label: "CONTEXT AFTER";
                         Number {
                             minimum: 0;
                             maximum: 50;
@@ -111,7 +125,7 @@ export component TranslatePage inherits Rectangle {
                     }
                     Field {
                         horizontal-stretch: 1;
-                        label: "Parallel requests";
+                        label: "CONCURRENCY";
                         Number {
                             minimum: 1;
                             maximum: 64;
@@ -120,7 +134,7 @@ export component TranslatePage inherits Rectangle {
                     }
                     Field {
                         horizontal-stretch: 1;
-                        label: "Requests/min (0 = off)";
+                        label: "RPM LIMIT (0 = OFF)";
                         Number {
                             minimum: 0;
                             maximum: 10000;
@@ -130,31 +144,32 @@ export component TranslatePage inherits Rectangle {
                 }
                 Divider { }
                 HorizontalLayout {
-                    spacing: 10px;
+                    spacing: 12px;
                     Text {
                         horizontal-stretch: 1;
                         text: App.run-meta;
                         color: Theme.dim;
-                        font-size: 12px;
+                        font-size: 13px;
                         vertical-alignment: center;
                         overflow: elide;
                     }
                     if App.profile-names.length == 0: AppButton {
                         primary: true;
                         icon: @image-url("../icons/plus.svg");
-                        text: "Add profile";
+                        text: "Add Profile";
                         clicked => { App.navigate("settings"); }
                     }
                     if !App.running && App.profile-names.length > 0: AppButton {
                         primary: true;
                         icon: @image-url("../icons/play.svg");
-                        text: "Start";
+                        text: "Start Batch";
                         enabled: !App.busy;
                         clicked => { App.run-start(); }
                     }
                     if App.running: AppButton {
+                        danger: true;
                         icon: @image-url("../icons/square.svg");
-                        text: App.stopping ? "Stopping…" : "Stop";
+                        text: App.stopping ? "Stopping…" : "Stop Batch";
                         enabled: !App.stopping;
                         clicked => { App.run-stop(); }
                     }
@@ -165,34 +180,38 @@ export component TranslatePage inherits Rectangle {
         if App.running || App.run-total > 0: FadeIn {
             vertical-stretch: 0;
             Card {
+                border-radius: 10px;
+                border-color: Theme.border;
                 VerticalLayout {
                     padding: 16px;
                     spacing: 14px;
                     HorizontalLayout {
-                        spacing: 48px;
-                        alignment: start;
-                        Stat {
-                            label: App.run-task == 0 ? "Translated" : "Checked";
+                        spacing: 12px;
+                        StatTile {
+                            label: App.run-task == 0 ? "TRANSLATED" : "CHECKED";
                             value: App.run-done;
-                            tint: Theme.accent-hover;
+                            tint: Theme.accent-light;
                         }
-                        Stat {
-                            label: "Failed";
+                        StatTile {
+                            label: "FAILED";
                             value: App.run-failed;
-                            tint: App.run-failed > 0 ? Theme.danger : Theme.text;
+                            tint: App.run-failed > 0 ? Theme.danger : Theme.dim;
                         }
-                        Stat {
-                            label: "Remaining";
+                        StatTile {
+                            label: "REMAINING";
                             value: max(0, App.run-total - App.run-done - App.run-failed);
+                            tint: Theme.dim;
                         }
-                        Stat {
-                            label: "In this run";
+                        StatTile {
+                            label: "TOTAL IN BATCH";
                             value: App.run-total;
+                            tint: Theme.text;
                         }
                     }
                     Meter {
                         height: 6px;
                         value: App.run-total == 0 ? 0 : (App.run-done + App.run-failed) / App.run-total;
+                        fill: App.run-failed > 0 ? Theme.warning : Theme.accent;
                     }
                 }
             }
@@ -200,29 +219,54 @@ export component TranslatePage inherits Rectangle {
 
         Card {
             vertical-stretch: 1;
+            border-radius: 10px;
+            border-color: Theme.border;
             VerticalLayout {
                 padding: 16px;
-                spacing: 8px;
-                Label { text: "Log"; }
-                if App.log.length == 0: EmptyState { text: "No activity yet"; }
-                if App.log.length > 0: ListView {
-                    for entry in App.log: HorizontalLayout {
-                        spacing: 10px;
-                        padding-top: 3px;
-                        padding-bottom: 3px;
-                        Text {
-                            width: 64px;
-                            text: entry.time;
-                            color: Theme.faint;
-                            font-size: 12px;
-                        }
-                        Text {
-                            horizontal-stretch: 1;
-                            text: entry.text;
-                            font-size: 12px;
-                            wrap: word-wrap;
-                            color: entry.kind == "error" ? Theme.danger : entry.kind == "retry" ? Theme.warning
-                                : entry.kind == "done" ? Theme.success : Theme.dim;
+                spacing: 10px;
+                HorizontalLayout {
+                    Label {
+                        text: "ACTIVITY LOG";
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    if App.log.length > 0: Text {
+                        text: App.log.length + " events";
+                        color: Theme.faint;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
+                if App.log.length == 0: EmptyState { text: "No translation activity recorded yet"; }
+                if App.log.length > 0: Rectangle {
+                    background: Theme.field;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    clip: true;
+                    ListView {
+                        for entry in App.log: HorizontalLayout {
+                            spacing: 12px;
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            padding-top: 5px;
+                            padding-bottom: 5px;
+                            Text {
+                                width: 70px;
+                                text: entry.time;
+                                color: Theme.faint;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: entry.text;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                                color: entry.kind == "error" ? Theme.danger : entry.kind == "retry" ? Theme.warning
+                                    : entry.kind == "done" ? Theme.success : Theme.text;
+                            }
                         }
                     }
                 }
