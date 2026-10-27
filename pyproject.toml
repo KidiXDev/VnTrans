@@ -1,0 +1,22 @@
+[project]
+name = "vntrans"
+version = "0.1.0"
+description = "Lossless visual novel script extraction and translation reinsertion"
+readme = "README.md"
+authors = [
+    { name = "KidiXDev" }
+]
+requires-python = ">=3.13"
+dependencies = []
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+
+[project.scripts]
+vntrans = "vntrans:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+source-include = ["tests/**"]
