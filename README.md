@@ -78,33 +78,54 @@ The app is built with [Slint](https://slint.dev). Everything happens in a
 - **Texts**: every unit in a virtualized list. Search by source, translation,
   speaker or ID, with plain text or regular expressions and case matching. Filter
   by file, kind and status (new, machine, edited, failed, excluded, issues,
-  review). Edits are checked with the same placeholder rules as rebuild before
-  they are saved. Ctrl+Enter saves and moves to the next unit. Find & replace
-  works on the translations currently shown.
+  review). Speaker-name units are listed only under the "Speaker names" kind;
+  the default "All lines" shows them in the speaker column. Edits are checked
+  with the same placeholder rules as rebuild before they are saved, and a saved
+  translation also fills identical units (same kind and source) that are
+  untranslated, machine-translated or still match the old text. Ctrl+Enter
+  saves and moves to the next unit. Find & replace works on the translations
+  currently shown. On first open, units without any letters of the source
+  language (`……`, `？？？`, digits, symbols) are excluded so they keep their
+  original text; Undo brings them back.
 - **Glossary**: terms and characters with notes. Only approved entries whose
   source text appears in a batch are sent to the model. Import and export as JSON
   (`source`/`target`/`notes`, or `src`/`dst`/`info`). Replacement rules, one per
   line (`pre|post FIND => REPLACE`, `/FIND/` for a regex), rewrite source text
   before sending (`pre`) or model output (`post`), outside placeholders only.
 - **Prompt**: an ordered chain of sections (role, style, project notes,
-  characters, glossary, context, fixed output rules). Toggle, reorder, edit or
-  reset each one, and preview the exact messages for the batch around the
-  selected unit, with an estimated token count.
+  characters, glossary, context, prompt enhancement, fixed output rules).
+  Toggle, reorder, edit or reset each one, and preview the exact messages for
+  the batch around the selected unit, with an estimated token count. Prompt
+  enhancement (on by default, as in LinguaGacha) has the model write brief
+  structured reasoning in a `why` field before its translations; it costs a
+  few output tokens per batch and shows in the batch inspector's thinking.
 - **Translate**: runs a profile over new units or the current Texts filter, in
   batches that stay within one scene, with nearby lines as context. Replies are
   checked unit by unit. Valid units are saved immediately, and failed ones are
   retried in smaller batches, then individually. Rate limits and network errors
   are retried with backoff, and bad keys stop the run. Stopping or closing loses
   nothing that was already accepted, and the next run continues with the rest.
-  Manual edits are never overwritten. Speaker names are filled from the glossary
-  or translated once per unique name. The same page runs **Review translations**
+  Manual edits are never overwritten. Speaker names are filled from the glossary,
+  and identical units (same kind and source, project-wide) are sent once; new
+  units reuse an existing translation of the same text without a request. The same page runs **Review translations**
   (suggestions you accept or dismiss in Texts) and **Discover terms** (draft
   glossary entries with example lines, for you to approve).
 - **Build**: exports the JSON and rebuilds a patch with optional wrapping and
-  output encoding.
+  output encoding. **Export LinguaGacha** writes
+  [LinguaGacha](https://github.com/neavo/LinguaGacha) MESSAGE JSON
+  (`[{"name", "message"}]`, one file per script) to `exports/linguagacha-<time>/`.
+  **Import LinguaGacha** reads LinguaGacha's translated output folder back, by
+  file path and line position; a translated `name` fills that speaker everywhere.
+  Imports fill only new and machine units and pass the same checks as edits. Add
+  a LinguaGacha text-preserve rule for `⟦\d+⟧` so placeholders survive.
 - **Settings**: provider profiles for Google Gemini (native API) and OpenRouter:
   model, keys (several rotate), temperature, output limit, reasoning level and
   timeout, with model listing and a test request.
+
+The window reopens with its last size and maximized state, and on Windows at
+its last position and monitor. It never starts minimized, and a position that
+is off-screen (for example after unplugging a monitor) is moved back onto a
+screen.
 
 Profiles are stored outside workspaces in your user config folder
 (`~/.config/vntrans/config.json` on Linux, mode 0600). Set
