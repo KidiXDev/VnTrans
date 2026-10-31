@@ -116,6 +116,33 @@ export component Badge inherits Rectangle {
     }
 }
 
+export component Spinner inherits Rectangle {
+    in property <length> size: 16px;
+    in property <brush> tint: Theme.accent-light;
+    width: root.size;
+    height: root.size;
+    Path {
+        width: root.size;
+        height: root.size;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        stroke: root.tint.transparentize(0.8);
+        stroke-width: max(1.5px, root.size / 9);
+        commands: "M 21 12 A 9 9 0 1 1 3 12 A 9 9 0 1 1 21 12";
+    }
+    Path {
+        width: root.size;
+        height: root.size;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        stroke: root.tint;
+        stroke-width: max(1.5px, root.size / 9);
+        stroke-line-cap: round;
+        commands: "M 21 12 A 9 9 0 0 1 12 21";
+        transform-rotation: mod(animation-tick() / 1ms * 0.36, 360) * 1deg;
+    }
+}
+
 export component AppButton inherits Rectangle {
     in property <string> text;
     in property <image> icon;
@@ -124,13 +151,14 @@ export component AppButton inherits Rectangle {
     in property <bool> danger;
     in property <bool> checked;
     in property <bool> enabled: true;
+    in property <bool> loading;
     out property <bool> hovered: touch.has-hover;
     callback clicked;
     height: 34px;
     border-radius: 7px;
     border-width: root.primary || root.ghost ? 0 : 1px;
     border-color: root.checked ? Theme.accent : root.danger ? Theme.danger.transparentize(0.5) : touch.has-hover && root.enabled ? Theme.border-strong : Theme.border;
-    opacity: root.enabled ? 1 : 0.45;
+    opacity: root.enabled || root.loading ? 1 : 0.45;
     background: root.primary
         ? (touch.has-hover && root.enabled ? Theme.accent-hover : Theme.accent)
         : root.danger ? (touch.has-hover && root.enabled ? Theme.danger : Theme.danger-soft)
@@ -145,7 +173,14 @@ export component AppButton inherits Rectangle {
         padding-right: root.text == "" ? 8px : 14px;
         spacing: 7px;
         alignment: center;
-        if root.icon.width > 0: VerticalLayout {
+        if root.loading: VerticalLayout {
+            alignment: center;
+            Spinner {
+                size: 15px;
+                tint: root.primary ? #FFFFFF : root.danger ? Theme.danger : Theme.text;
+            }
+        }
+        if root.icon.width > 0 && !root.loading: VerticalLayout {
             alignment: center;
             Image {
                 source: root.icon;
@@ -163,7 +198,7 @@ export component AppButton inherits Rectangle {
         }
     }
     touch := TouchArea {
-        enabled: root.enabled;
+        enabled: root.enabled && !root.loading;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
@@ -267,6 +302,7 @@ export component NavItem inherits Rectangle {
     in property <string> text;
     in property <image> icon;
     in property <bool> active;
+    in property <bool> loading;
     callback clicked;
     height: 38px;
     border-radius: 8px;
@@ -277,7 +313,11 @@ export component NavItem inherits Rectangle {
         padding-right: 12px;
         spacing: 11px;
         alignment: start;
-        VerticalLayout {
+        if root.loading: VerticalLayout {
+            alignment: center;
+            Spinner { size: 17px; }
+        }
+        if !root.loading: VerticalLayout {
             alignment: center;
             Image {
                 source: root.icon;

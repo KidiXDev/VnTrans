@@ -191,7 +191,7 @@ export component BuildPage inherits Rectangle {
                             height: 40px;
                             icon: @image-url("../icons/package.svg");
                             text: App.busy ? "Building…" : "Build Patch";
-                            enabled: !App.busy;
+                            loading: App.busy;
                             clicked => { App.build(); }
                         }
                         if App.busy: AppButton {

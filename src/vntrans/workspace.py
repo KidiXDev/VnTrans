@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS attempts(
 CREATE TABLE IF NOT EXISTS suggestions(
     file TEXT NOT NULL, id TEXT NOT NULL, text TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(file, id));
 """
+ROWS = ("SELECT file, id, kind, source, speaker, scene, context, translation, status, error "
+        "FROM units ORDER BY file, ord")
 
 
 @dataclass(slots=True)
@@ -58,6 +60,16 @@ def connect(path: Path) -> sqlite3.Connection:
     db.execute("PRAGMA journal_mode=WAL")
     db.executescript(SCHEMA)
     return db
+
+
+def load_rows(root) -> list[Row]:
+    """A workspace's rows read on a private connection, so a worker thread can load them while the
+    workspace's own connection stays on the thread that opened it."""
+    db = connect(Path(root) / DATABASE)
+    try:
+        return [Row(*values) for values in db.execute(ROWS)]
+    finally:
+        db.close()
 
 
 def write_json(path: Path, value):
@@ -148,9 +160,7 @@ class Workspace:
         write_json(self.root / MANIFEST, self.manifest)
 
     def rows(self) -> list[Row]:
-        return [Row(*values) for values in self.db.execute(
-            "SELECT file, id, kind, source, speaker, scene, context, translation, status, error "
-            "FROM units ORDER BY file, ord")]
+        return [Row(*values) for values in self.db.execute(ROWS)]
 
     def check(self, row: Row, text: str) -> str:
         """Normalize line endings and apply the rebuild's per-unit checks."""
@@ -237,10 +247,12 @@ class Workspace:
         return [row for row in rows if row.status == "new" and row.translation is None and not row.error
                 and not translatable(row.source, language)]
 
-    def export_messages(self, folder: Path) -> int:
-        """LinguaGacha MESSAGE JSON: one file per script with every non-speaker unit in order, speakers as `name`."""
+    def export_messages(self, folder: Path, rows) -> int:
+        """LinguaGacha MESSAGE JSON: one file per script with every non-speaker unit in order, speakers as `name`.
+
+        Uses the given rows, not the database, so it can run on a worker thread."""
         scripts = {}
-        for row in self.rows():
+        for row in rows:
             if row.kind != "speaker":
                 scripts.setdefault(row.file, []).append(
                     dict(name=row.speaker, message=row.source) if row.speaker else dict(message=row.source))

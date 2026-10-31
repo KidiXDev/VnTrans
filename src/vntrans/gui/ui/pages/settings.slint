@@ -150,8 +150,9 @@ export component SettingsPage inherits Rectangle {
                             }
                             AppButton {
                                 icon: @image-url("../icons/download.svg");
-                                text: "Fetch Models";
-                                enabled: !App.pf-working && App.pf-keys != "";
+                                text: App.pf-working == "fetch" ? "Fetching…" : "Fetch Models";
+                                loading: App.pf-working == "fetch";
+                                enabled: App.pf-working == "" && App.pf-keys != "";
                                 clicked => { App.profile-fetch(); }
                             }
                         }
@@ -233,8 +234,9 @@ export component SettingsPage inherits Rectangle {
                         }
                         AppButton {
                             icon: @image-url("../icons/play.svg");
-                            text: App.pf-working ? "Testing…" : "Test Connection";
-                            enabled: !App.pf-working && App.pf-keys != "" && App.pf-model != "";
+                            text: App.pf-working == "test" ? "Testing…" : "Test Connection";
+                            loading: App.pf-working == "test";
+                            enabled: App.pf-working == "" && App.pf-keys != "" && App.pf-model != "";
                             clicked => { App.profile-test(); }
                         }
                         AppButton {

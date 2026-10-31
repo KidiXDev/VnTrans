@@ -334,7 +334,7 @@ export component TranslatePage inherits Rectangle {
                         danger: true;
                         icon: @image-url("../icons/square.svg");
                         text: App.stopping ? "Stopping…" : "Stop Batch";
-                        enabled: !App.stopping;
+                        loading: App.stopping;
                         clicked => { App.run-stop(); }
                     }
                 }

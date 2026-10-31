@@ -86,6 +86,8 @@ export global App {
     in property <float> busy-progress;
     in property <string> message;
     in property <bool> message-error;
+    in property <bool> loading;
+    in property <string> loading-text;
     callback close-project();
     callback cancel-busy();
     callback navigate(string);
@@ -226,7 +228,7 @@ export global App {
     in-out property <int> pf-model-index: -1;
     in property <string> pf-status;
     in property <bool> pf-status-error;
-    in property <bool> pf-working;
+    in property <string> pf-working;
     callback profile-select(int);
     callback profile-new();
     callback profile-save();

@@ -1,4 +1,4 @@
-import { Theme, NavItem, AppButton, Meter, Card, FadeIn, Badge } from "theme.slint";
+import { Theme, NavItem, AppButton, Meter, Card, FadeIn, Badge, Spinner } from "theme.slint";
 import { App } from "app.slint";
 import { WelcomePage, Languages } from "pages/welcome.slint";
 import { TextsPage, UnitEditor } from "pages/texts.slint";
@@ -131,6 +131,7 @@ component Sidebar inherits Rectangle {
                 NavItem {
                     icon: @image-url("icons/play.svg");
                     text: App.running ? "Translating…" : "Translate";
+                    loading: App.running;
                     active: root.index == 3;
                     clicked => { App.navigate("translate"); }
                 }
@@ -306,6 +307,10 @@ component StatusBar inherits Rectangle {
             zone := TouchArea { }
             HorizontalLayout {
                 spacing: 10px;
+                VerticalLayout {
+                    alignment: center;
+                    Spinner { size: 13px; }
+                }
                 Text {
                     text: App.busy-text;
                     color: Theme.dim;
@@ -476,6 +481,59 @@ component EditorDialog inherits Rectangle {
     }
 }
 
+component LoadingOverlay inherits Rectangle {
+    in property <bool> open;
+    in property <string> text;
+    property <float> shown: root.open ? 1 : 0;
+    animate shown { delay: 150ms; duration: 180ms; easing: ease-out; }
+    visible: root.open;
+    background: #04070F.with-alpha(0.6 * root.shown);
+    changed open => {
+        if (root.open) {
+            keys.focus();
+        }
+    }
+    TouchArea { mouse-cursor: progress; }
+    keys := FocusScope {
+        key-pressed(event) => { accept }
+    }
+    VerticalLayout {
+        alignment: center;
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                opacity: root.shown;
+                transform-scale: 0.96 + 0.04 * root.shown;
+                border-radius: 12px;
+                background: Theme.panel;
+                border-width: 1px;
+                border-color: Theme.border;
+                drop-shadow-blur: 24px;
+                drop-shadow-color: #00000066;
+                HorizontalLayout {
+                    padding: 18px;
+                    padding-left: 20px;
+                    padding-right: 24px;
+                    spacing: 14px;
+                    VerticalLayout {
+                        alignment: center;
+                        Spinner { size: 24px; }
+                    }
+                    Text {
+                        text: root.text;
+                        color: Theme.text;
+                        font-size: 14px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        max-width: 420px;
+                    }
+                }
+            }
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     title: App.has-project ? App.project-name + " — VnTrans" : "VnTrans";
     icon: @image-url("icons/languages.svg");
@@ -562,6 +620,12 @@ export component AppWindow inherits Window {
             width: parent.width;
             height: parent.height;
             open: App.editor-open && App.current >= 0;
+        }
+        LoadingOverlay {
+            width: parent.width;
+            height: parent.height;
+            open: App.loading;
+            text: App.loading-text;
         }
     }
 }

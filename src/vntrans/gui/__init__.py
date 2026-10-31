@@ -17,7 +17,7 @@ def main(argv=None):
     async def start():
         await window.track_geometry()
         if argv:
-            window.open(argv[0])
+            await window.open(argv[0])
 
     slint.run_event_loop(start())
     window.save_geometry()

@@ -56,7 +56,7 @@ class WorkspaceTests(unittest.TestCase):
         ws = self.japanese("[name name=里久]「ふぁ」\n[name name=里久]はい[l]そう\n[name name=里久]ええ\nまた\n")
         rows = ws.rows()
         exported = self.root / "lg"
-        self.assertEqual(ws.export_messages(exported), 1)
+        self.assertEqual(ws.export_messages(exported, rows), 1)
         self.assertEqual(json.loads((exported / "a.ks.json").read_text(encoding="utf-8")), [
             dict(name="里久", message="「ふぁ」"), dict(name="里久", message="はい⟦0⟧そう"),
             dict(name="里久", message="ええ"), dict(name="里久", message="また")])

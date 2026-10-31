@@ -2,11 +2,13 @@
 
 import asyncio
 from collections import Counter, deque
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -295,7 +297,7 @@ class Window(UI.AppWindow):
         if not path:
             return
         if target == "open":
-            self.open(path)
+            await self.open(path)
         elif target == "original":
             self.ui.new_original = path
             if not self.ui.new_name:
@@ -304,8 +306,8 @@ class Window(UI.AppWindow):
             self.ui.new_workspace = path
 
     @slint.callback(global_name="App")
-    def open_workspace(self, path):
-        self.open(path)
+    async def open_workspace(self, path):
+        await self.open(path)
 
     @slint.callback(global_name="App")
     async def create_project(self):
@@ -329,15 +331,37 @@ class Window(UI.AppWindow):
             self.idle()
         ui.creating = False
         ui.new_name = ui.new_original = ui.new_workspace = ""
-        self.open(root)
+        await self.open(root)
 
-    def open(self, path):
+    @contextmanager
+    def overlay(self, text):
+        """Block input behind the loading overlay until the block ends; its spinner fades in after a moment."""
+        self.ui.loading_text = text
+        self.ui.loading = True
         try:
-            ws = workspace.Workspace(Path(path).expanduser())
-            rows = ws.rows()
-        except (VnTransError, OSError, ValueError) as exc:
-            self.fail(exc)
-            return
+            yield
+        finally:
+            self.ui.loading = False
+
+    async def open(self, path):
+        """Read the workspace's rows on a worker thread behind the loading overlay, then show it."""
+        path = Path(path).expanduser()
+        name = next((item.get("name") for item in self.settings.get("recent", [])
+                     if item.get("path") == str(path.absolute())), None) or path.name
+        with self.overlay(f"Opening {name}…"):
+            try:
+                ws = workspace.Workspace(path)
+                try:
+                    rows = await asyncio.to_thread(workspace.load_rows, ws.root)
+                except BaseException:
+                    ws.close()
+                    raise
+            except (VnTransError, OSError, ValueError, sqlite3.Error) as exc:
+                self.fail(exc)
+                return
+            self.show_workspace(ws, rows)
+
+    def show_workspace(self, ws, rows):
         if self.ws:
             self.ws.close()
         self.ws, self.rows = ws, rows
@@ -775,13 +799,14 @@ class Window(UI.AppWindow):
         self.say(f"Exported to {path}")
 
     @slint.callback(global_name="App")
-    def lg_export(self):
+    async def lg_export(self):
         folder = self.ws.root / "exports" / f"linguagacha-{datetime.now():%Y%m%d-%H%M%S}"
-        try:
-            count = self.ws.export_messages(folder)
-        except OSError as exc:
-            self.fail(exc)
-            return
+        with self.overlay("Exporting LinguaGacha JSON…"):
+            try:
+                count = await asyncio.to_thread(self.ws.export_messages, folder, list(self.rows))
+            except OSError as exc:
+                self.fail(exc)
+                return
         self.say(f"Exported {count:,} scripts to {folder}")
 
     @slint.callback(global_name="App")
@@ -789,15 +814,17 @@ class Window(UI.AppWindow):
         path = await asyncio.to_thread(pick, "LinguaGacha output folder")
         if not path or self.ws is None or self.run:
             return
-        try:
-            pairs, skipped, ignored = self.ws.import_messages(Path(path).expanduser(), self.rows)
-        except OSError as exc:
-            self.fail(exc)
-            return
-        rows = [row for row, _ in pairs]
-        self.remember_undo("import", rows)
-        self.ws.save_many(pairs, "machine")
-        self.changed_rows(rows)
+        with self.overlay("Importing LinguaGacha translations…"):
+            try:
+                pairs, skipped, ignored = await asyncio.to_thread(
+                    self.ws.import_messages, Path(path).expanduser(), self.rows)
+            except OSError as exc:
+                self.fail(exc)
+                return
+            rows = [row for row, _ in pairs]
+            self.remember_undo("import", rows)
+            self.ws.save_many(pairs, "machine")
+            self.changed_rows(rows)
         notes = [f"{skipped:,} failed checks"] * bool(skipped) + [f"{len(ignored):,} files not matched"] * bool(ignored)
         self.say(f"Imported {len(rows):,} translations" + (f" ({', '.join(notes)})" if notes else ""),
                  error=not rows and bool(notes))
@@ -974,14 +1001,14 @@ class Window(UI.AppWindow):
     @slint.callback(global_name="App")
     async def profile_fetch(self):
         profile = self.form_profile()
-        self.ui.pf_working = True
+        self.ui.pf_working = "fetch"
         try:
             models = await asyncio.to_thread(PROVIDERS[profile.provider].models, profile, profile.api_keys()[0])
         except (ProviderError, IndexError) as exc:
             self.profile_status(str(exc) or "No API key", error=True)
             return
         finally:
-            self.ui.pf_working = False
+            self.ui.pf_working = ""
         self.ui.pf_models = slint.ListModel(models)
         self.ui.pf_model_index = models.index(self.ui.pf_model) if self.ui.pf_model in models else -1
         self.profile_status(f"{len(models)} models")
@@ -990,7 +1017,7 @@ class Window(UI.AppWindow):
     async def profile_test(self):
         profile = self.form_profile()
         user = 'Translate these 1 records into English:\n{"i": 1, "kind": "dialogue", "text": "おはよう、いい天気だね。"}'
-        self.ui.pf_working = True
+        self.ui.pf_working = "test"
         self.profile_status("")
         started = time.monotonic()
         try:
@@ -1001,7 +1028,7 @@ class Window(UI.AppWindow):
             self.profile_status(str(exc) or "No API key", error=True)
             return
         finally:
-            self.ui.pf_working = False
+            self.ui.pf_working = ""
         self.profile_status(f"OK in {time.monotonic() - started:.1f} s: {text}")
 
     def load_run_settings(self):

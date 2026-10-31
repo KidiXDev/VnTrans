@@ -1,5 +1,5 @@
 import { LineEdit, ComboBox, SpinBox, ListView } from "../widgets.slint";
-import { Theme, Card, AppButton, Field, Label, Meter, Divider } from "../theme.slint";
+import { Theme, Card, AppButton, Field, Label, Meter, Divider, Spinner } from "../theme.slint";
 import { App } from "../app.slint";
 
 export global Languages {
@@ -307,11 +307,18 @@ export component WelcomePage inherits Rectangle {
                         }
                         if App.busy: VerticalLayout {
                             spacing: 8px;
-                            Text {
-                                text: App.busy-text;
-                                color: Theme.dim;
-                                font-size: 12px;
-                                overflow: elide;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Spinner { size: 13px; }
+                                }
+                                Text {
+                                    text: App.busy-text;
+                                    color: Theme.dim;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                }
                             }
                             Meter { value: App.busy-progress; }
                         }
