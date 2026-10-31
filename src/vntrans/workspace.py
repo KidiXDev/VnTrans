@@ -237,6 +237,59 @@ class Workspace:
         return [row for row in rows if row.status == "new" and row.translation is None and not row.error
                 and not translatable(row.source, language)]
 
+    def export_messages(self, folder: Path) -> int:
+        """LinguaGacha MESSAGE JSON: one file per script with every non-speaker unit in order, speakers as `name`."""
+        scripts = {}
+        for row in self.rows():
+            if row.kind != "speaker":
+                scripts.setdefault(row.file, []).append(
+                    dict(name=row.speaker, message=row.source) if row.speaker else dict(message=row.source))
+        for file, items in scripts.items():
+            path = folder / f"{file}.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_json(path, items)
+        return len(scripts)
+
+    def import_messages(self, folder: Path, rows) -> tuple[list[tuple[Row, str]], int, list[str]]:
+        """(row, text) pairs from LinguaGacha's translated MESSAGE JSON, the count failing checks, and unmatched files.
+
+        Files match scripts by path and lines by position; a translated `name` fills that speaker everywhere.
+        Only new and machine rows are filled, never manual edits or excluded rows."""
+        lines, speakers = {}, {}
+        for row in rows:
+            if row.kind == "speaker":
+                speakers.setdefault(row.source, []).append(row)
+            else:
+                lines.setdefault(row.file, []).append(row)
+        candidates, names, ignored = [], {}, []
+        for path in sorted(folder.rglob("*.json")):
+            relative = path.relative_to(folder).as_posix().removesuffix(".json")
+            file = max((name for name in lines if f"/{relative}".endswith(f"/{name}")), key=len, default=None)
+            try:
+                items = json.loads(path.read_text(encoding="utf-8-sig"))
+            except (UnicodeError, ValueError):
+                items = None
+            if file is None or not isinstance(items, list) or len(items) != len(lines[file]):
+                ignored.append(relative)
+                continue
+            for row, item in zip(lines[file], items):
+                item = item if isinstance(item, dict) else {}
+                candidates.append((row, item.get("message")))
+                name = item.get("name")
+                if row.speaker and isinstance(name, str) and name != row.speaker:
+                    names.setdefault(row.speaker, name)
+        candidates += [(row, name) for source, name in names.items() for row in speakers.get(source, ())]
+        pairs, skipped = [], 0
+        for row, text in candidates:
+            if row.status not in ("new", "machine") or not isinstance(text, str) or not text.strip() \
+                    or text in (row.source, row.translation):
+                continue
+            try:
+                pairs.append((row, self.check(row, text)))
+            except VnTransError:
+                skipped += 1
+        return pairs, skipped, ignored
+
     def exclude(self, row: Row, excluded: bool):
         status = "excluded" if excluded else ("new" if row.translation is None else "edited")
         with self.db:

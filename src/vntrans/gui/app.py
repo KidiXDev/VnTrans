@@ -761,6 +761,34 @@ class Window(UI.AppWindow):
             return
         self.say(f"Exported to {path}")
 
+    @slint.callback(global_name="App")
+    def lg_export(self):
+        folder = self.ws.root / "exports" / f"linguagacha-{datetime.now():%Y%m%d-%H%M%S}"
+        try:
+            count = self.ws.export_messages(folder)
+        except OSError as exc:
+            self.fail(exc)
+            return
+        self.say(f"Exported {count:,} scripts to {folder}")
+
+    @slint.callback(global_name="App")
+    async def lg_import(self):
+        path = await asyncio.to_thread(pick, "LinguaGacha output folder")
+        if not path or self.ws is None or self.run:
+            return
+        try:
+            pairs, skipped, ignored = self.ws.import_messages(Path(path).expanduser(), self.rows)
+        except OSError as exc:
+            self.fail(exc)
+            return
+        rows = [row for row, _ in pairs]
+        self.remember_undo("import", rows)
+        self.ws.save_many(pairs, "machine")
+        self.changed_rows(rows)
+        notes = [f"{skipped:,} failed checks"] * bool(skipped) + [f"{len(ignored):,} files not matched"] * bool(ignored)
+        self.say(f"Imported {len(rows):,} translations" + (f" ({', '.join(notes)})" if notes else ""),
+                 error=not rows and bool(notes))
+
     def load_prompt(self):
         manifest = self.ws.manifest
         self.sections = prompts.chain(manifest.get("prompt", {}))

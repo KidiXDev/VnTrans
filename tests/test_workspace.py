@@ -52,6 +52,29 @@ class WorkspaceTests(unittest.TestCase):
         ws.save(next(row for row in rows if row.source == "……"), "...")
         self.assertNotIn("……", [row.source for row in ws.untranslatable(rows)])
 
+    def test_linguagacha_message_json_round_trip(self):
+        ws = self.japanese("[name name=里久]「ふぁ」\n[name name=里久]はい[l]そう\n[name name=里久]ええ\nまた\n")
+        rows = ws.rows()
+        exported = self.root / "lg"
+        self.assertEqual(ws.export_messages(exported), 1)
+        self.assertEqual(json.loads((exported / "a.ks.json").read_text(encoding="utf-8")), [
+            dict(name="里久", message="「ふぁ」"), dict(name="里久", message="はい⟦0⟧そう"),
+            dict(name="里久", message="ええ"), dict(name="里久", message="また")])
+
+        output = self.root / "out"
+        (output / "extra").mkdir(parents=True)
+        (output / "b").mkdir()
+        translated = [dict(name="Riku", message='"Fwah"'), dict(name="Riku", message="Yes so"),
+                      dict(name="Riku", message="ええ"), dict(name="Riku", message="Again")]
+        (output / "extra/a.ks.json").write_text(json.dumps(translated), encoding="utf-8")
+        (output / "extra/missing.ks.json").write_text("[]", encoding="utf-8")
+        (output / "b/a.ks.json").write_text("[]", encoding="utf-8")
+        ws.save(next(row for row in rows if row.source == "また"), "Mine")
+        pairs, skipped, ignored = ws.import_messages(output, rows)
+        self.assertEqual(sorted((row.kind, text) for row, text in pairs),
+                         [("dialogue", '"Fwah"')] + [("speaker", "Riku")] * 3)
+        self.assertEqual((skipped, ignored), (1, ["b/a.ks", "extra/missing.ks"]))
+
     def test_create_copies_extracts_and_indexes(self):
         before = digest(self.source)
         ws = self.create()

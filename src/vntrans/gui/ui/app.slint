@@ -163,6 +163,8 @@ export global App {
     in property <string> build-summary;
     callback build();
     callback build-select(int);
+    callback lg-export();
+    callback lg-import();
     callback open-folder(string);
 
     in property <[TermRow]> terms;

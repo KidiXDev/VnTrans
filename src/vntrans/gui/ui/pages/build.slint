@@ -203,6 +203,49 @@ export component BuildPage inherits Rectangle {
             }
         }
 
+        Card {
+            vertical-stretch: 0;
+            border-radius: 10px;
+            border-color: Theme.border;
+            HorizontalLayout {
+                padding: 14px;
+                padding-left: 20px;
+                spacing: 10px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 4px;
+                    Label {
+                        text: "LINGUAGACHA";
+                    }
+                    Text {
+                        text: "Export MESSAGE JSON, translate it in LinguaGacha, then import its output folder.";
+                        color: Theme.faint;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    AppButton {
+                        icon: @image-url("../icons/upload.svg");
+                        text: "Export";
+                        enabled: !App.busy;
+                        clicked => { App.lg-export(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    AppButton {
+                        icon: @image-url("../icons/download.svg");
+                        text: "Import";
+                        enabled: !App.busy && !App.running;
+                        clicked => { App.lg-import(); }
+                    }
+                }
+            }
+        }
+
         if App.builds.length == 0: FadeIn {
             vertical-stretch: 1;
             Card {
