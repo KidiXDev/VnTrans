@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-import shutil
 import sqlite3
 
 from . import pipeline
@@ -106,41 +105,42 @@ def create(original, root, *, name, engine="kirikiri", encoding=None, language_i
     pipeline.disjoint(original, root)
     if root.is_file() or (root.is_dir() and any(root.iterdir())):
         raise VnTransError(f"workspace folder must be empty: {root}")
-    created_root = not root.exists()
-    root.mkdir(parents=True, exist_ok=True)
-    try:
-        pipeline.publish(root / "source", pipeline.source_files(original, get_engine(engine), progress), progress)
-        pipeline.extract(root / "source", output=root / "extracted", engine=engine, encoding=encoding,
-                         language_index=language_index, progress=progress)
-        db = connect(root / DATABASE)
-        with db:
-            docs = sorted((root / "extracted").rglob("*.json"))
-            for index, path in enumerate(docs):
-                progress("Indexing", index, len(docs), path.name)
-                doc = pipeline.read_document(path)
-                db.execute("INSERT INTO files VALUES (?, ?)", (doc["source"], doc["format"]))
-                db.executemany(
-                    "INSERT INTO units(file, id, ord, kind, source, speaker, scene, context) VALUES (?,?,?,?,?,?,?,?)",
-                    [(doc["source"], unit["id"], ord, unit["kind"], unit["source"], speaker,
-                      scene(unit["context"]),
-                      json.dumps(unit["context"], ensure_ascii=False))
-                     for ord, (unit, speaker) in enumerate(zip(doc["units"], speakers(doc["units"]), strict=True))])
-        db.close()
-        write_json(root / MANIFEST, dict(
+    if type(language_index) is not int or language_index < 0:
+        raise VnTransError("language index must be a nonnegative integer")
+    handler = get_engine(engine)
+    with pipeline.staging(root, empty=True) as folder:
+        (folder / "source").mkdir()
+        (folder / "extracted").mkdir()
+        db = connect(folder / DATABASE)
+        try:
+            with db:
+                count = 0
+                for relative, data in pipeline.source_files(original, handler, progress):
+                    progress("Extracting", count, 0, str(relative))
+                    try:
+                        script = handler.extract(str(relative), data, encoding=encoding, language_index=language_index)
+                        doc = pipeline.document(relative, data, engine, script, language_index)
+                    except VnTransError as exc:
+                        raise VnTransError(f"{relative}: {exc}") from exc
+                    pipeline.write_file(folder / "source", relative, data)
+                    pipeline.write_file(folder / "extracted", Path(str(relative) + ".json"),
+                                        pipeline.encode_document(doc))
+                    progress("Indexing", count, 0, str(relative))
+                    db.execute("INSERT INTO files VALUES (?, ?)", (doc["source"], doc["format"]))
+                    db.executemany(
+                        "INSERT INTO units(file, id, ord, kind, source, speaker, scene, context) VALUES (?,?,?,?,?,?,?,?)",
+                        ((doc["source"], unit["id"], ord, unit["kind"], unit["source"], speaker,
+                          scene(unit["context"]), json.dumps(unit["context"], ensure_ascii=False))
+                         for ord, (unit, speaker) in enumerate(zip(doc["units"], speakers(doc["units"]), strict=True))))
+                    count += 1
+                progress("Indexing", count, count, "")
+        finally:
+            db.close()
+        write_json(folder / MANIFEST, dict(
             schema_version=1, name=name, engine=engine, encoding=encoding, language_index=language_index,
             original=str(original), created=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             languages=dict(source=source_language, target=target_language),
             build=dict(wrap_columns=None, output_encoding=None)))
-    except BaseException:
-        for item in ("source", "extracted", DATABASE, DATABASE + "-wal", DATABASE + "-shm", MANIFEST + ".tmp"):
-            path = root / item
-            if path.is_dir():
-                shutil.rmtree(path, ignore_errors=True)
-            elif path.exists():
-                path.unlink()
-        if created_root and not any(root.iterdir()):
-            root.rmdir()
-        raise
     return root
 
 
@@ -355,7 +355,8 @@ class Workspace:
         return added, updated
 
     def builds(self) -> list[Path]:
-        return sorted((p for p in (self.root / "builds").glob("*") if (p / "patch").is_dir()), reverse=True)
+        return sorted((p for p in (self.root / "builds").glob("*")
+                       if not p.name.startswith(".") and (p / "patch").is_dir()), reverse=True)
 
     def translations(self) -> dict[tuple[str, str], str]:
         return {(file, id): text for file, id, text in self.db.execute(
@@ -367,28 +368,28 @@ class Workspace:
         Pass `translations()` taken on the connection's thread to run the rest elsewhere."""
         if translations is None:
             translations = self.translations()
+        pipeline.check_wrap(wrap_columns)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         target = self.root / "builds" / stamp
         suffix = 1
         while target.exists():
             suffix += 1
             target = self.root / "builds" / f"{stamp}-{suffix}"
-        extracted = self.root / "extracted"
-        files = []
-        for path in sorted(extracted.rglob("*.json")):
-            doc = pipeline.read_document(path)
-            for unit in doc["units"]:
-                unit["translation"] = translations.get((doc["source"], unit["id"]))
-            files.append((path.relative_to(extracted),
-                          (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")))
-        try:
-            pipeline.publish(target / "json", files, progress)
-            report = pipeline.rebuild(self.root / "source", translations=target / "json", output=target / "patch",
-                                      wrap_columns=wrap_columns, output_encoding=output_encoding, progress=progress)
-            write_json(target / "report.json", dict(
+        report = pipeline.Report()
+        source, extracted = pipeline.safe_path(self.root / "source"), pipeline.safe_path(self.root / "extracted")
+        pipeline.disjoint(source, extracted, pipeline.safe_path(target))
+        with pipeline.staging(target) as folder:
+            for relative, data, doc, engine, total in pipeline.translation_sources(source, extracted, progress):
+                progress("Rebuilding", report.files, total, str(relative))
+                for unit in doc["units"]:
+                    unit["translation"] = translations.get((doc["source"], unit["id"]))
+                rebuilt = pipeline.rebuild_file(relative, data, doc, engine, report,
+                                                wrap_columns=wrap_columns, output_encoding=output_encoding)
+                pipeline.write_file(folder / "json", Path(str(relative) + ".json"), pipeline.encode_document(doc))
+                pipeline.write_file(folder / "patch", relative, rebuilt)
+                progress("Rebuilding", report.files, total, str(relative))
+            write_json(folder / "report.json", dict(
                 files=report.files, units=report.units, warnings=report.warnings,
                 wrap_columns=wrap_columns, output_encoding=output_encoding))
-        except BaseException:
-            shutil.rmtree(target, ignore_errors=True)
-            raise
+            progress("Writing output", report.files, report.files, "")
         return target, report

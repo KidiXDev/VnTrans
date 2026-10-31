@@ -189,6 +189,32 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(self.json_dir.exists())
         self.assertFalse(list(self.root.glob(".vntrans-*")))
 
+    def test_streamed_rebuild_failure_and_destination_race(self):
+        self.export()
+        self.edit("test.ks.json", lambda doc: doc["units"][0].update(translation=123))
+        with self.assertRaises(VnTransError):
+            rebuild(self.source, translations=self.json_dir, output=self.output)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(list(self.root.glob(".vntrans-*")))
+        self.edit("test.ks.json", lambda doc: doc["units"][0].update(translation=None))
+
+        def collide(phase, completed, total, filename):
+            if phase == "Writing output" and completed == total:
+                self.output.mkdir()
+                (self.output / "keep").write_text("unrelated", encoding="utf-8")
+        with self.assertRaisesRegex(VnTransError, "destination appeared"):
+            rebuild(self.source, translations=self.json_dir, output=self.output, progress=collide)
+        self.assertEqual((self.output / "keep").read_text(), "unrelated")
+        self.assertFalse(list(self.root.glob(".vntrans-*")))
+
+    def test_streamed_write_failure_publishes_nothing(self):
+        self.export()
+        with patch("vntrans.pipeline.write_file", side_effect=OSError("disk full")):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                rebuild(self.source, translations=self.json_dir, output=self.output)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(list(self.root.glob(".vntrans-*")))
+
     def test_single_file_and_invalid_options(self):
         report = extract(self.source / "test.ks", output=self.json_dir)
         self.assertEqual(report.files, 1)

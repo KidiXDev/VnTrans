@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fixtures import scenario
 from vntrans import VnTransError, extract, workspace
@@ -195,6 +196,34 @@ class WorkspaceTests(unittest.TestCase):
             ws.build(progress=progress)
         self.assertEqual(list((self.ws_root / "builds").iterdir()), [])
         self.assertEqual(ws.builds(), [])
+
+    def test_create_reads_originals_once_and_indexes_without_reloading_json(self):
+        with patch("vntrans.pipeline.read_document", side_effect=AssertionError("unexpected JSON reload")):
+            ws = self.create()
+        self.assertTrue(ws.rows())
+
+    def test_cancelled_indexing_preserves_empty_workspace_and_closes_database(self):
+        self.ws_root.mkdir()
+
+        def cancel(phase, completed, total, filename):
+            if phase == "Indexing":
+                raise RuntimeError("cancelled")
+        with self.assertRaisesRegex(RuntimeError, "cancelled"):
+            workspace.create(self.source, self.ws_root, name="Test", progress=cancel)
+        self.assertEqual(list(self.ws_root.iterdir()), [])
+        self.assertFalse(list(self.root.glob(".vntrans-*")))
+        self.create()
+
+    def test_build_keeps_complete_directory_private_until_success(self):
+        ws = self.create()
+
+        def progress(phase, completed, total, filename):
+            self.assertEqual(ws.builds(), [])
+            if phase == "Writing output":
+                raise RuntimeError("cancelled")
+        with self.assertRaisesRegex(RuntimeError, "cancelled"):
+            ws.build(progress=progress)
+        self.assertEqual(list((ws.root / "builds").iterdir()), [])
 
 
 if __name__ == "__main__":
