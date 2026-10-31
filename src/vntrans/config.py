@@ -27,7 +27,12 @@ def load() -> dict:
     except (OSError, UnicodeError, json.JSONDecodeError):
         pass
     # Keep an unreadable config (it may hold API keys) instead of overwriting it.
-    os.replace(path, path.with_name("config.json.bad"))
+    backup = path.with_name("config.json.bad")
+    suffix = 1
+    while backup.exists():
+        backup = path.with_name(f"config.json.bad.{suffix}")
+        suffix += 1
+    path.rename(backup)
     return {}
 
 

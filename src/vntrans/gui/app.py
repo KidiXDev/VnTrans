@@ -926,6 +926,12 @@ class Window(UI.AppWindow):
     def update_preview(self):
         ui = self.ui
         settings = self.batch_settings()
+        try:
+            rules = glossary.Rules.parse(self.ws.manifest.get("replacements", ""))
+        except VnTransError as exc:
+            ui.preview_system = ui.preview_user = ""
+            ui.preview_stats = f"Replacement rules: {exc}"
+            return
         selected = self.model.indices[ui.current] if 0 <= ui.current < len(self.model.indices) else 0
         candidates = [i for i in range(selected, len(self.rows)) if self.rows[i].kind != "speaker"][:settings["batch_lines"]]
         if not candidates:
@@ -934,7 +940,7 @@ class Window(UI.AppWindow):
         batch = prompts.plan(self.rows, candidates, lines=settings["batch_lines"], tokens=settings["batch_tokens"])[0]
         prompt = prompts.build(self.sections, self.ws.manifest["languages"], self.rows, batch, terms=self.terms,
                                before=settings["context_before"], after=settings["context_after"],
-                               formats=self.ws.formats)
+                               pre=rules.pre, formats=self.ws.formats)
         ui.preview_system, ui.preview_user = prompt.system, prompt.user
         ui.preview_stats = (f"~{prompt.tokens:,} tokens (estimate) · {len(prompt.rows)} records from "
                             f"{prompt.rows[0].file} · {len(prompt.terms)} glossary hits · prompt {prompt.version}")

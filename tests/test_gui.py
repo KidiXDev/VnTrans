@@ -1,9 +1,14 @@
 import json
+from pathlib import Path
 import re
+import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
+from vntrans import config
 from vntrans.text import make_unit
+from vntrans.translation import prompts
 from vntrans.gui.geometry import normalize, place
 from vntrans.workspace import Row
 
@@ -80,6 +85,35 @@ class EditingTests(unittest.TestCase):
         window = SimpleNamespace(rows=rows, ws=SimpleNamespace(formats={"a.ks": "ks"}))
         self.assertEqual(Window.twins(window, rows[0]), [rows[3]])
         self.assertEqual(Window.twins(window, rows[4]), [])
+
+    def test_prompt_preview_applies_source_replacement_rules(self):
+        ui = SimpleNamespace(current=0)
+        ws = SimpleNamespace(manifest={"languages": dict(source="English", target="Indonesian"),
+                                       "replacements": "pre Hello => Goodbye"}, formats={"a.ks": "ks"})
+        window = SimpleNamespace(ui=ui, ws=ws, rows=[row("a.ks", "dialogue", "Hello")],
+                                 model=SimpleNamespace(indices=[0]), batch_settings=lambda: prompts.BATCH,
+                                 sections=prompts.chain({}), terms=[])
+        Window.update_preview(window)
+        self.assertIn('"text": "Goodbye"', ui.preview_user)
+        self.assertNotIn('"text": "Hello"', ui.preview_user)
+        ws.manifest["replacements"] = "pre /(/ => invalid"
+        Window.update_preview(window)
+        self.assertEqual(ui.preview_user, "")
+        self.assertIn("Replacement rules:", ui.preview_stats)
+
+
+class ConfigTests(unittest.TestCase):
+    def test_repeated_invalid_configs_keep_all_recovery_copies(self):
+        with tempfile.TemporaryDirectory() as folder, patch("vntrans.config.config_dir", return_value=Path(folder)):
+            directory = Path(folder)
+            original = "{first invalid config}"
+            (directory / "config.json.bad").write_text(original, encoding="utf-8")
+            for number in range(1, 3):
+                text = f"{{invalid config {number}}}"
+                (directory / "config.json").write_text(text, encoding="utf-8")
+                self.assertEqual(config.load(), {})
+                self.assertEqual((directory / f"config.json.bad.{number}").read_text(encoding="utf-8"), text)
+            self.assertEqual((directory / "config.json.bad").read_text(encoding="utf-8"), original)
 
 
 class GeometryTests(unittest.TestCase):
