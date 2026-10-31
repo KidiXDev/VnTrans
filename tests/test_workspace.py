@@ -45,7 +45,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(ws.manifest["languages"], {"source": "Japanese", "target": "Indonesian"})
         self.assertEqual(ws.formats, {"nested/test.ks.scn": "scn", "test.ks": "ks"})
         rows = ws.rows()
-        docs = [json.loads(p.read_text()) for p in (self.ws_root / "extracted").rglob("*.json")]
+        docs = [json.loads(p.read_text(encoding="utf-8")) for p in (self.ws_root / "extracted").rglob("*.json")]
         self.assertEqual(len(rows), sum(len(doc["units"]) for doc in docs))
         self.assertTrue(all(r.status == "new" and r.translation is None for r in rows))
         self.assertEqual(self.row(ws, "test.ks", "dialogue").speaker, "Alice")
@@ -77,8 +77,9 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIsNone(row.translation)
         ws.save(row, "Halo⟦0⟧dunia\r\nbaru")
         self.assertEqual((row.translation, row.status), ("Halo⟦0⟧dunia\nbaru", "edited"))
-        self.assertEqual(self.row(workspace.Workspace(self.ws_root), "test.ks", "dialogue").translation,
-                         "Halo⟦0⟧dunia\nbaru")
+        reopened = workspace.Workspace(self.ws_root)
+        self.addCleanup(reopened.close)
+        self.assertEqual(self.row(reopened, "test.ks", "dialogue").translation, "Halo⟦0⟧dunia\nbaru")
         ws.save(row, None)
         self.assertEqual((row.translation, row.status), (None, "new"))
 
@@ -91,16 +92,16 @@ class WorkspaceTests(unittest.TestCase):
         ws.exclude(title, True)
         target, report = ws.build()
         self.assertEqual(report.files, 2)
-        saved = json.loads((target / "report.json").read_text())
+        saved = json.loads((target / "report.json").read_text(encoding="utf-8"))
         self.assertEqual((saved["files"], saved["units"], saved["wrap_columns"]), (2, report.units, None))
-        exported = json.loads((target / "json/test.ks.json").read_text())
+        exported = json.loads((target / "json/test.ks.json").read_text(encoding="utf-8"))
         values = {u["id"]: u["translation"] for u in exported["units"]}
         self.assertEqual(values[dialogue.id], "Halo⟦0⟧dunia")
         self.assertIsNone(values[title.id])
 
         manual = self.root / "manual"
         extract(self.source, output=manual)
-        doc = json.loads((manual / "test.ks.json").read_text())
+        doc = json.loads((manual / "test.ks.json").read_text(encoding="utf-8"))
         next(u for u in doc["units"] if u["id"] == dialogue.id)["translation"] = "Halo⟦0⟧dunia"
         (manual / "test.ks.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
