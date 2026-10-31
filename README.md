@@ -292,6 +292,20 @@ uv run python -m unittest discover -s tests -v
 uv build
 ```
 
+Large-project performance checks use temporary synthetic scripts (1,000 files,
+100 lines each, mixed KS/SCN by default):
+
+```sh
+uv run --extra gui python tests/benchmark.py
+```
+
+Use `--case ks-rebuild --large-lines 16000` for the large-file regression,
+`--files 100 --lines 100` for a smaller batch, or `--format ks` / `--format scn`.
+Results include five-run median wall time, separately measured peak Python
+allocations, and 10 ms asyncio heartbeat gaps during worker-thread execution.
+Fixture setup and cleanup are excluded from each measurement. Use `--output
+results.json` to save results or `--profile profile` for separate cProfile files.
+
 Tests include independent synthetic binary fixtures, multilingual dialogue and
 choices, shared strings, resources, long translations, encoding conversions,
 control protection, wrapping, JSON validation, and safe batch output. These
