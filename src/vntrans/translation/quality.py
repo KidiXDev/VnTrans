@@ -15,6 +15,18 @@ LABELS = {
 KANA = re.compile(r"[぀-ヿｦ-ﾟ]")
 KANJI = re.compile(r"[㐀-䶿一-鿿]")
 HANGUL = re.compile(r"[가-힯]")
+LETTERS = {
+    "Japanese": re.compile(f"[ぁ-ゖゝゞァ-ヺヽヾㇰ-ㇿｦ-ｯｱ-ﾝ々]|{KANJI.pattern}"),
+    "Chinese": KANJI,
+    "Korean": re.compile(f"[ㄱ-ㆎ]|{HANGUL.pattern}|{KANJI.pattern}"),
+}
+
+
+def translatable(source: str, language: str) -> bool:
+    """False for units without letters of the source language (symbols, digits, ……), like LinguaGacha's prefilter."""
+    text = MARKER.sub("", source)
+    letters = LETTERS.get(language)
+    return bool(letters.search(text)) if letters else any(c.isalpha() for c in text)
 
 
 def residue(target: str):

@@ -332,6 +332,8 @@ class Window(UI.AppWindow):
         self.ws, self.rows = ws, rows
         self.index_of = {(row.file, row.id): index for index, row in enumerate(rows)}
         self.tags = {}
+        self.forget_undo()
+        skipped = self.prefilter()
         config.remember(self.settings, ws.root, ws.manifest["name"])
         self.save_config()
         self.show_recent()
@@ -365,7 +367,23 @@ class Window(UI.AppWindow):
         self.load_run_settings()
         ui.page = "texts"
         ui.has_project = True
-        self.say("")
+        self.say(f"Excluded {skipped:,} lines with nothing to translate" if skipped else "")
+
+    def prefilter(self) -> int:
+        """Exclude units with nothing to translate, once per workspace; Undo brings them back."""
+        ws = self.ws
+        if ws.manifest.get("prefiltered"):
+            return 0
+        skipped = ws.untranslatable(self.rows)
+        if skipped:
+            self.remember_undo("auto-exclude", skipped)
+            ws.exclude_many(skipped, True)
+        ws.manifest["prefiltered"] = True
+        try:
+            ws.save_manifest()
+        except OSError as exc:
+            self.fail(exc)
+        return len(skipped)
 
     @slint.callback(global_name="App")
     def navigate(self, page):

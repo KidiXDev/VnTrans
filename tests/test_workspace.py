@@ -36,6 +36,22 @@ class WorkspaceTests(unittest.TestCase):
     def row(self, ws, file, kind):
         return next(r for r in ws.rows() if r.file == file and r.kind == kind)
 
+    def japanese(self, script):
+        game = self.root / "jp"
+        game.mkdir()
+        (game / "a.ks").write_text(script, encoding="utf-8-sig")
+        workspace.create(game, self.ws_root, name="JP")
+        ws = workspace.Workspace(self.ws_root)
+        self.addCleanup(ws.close)
+        return ws
+
+    def test_untranslatable_picks_lines_without_source_letters(self):
+        ws = self.japanese("[name name=里久]「ふぁ……」\n[name name=？？？]……\nＯＫ！ 123\n")
+        rows = ws.rows()
+        self.assertEqual(sorted(row.source for row in ws.untranslatable(rows)), sorted(["？？？", "……", "ＯＫ！ 123"]))
+        ws.save(next(row for row in rows if row.source == "……"), "...")
+        self.assertNotIn("……", [row.source for row in ws.untranslatable(rows)])
+
     def test_create_copies_extracts_and_indexes(self):
         before = digest(self.source)
         ws = self.create()

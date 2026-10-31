@@ -390,5 +390,16 @@ class DuplicateTests(WorkspaceCase):
         self.assertIn("1 filled", events[0][1])
 
 
+class PrefilterTests(unittest.TestCase):
+    def test_translatable_needs_source_letters(self):
+        for text in ("……", "「……」", "？？？", "ー", "⟦0⟧", "！？ 123 ♪", "", "Hello"):
+            self.assertFalse(quality.translatable(text, "Japanese"), text)
+        for text in ("里久", "「ふぁ……」", "ｱｯ", "⟦0⟧はい"):
+            self.assertTrue(quality.translatable(text, "Japanese"), text)
+        self.assertTrue(quality.translatable("ㅋㅋ", "Korean"))
+        self.assertTrue(quality.translatable("Hello", "English"))
+        self.assertFalse(quality.translatable("123 ...", "English"))
+
+
 if __name__ == "__main__":
     unittest.main()

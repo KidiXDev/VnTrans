@@ -13,6 +13,7 @@ from .engines import get_engine
 from .model import Unit, VnTransError
 from .text import render
 from .translation.glossary import Term
+from .translation.quality import translatable
 
 MANIFEST = "manifest.json"
 DATABASE = "project.db"
@@ -229,6 +230,12 @@ class Workspace:
                                 [(status, row.file, row.id) for status, row in values])
         for status, row in values:
             row.status = status
+
+    def untranslatable(self, rows) -> list[Row]:
+        """Untouched rows without letters of the source language; excluding them keeps their original text."""
+        language = self.manifest["languages"]["source"]
+        return [row for row in rows if row.status == "new" and row.translation is None and not row.error
+                and not translatable(row.source, language)]
 
     def exclude(self, row: Row, excluded: bool):
         status = "excluded" if excluded else ("new" if row.translation is None else "edited")
