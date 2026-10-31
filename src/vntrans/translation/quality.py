@@ -14,9 +14,13 @@ LABELS = {
     "invalid": "Fails checks",
     "speaker": "Speaker name added",
     "ruby": "Furigana kept",
+    "quote": "Quote marks wrong",
 }
 LABEL = re.compile(r"\s*([^\s:：⟦]+(?: [^\s:：⟦]+){0,2})\s*[:：]\s*")
 QUOTE = re.compile(r"[「『“\"'‘（(]")
+SPEECH = re.compile(r"(?:\s|⟦\d+⟧)*「[^「」]*」(?:\s|⟦\d+⟧)*")
+EDGES = re.compile(r"((?:\s|⟦\d+⟧)*)(.*?)((?:\s|⟦\d+⟧)*)", re.S)
+MARKS = "\"“”„«»「」『』"
 KANA = re.compile(r"[぀-ヿｦ-ﾟ]")
 KANJI = re.compile(r"[㐀-䶿一-鿿]")
 HANGUL = re.compile(r"[가-힯]")
@@ -64,11 +68,29 @@ def unruby(text: str, row, formats) -> str:
     return plain(text, json.loads(row.context).get("controls", []), formats.get(row.file, ""))
 
 
+def requote(text: str, source: str) -> str:
+    """`text` inside “ ” when `source` is one 「…」 quote, replacing wrong or missing outer quote marks.
+
+    Single quotes are left alone (apostrophes), and an odd mark at both ends is ambiguous, so it stays."""
+    head, core, tail = EDGES.fullmatch(text).groups()
+    if not core or not SPEECH.fullmatch(source):
+        return text
+    lead, trail = core[0] in MARKS, core[-1] in MARKS
+    odd = sum(char in MARKS for char in core) % 2
+    if lead and trail and not odd:
+        core = core[1:-1]
+    elif odd and lead != trail:
+        core = core[1:] if lead else core[:-1]
+    elif odd:
+        return text
+    return f"{head}“{core}”{tail}"
+
+
 def tidy(text: str, row, names, formats) -> str:
-    """The automatic fixes for a translation of `row`: no added speaker label, no furigana."""
+    """The automatic fixes for a translation of `row`: no added speaker label, no furigana, “ ” for 「」."""
     if row.kind != "speaker":
         text = unprefix(text, row.source, names)
-    return unruby(text, row, formats)
+    return requote(unruby(text, row, formats), row.source)
 
 
 def residue(target: str):
@@ -114,4 +136,6 @@ class Checker:
             found.append("speaker")
         if unruby(row.translation, row, self.formats) != row.translation:
             found.append("ruby")
+        if requote(row.translation, row.source) != row.translation:
+            found.append("quote")
         return found

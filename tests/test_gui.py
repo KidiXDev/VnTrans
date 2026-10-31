@@ -26,7 +26,9 @@ class FilterTests(unittest.TestCase):
     def test_counts_ignore_state_filter(self):
         indices, counts = filter_rows(self.rows, status="new")
         self.assertEqual(indices, [1])
-        self.assertEqual(counts, dict(all=4, new=1, machine=0, edited=1, failed=1, excluded=1, issues=0, review=0))
+        self.assertEqual(counts, dict(all=4, untranslated=2, new=1, machine=0, edited=1, failed=1, excluded=1,
+                                      issues=0, review=0))
+        self.assertEqual(filter_rows(self.rows, status="untranslated")[0], [1, 2])
 
     def test_issue_and_review_tags(self):
         tags = {0: {"residue", "review"}, 3: {"lines"}}

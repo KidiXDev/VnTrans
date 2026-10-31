@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -374,6 +375,41 @@ class RunnerTests(WorkspaceCase):
         self.assertEqual(batches[0].thinking, "Context: Bob asks Alice")
         self.assertEqual(self.rows[self.find("How are you?")].translation, "T:How are you?")
 
+    def parallel_run(self, main, helper, **kwargs):
+        events, batches = [], []
+        run = runner.Run(self.ws, self.rows, [i for i, row in enumerate(self.rows) if row.status == "new"],
+                         profile=Profile("a", model="m1", keys=["k"]), provider=main, sections=prompts.chain({}),
+                         terms=[], settings=dict(concurrency=1, batch_lines=1), on_batch=batches.append,
+                         on_event=lambda kind, text: events.append((kind, text)),
+                         parallel=[(Profile("b", model="m2", keys=["k"]), helper)], **kwargs)
+        asyncio.run(asyncio.wait_for(run.run(), 10))
+        return run, events, batches
+
+    def test_parallel_profiles_share_batches_without_overlap(self):
+        first, second = (FakeProvider(lambda record, call: time.sleep(0.005)) for _ in range(2))
+        run, _, batches = self.parallel_run(first, second)
+        sent = [record["text"] for fake in (first, second) for call in fake.calls for record in call]
+        self.assertEqual(len(sent), len(set(sent)))
+        self.assertTrue(first.calls and second.calls)
+        self.assertEqual({batch.worker for batch in batches}, {"a · m1", "b · m2"})
+        self.assertTrue(all(row.status == "machine" for row in self.rows))
+        self.assertEqual((run.stats.done, run.slots), (len(self.rows), 2))
+
+    def test_failed_profile_leaves_and_the_other_finishes(self):
+        bad, good = FakeProvider(errors=[ProviderError("auth", "bad key")] * 50), FakeProvider()
+        run, events, _ = self.parallel_run(bad, good)
+        self.assertIsNone(run.error)
+        self.assertIn(("error", "a left the run: bad key"), events)
+        self.assertTrue(all(row.status == "machine" for row in self.rows))
+
+    def test_run_stops_when_every_profile_fails(self):
+        first = FakeProvider(errors=[ProviderError("auth", "bad key")] * 50)
+        second = FakeProvider(errors=[ProviderError("request", "unknown model")] * 50)
+        run, events, _ = self.parallel_run(first, second)
+        self.assertIsNotNone(run.error)
+        self.assertEqual(events[-1], ("error", f"Stopped: {run.error}"))
+        self.assertTrue(all(row.status == "new" and row.error is None for row in self.rows))
+
     def test_missing_key_is_rejected(self):
         with self.assertRaisesRegex(VnTransError, "no API key"):
             runner.Run(self.ws, self.rows, [], profile=Profile("p", model="m"), provider=FakeProvider(),
@@ -415,8 +451,32 @@ class RubyTests(unittest.TestCase):
                                formats=formats)
         self.assertEqual(records(prompt.user)[0]["text"], "「本当の座主様」")
         checker = quality.Checker(lambda row, text: text, "Indonesian", [], set(), formats)
-        self.assertEqual(checker.issues(row), ["ruby"])
-        self.assertEqual(quality.tidy(row.translation, row, set(), formats), '"Benar Zasu-sama"')
+        self.assertEqual(checker.issues(row), ["ruby", "quote"])
+        self.assertEqual(quality.tidy(row.translation, row, set(), formats), "“Benar Zasu-sama”")
+
+
+class QuoteTests(unittest.TestCase):
+    def test_requote_fixes_outer_marks_only_for_quoted_sources(self):
+        cases = [
+            ("Ya, bagus sekali!", "「うん、いい感じっ！」", "“Ya, bagus sekali!”"),
+            ('"Ya, bagus sekali!"', "「うん、いい感じっ！」", "“Ya, bagus sekali!”"),
+            ("「Ya, bagus sekali!」", "「うん、いい感じっ！」", "“Ya, bagus sekali!”"),
+            ("“Ya, bagus sekali!", "「うん、いい感じっ！」", "“Ya, bagus sekali!”"),
+            ('Ya, bagus sekali!"', "「うん、いい感じっ！」", "“Ya, bagus sekali!”"),
+            ("“Ya, bagus sekali!”", "「うん、いい感じっ！」", "“Ya, bagus sekali!”"),
+            ('⟦0⟧"Ya."\n', "⟦0⟧「おう」\n", "⟦0⟧“Ya.”\n"),
+            ("Baris satu,\nbaris dua.", "「一行目、\n二行目」", "“Baris satu,\nbaris dua.”"),
+            ('Dia bilang "bodoh"', "「バカって言った」", '“Dia bilang "bodoh"”'),
+            ("“Dia bilang ‘bodoh’", "「『バカ』って」", "“Dia bilang ‘bodoh’”"),
+            ("I'm fine", "「平気」", "“I'm fine”"),
+            ('“Dia bilang "bodoh"', "「バカって言った」", '“Dia bilang "bodoh"'),
+            ("Ya, bagus sekali!", "うん、いい感じっ！", "Ya, bagus sekali!"),
+            ('"Ya" katanya.', "「うん」と言った。", '"Ya" katanya.'),
+            ('"Ya." "Tidak."', "「うん」「いや」", '"Ya." "Tidak."'),
+            ("", "「うん」", ""),
+        ]
+        for text, source, expected in cases:
+            self.assertEqual(quality.requote(text, source), expected, text)
 
 
 class SpeakerLabelTests(unittest.TestCase):

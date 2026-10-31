@@ -117,19 +117,43 @@ class Batch:
     context: int = 0
     attempt: int = 0
     error: str = ""
+    worker: str = ""
+
+
+@dataclass(eq=False)
+class Worker:
+    """One profile taking batches from a run, with its own key rotation, rate-limit cooldowns and RPM pacing."""
+    profile: object
+    provider: object
+    keys: list
+    turn: int = 0
+    next_start: float = 0.0
+    cooldown: dict = field(default_factory=dict)
+    error: str | None = None
+
+    @property
+    def label(self) -> str:
+        return f"{self.profile.name} · {self.profile.model}"
 
 
 class Run:
-    """task: "translate" fills units, "review" stores suggested revisions, "discover" adds draft glossary entries."""
+    """task: "translate" fills units, "review" stores suggested revisions, "discover" adds draft glossary entries.
+
+    `parallel` adds (profile, provider) pairs that take batches from the same queue as the main profile. Every
+    batch goes to exactly one free slot, and all workspace writes stay on the event loop, so workers never race
+    on a unit; a unit edited since planning keeps its value."""
 
     def __init__(self, ws, rows, indices, *, profile, provider, sections, terms, settings, task="translate",
                  rules=None, on_event=lambda kind, text: None, on_commit=lambda index: None,
-                 on_batch=lambda batch: None):
-        self.keys = profile.api_keys()
-        if not self.keys:
-            raise VnTransError(f"profile {profile.name!r} has no API key")
-        if not profile.model:
-            raise VnTransError(f"profile {profile.name!r} has no model")
+                 on_batch=lambda batch: None, parallel=()):
+        self.workers = []
+        for each, service in [(profile, provider), *parallel]:
+            keys = each.api_keys()
+            if not keys:
+                raise VnTransError(f"profile {each.name!r} has no API key")
+            if not each.model:
+                raise VnTransError(f"profile {each.name!r} has no model")
+            self.workers.append(Worker(each, service, keys))
         self.ws, self.rows, self.indices = ws, rows, indices
         self.task, self.rules = task, rules or Rules()
         self.found = 0
@@ -144,14 +168,42 @@ class Run:
         self.counter = 0
         self.stopping = False
         self.error = None
-        self.slot = asyncio.Semaphore(max(1, self.settings["concurrency"]))
-        self.next_start = 0.0
-        self.turn = 0
-        self.cooldown = {}
+        concurrency = max(1, self.settings["concurrency"])
+        self.slots = concurrency * len(self.workers)
+        self.pool = asyncio.Queue()
+        for _ in range(concurrency):
+            for worker in self.workers:
+                self.pool.put_nowait(worker)
         self.aliases = {}
 
     def stop(self):
         self.stopping = True
+
+    async def acquire(self) -> Worker | None:
+        """A free slot of any working profile, or None once every profile has failed."""
+        while True:
+            worker = await self.pool.get()
+            if worker is None:
+                self.pool.put_nowait(None)
+                return None
+            if worker.error is None:
+                return worker
+
+    def release(self, worker: Worker):
+        if worker.error is None:
+            self.pool.put_nowait(worker)
+
+    def disable(self, worker: Worker, message: str):
+        """Take a profile out of the run (bad key, unknown model); the run stops once none is left."""
+        if worker.error is not None:
+            return
+        worker.error = message
+        if all(other.error for other in self.workers):
+            self.error = message
+            self.stopping = True
+            self.pool.put_nowait(None)
+        else:
+            self.on_event("error", f"{worker.profile.name} left the run: {message}")
 
     def pending(self, index) -> bool:
         row = self.rows[index]
@@ -170,13 +222,13 @@ class Run:
                     self.names.add(text.strip().casefold())
                 self.on_commit(target)
 
-    def report(self, prompt, batch, records, *, reply=None, depth=0, error=""):
+    def report(self, worker, prompt, batch, records, *, reply=None, depth=0, error=""):
         self.counter += 1
         self.on_batch(Batch(
             self.counter, self.task, self.rows[batch[0]].file, records,
             reply.thinking if reply else "", reply.latency if reply else 0.0,
             (reply.tokens_in or 0) if reply else 0, (reply.tokens_out or 0) if reply else 0,
-            [f"{term.source} → {term.target}" for term in prompt.terms], prompt.context, depth, error))
+            [f"{term.source} → {term.target}" for term in prompt.terms], prompt.context, depth, error, worker.label))
 
     def outcomes(self, batch, outputs, failed):
         return [(row.speaker if row.kind != "speaker" else "", row.source, outputs.get(index, ""),
@@ -224,8 +276,12 @@ class Run:
         if self.stopping:
             return
         self.stats.queued += 1
-        async with self.slot:
-            self.stats.queued -= 1
+        worker = await self.acquire()
+        self.stats.queued -= 1
+        if worker is None:
+            return
+        moved = False
+        try:
             if self.stopping:
                 return
             if self.task == "review":
@@ -236,23 +292,28 @@ class Run:
                 prompt, schema = prompts.discovery(self.languages, self.rows, batch, self.ws.formats), TERMS_SCHEMA
             reply = None
             try:
-                reply = await self.request(prompt, schema)
+                reply = await self.request(worker, prompt, schema)
                 records = accept(batch, reply)
                 self.stats.done += len(batch)
-                self.report(prompt, batch, records, reply=reply)
+                self.report(worker, prompt, batch, records, reply=reply)
             except ProviderError as exc:
                 if exc.kind in ("auth", "request"):
-                    self.error = str(exc)
-                    self.stopping = True
-                    return
-                self.stats.failed += len(batch)
-                self.on_event("error", f"{len(batch)} units skipped: {exc}")
-                self.report(prompt, batch, self.outcomes(batch, {}, dict.fromkeys(batch, str(exc))), error=str(exc))
+                    self.disable(worker, str(exc))
+                    moved = True
+                else:
+                    self.stats.failed += len(batch)
+                    self.on_event("error", f"{len(batch)} units skipped: {exc}")
+                    self.report(worker, prompt, batch, self.outcomes(batch, {}, dict.fromkeys(batch, str(exc))),
+                                error=str(exc))
             except ValueError as exc:
                 self.stats.failed += len(batch)
                 self.on_event("error", f"{len(batch)} units skipped: unreadable reply ({exc})")
-                self.report(prompt, batch, self.outcomes(batch, {}, dict.fromkeys(batch, "unreadable reply")),
+                self.report(worker, prompt, batch, self.outcomes(batch, {}, dict.fromkeys(batch, "unreadable reply")),
                             reply=reply, error=f"unreadable reply: {exc}")
+        finally:
+            self.release(worker)
+        if moved:
+            await self.side(batch, accept)
 
     def review(self, batch, reply):
         suggested = {}
@@ -347,8 +408,12 @@ class Run:
         if not batch or self.stopping:
             return
         self.stats.queued += 1
-        async with self.slot:
-            self.stats.queued -= 1
+        worker = await self.acquire()
+        self.stats.queued -= 1
+        if worker is None:
+            return
+        failed, moved = {}, False
+        try:
             if self.stopping:
                 return
             prompt = prompts.build(self.sections, self.languages, self.rows, batch, terms=self.terms,
@@ -356,23 +421,27 @@ class Run:
                                    after=self.settings["context_after"] if context else 0, pre=self.rules.pre,
                                    formats=self.ws.formats)
             try:
-                reply = await self.request(prompt, THINKING_SCHEMA if prompt.thinking else SCHEMA)
+                reply = await self.request(worker, prompt, THINKING_SCHEMA if prompt.thinking else SCHEMA)
             except ProviderError as exc:
                 if exc.kind in ("auth", "request"):
-                    self.error = str(exc)
-                    self.stopping = True
-                    return
-                failed = dict.fromkeys(batch, str(exc))
-                self.report(prompt, batch, self.outcomes(batch, {}, failed), depth=depth, error=str(exc))
-                if exc.kind != "blocked":
-                    self.give_up(failed)
-                    return
+                    self.disable(worker, str(exc))
+                    moved = True
+                else:
+                    failed = dict.fromkeys(batch, str(exc))
+                    self.report(worker, prompt, batch, self.outcomes(batch, {}, failed), depth=depth, error=str(exc))
+                    if exc.kind != "blocked":
+                        self.give_up(failed)
+                        return
             else:
                 if prompt.thinking:
                     reply.thinking = "\n\n".join(part for part in (reply.thinking, why(reply.text)) if part)
                 failed, outputs = self.accept(batch, reply)
-                self.report(prompt, batch, self.outcomes(batch, outputs, failed), reply=reply, depth=depth)
-        if failed and not self.stopping:
+                self.report(worker, prompt, batch, self.outcomes(batch, outputs, failed), reply=reply, depth=depth)
+        finally:
+            self.release(worker)
+        if moved:
+            await self.handle(batch, depth, context)
+        elif failed and not self.stopping:
             await self.retry(failed, depth)
 
     async def retry(self, failed, depth):
@@ -420,25 +489,27 @@ class Run:
             self.commit(accepted)
         return failed, outputs
 
-    async def request(self, prompt, schema=SCHEMA):
+    async def request(self, worker, prompt, schema=SCHEMA):
+        profile = worker.profile
         for attempt in range(TRANSPORT_TRIES):
-            key = await self.key()
-            await self.pace()
+            key = await self.key(worker)
+            await self.pace(worker)
             self.stats.requests += 1
             self.stats.active += 1
             started = time.monotonic()
             try:
-                reply = await asyncio.to_thread(self.provider.complete, self.profile, key, prompt.system, prompt.user,
+                reply = await asyncio.to_thread(worker.provider.complete, profile, key, prompt.system, prompt.user,
                                                 schema)
             except ProviderError as exc:
-                self.ws.record_attempt(self.profile.name, self.profile.model, prompt.version, len(prompt.rows),
+                self.ws.record_attempt(profile.name, profile.model, prompt.version, len(prompt.rows),
                                        exc.kind, str(exc))
                 if exc.kind not in ("rate", "transient") or attempt == TRANSPORT_TRIES - 1 or self.stopping:
                     raise
                 delay = exc.retry_after or min(60, 2 ** (attempt + 1))
-                self.on_event("retry", f"{exc} · retry in {delay:.0f}s")
+                self.on_event("retry", f"{profile.name}: {exc} · retry in {delay:.0f}s"
+                              if len(self.workers) > 1 else f"{exc} · retry in {delay:.0f}s")
                 if exc.kind == "rate":
-                    self.cooldown[key] = time.monotonic() + delay
+                    worker.cooldown[key] = time.monotonic() + delay
                 else:
                     self.stats.cooling += 1
                     try:
@@ -454,29 +525,30 @@ class Run:
             self.stats.output.append((time.monotonic(), reply.tokens_out or 0))
             self.stats.tokens_in += reply.tokens_in or 0
             self.stats.tokens_out += reply.tokens_out or 0
-            self.ws.record_attempt(self.profile.name, self.profile.model, prompt.version, len(prompt.rows),
+            self.ws.record_attempt(profile.name, profile.model, prompt.version, len(prompt.rows),
                                    "ok", None, reply.tokens_in, reply.tokens_out)
             return reply
 
-    async def key(self) -> str:
-        """Round-robin over keys, skipping any cooling down after a rate limit."""
+    async def key(self, worker) -> str:
+        """Round-robin over the worker's keys, skipping any cooling down after a rate limit."""
         while True:
             now = time.monotonic()
-            for _ in self.keys:
-                key = self.keys[self.turn % len(self.keys)]
-                self.turn += 1
-                if self.cooldown.get(key, 0) <= now:
+            for _ in worker.keys:
+                key = worker.keys[worker.turn % len(worker.keys)]
+                worker.turn += 1
+                if worker.cooldown.get(key, 0) <= now:
                     return key
             self.stats.cooling += 1
             try:
-                await asyncio.sleep(max(0.05, min(self.cooldown.values()) - now))
+                await asyncio.sleep(max(0.05, min(worker.cooldown.values()) - now))
             finally:
                 self.stats.cooling -= 1
 
-    async def pace(self):
+    async def pace(self, worker):
+        """The RPM limit applies to each profile (each model) separately."""
         if self.settings["rpm"] > 0:
             now = time.monotonic()
-            start = max(now, self.next_start)
-            self.next_start = start + 60 / self.settings["rpm"]
+            start = max(now, worker.next_start)
+            worker.next_start = start + 60 / self.settings["rpm"]
             if start > now:
                 await asyncio.sleep(start - now)

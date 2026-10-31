@@ -48,6 +48,11 @@ export struct ProfileRow {
     detail: string,
 }
 
+export struct ParallelRow {
+    name: string,
+    on: bool,
+}
+
 export struct LogRow {
     time: string,
     kind: string,
@@ -115,7 +120,7 @@ export global App {
     in-out property <int> kind-index;
     in-out property <string> status-filter: "all";
     in property <bool> regex-error;
-    in property <[string]> counts: ["", "", "", "", "", "", "", ""];
+    in property <[string]> counts: ["", "", "", "", "", "", "", "", ""];
     in property <string> shown-text;
     in-out property <int> issue-index;
     in property <string> cur-issues;
@@ -238,6 +243,8 @@ export global App {
 
     in property <[string]> profile-names;
     in-out property <int> run-profile;
+    in property <[ParallelRow]> run-parallel;
+    callback run-parallel-toggled(string);
     in-out property <int> run-scope;
     in-out property <int> run-task;
     in-out property <int> run-lines: 20;

@@ -24,7 +24,7 @@ from . import geometry
 from .dialogs import pick
 
 UI = slint.load_file(Path(__file__).parent / "ui" / "main.slint", style="fluent-dark")
-STATES = ("all", "new", "machine", "edited", "failed", "excluded", "issues", "review")
+STATES = ("all", "untranslated", "new", "machine", "edited", "failed", "excluded", "issues", "review")
 ISSUES = ("",) + tuple(quality.LABELS)
 TASKS = ("translate", "review", "discover")
 SCOPES = ("source", "translation", "both", "speaker", "id")
@@ -77,11 +77,14 @@ def filter_rows(rows, *, file=None, query="", scope="both", regex=False, case=Fa
         current = state(row)
         marks = tags.get(index, ())
         flagged = any(mark != "review" for mark in marks)
+        untranslated = current in ("new", "failed")
         counts["all"] += 1
         counts[current] += 1
+        counts["untranslated"] += untranslated
         counts["issues"] += flagged
         counts["review"] += "review" in marks
-        if status in ("all", current) or (status == "review" and "review" in marks) \
+        if status in ("all", current) or (status == "untranslated" and untranslated) \
+                or (status == "review" and "review" in marks) \
                 or (status == "issues" and (issue in marks if issue else flagged)):
             indices.append(index)
     return indices, counts
@@ -158,6 +161,7 @@ class Window(UI.AppWindow):
         self.suggestions = {}
         self.checker = None
         self.run = None
+        self.parallel = set()
         self.cancel = threading.Event()
         self.log = slint.ListModel([])
         self.batches = slint.ListModel([])
@@ -445,16 +449,19 @@ class Window(UI.AppWindow):
 
     def update_stats(self):
         totals = {name: [0, 0] for name in self.file_names}
-        translated = failed = 0
+        included = translated = failed = 0
         for row in self.rows:
-            done = row.translation is not None and row.status != "excluded"
+            if row.status == "excluded":
+                continue
+            done = row.translation is not None
             totals[row.file][0] += 1
             totals[row.file][1] += done
+            included += 1
             translated += done
             failed += state(row) == "failed"
         ui = self.ui
-        ui.total, ui.translated, ui.failed = len(self.rows), translated, failed
-        ui.progress_text = f"{translated:,} / {len(self.rows):,}"
+        ui.total, ui.translated, ui.failed = included, translated, failed
+        ui.progress_text = f"{translated:,} / {included:,}"
         ui.status_text = f"{len(self.rows):,} units · {translated:,} translated" + (f" · {failed:,} failed" if failed else "")
         files = [dict(name=name, total=total, done=done) for name, (total, done) in totals.items()]
         if [row["name"] for row in self.files] == self.file_names:
@@ -936,6 +943,7 @@ class Window(UI.AppWindow):
             dict(name=profile.name, detail=f"{PROVIDERS[profile.provider].label} · {profile.model or 'no model'}")
             for profile in self.profiles)
         self.ui.profile_names = slint.ListModel(profile.name for profile in self.profiles)
+        self.show_parallel()
 
     def form_profile(self) -> Profile:
         ui = self.ui
@@ -1039,6 +1047,25 @@ class Window(UI.AppWindow):
         ui.run_lines, ui.run_tokens = settings["batch_lines"], settings["batch_tokens"]
         ui.run_before, ui.run_after = settings["context_before"], settings["context_after"]
         ui.run_concurrency, ui.run_rpm = settings["concurrency"], settings["rpm"]
+        self.parallel = set(settings.get("parallel", []))
+        self.show_parallel()
+
+    def helpers(self) -> list:
+        """Profiles chosen to run alongside the main one, in profile order."""
+        main = self.profiles[self.ui.run_profile].name if 0 <= self.ui.run_profile < len(self.profiles) else None
+        return [profile for profile in self.profiles if profile.name in self.parallel and profile.name != main]
+
+    def show_parallel(self):
+        main = self.profiles[self.ui.run_profile].name if 0 <= self.ui.run_profile < len(self.profiles) else None
+        self.ui.run_parallel = slint.ListModel(dict(name=profile.name, on=profile.name in self.parallel)
+                                               for profile in self.profiles if profile.name != main)
+
+    @slint.callback(global_name="App")
+    def run_parallel_toggled(self, name):
+        if self.run or self.ws is None:
+            return
+        self.parallel ^= {name}
+        self.run_settings_changed()
 
     def run_settings(self) -> dict:
         ui = self.ui
@@ -1050,6 +1077,8 @@ class Window(UI.AppWindow):
         settings = self.run_settings()
         if 0 <= self.ui.run_profile < len(self.profiles):
             settings["profile"] = self.profiles[self.ui.run_profile].name
+        settings["parallel"] = [profile.name for profile in self.helpers()]
+        self.show_parallel()
         self.ws.manifest["translation"] = settings
         try:
             self.ws.save_manifest()
@@ -1080,7 +1109,7 @@ class Window(UI.AppWindow):
         elapsed = time.monotonic() - stats.started
         finished = stats.done + stats.failed
         left = elapsed / finished * (stats.total - finished) if finished and ui.running else None
-        ui.run_meta = f"{self.run.profile.name} · {self.run.profile.model} · {duration(elapsed)} elapsed"
+        ui.run_meta = " + ".join(worker.label for worker in self.run.workers) + f" · {duration(elapsed)} elapsed"
         ui.m_percent = f"{100 * finished / stats.total:.0f}%" if stats.total else "—"
         ui.m_progress = finished / stats.total if stats.total else 0
         ui.m_progress_detail = f"{stats.done:,} done · {stats.failed:,} failed · {stats.total:,} total"
@@ -1106,6 +1135,8 @@ class Window(UI.AppWindow):
         outcome = "failed" if batch.error or (failed and not accepted) else "partial" if failed else "ok"
         rate = batch.tokens_out / batch.latency if batch.latency else 0
         detail = batch.error or f"{len(batch.records)} lines · {batch.latency:.1f} s · {rate:,.0f} tok/s"
+        if self.run and len(self.run.workers) > 1:
+            detail = f"{batch.worker.split(' · ')[0]} · {detail}"
         self.batches.insert(0, dict(number=batch.number, outcome=outcome, detail=detail,
                                     title=f"#{batch.number} · {Path(batch.file).name}"
                                     + (f" · retry {batch.attempt}" if batch.attempt else "")))
@@ -1123,7 +1154,7 @@ class Window(UI.AppWindow):
         ui, batch = self.ui, self.batch_views[index]
         ui.batch_current = index
         task = dict(translate="Translation", review="Review", discover="Term discovery")[batch.task]
-        meta = [task, f"{len(batch.records)} {'terms' if batch.task == 'discover' else 'lines'}"]
+        meta = [task, batch.worker, f"{len(batch.records)} {'terms' if batch.task == 'discover' else 'lines'}"]
         if batch.latency:
             meta += [f"{batch.latency:.1f} s", f"{batch.tokens_out / batch.latency:,.0f} tok/s",
                      f"{batch.tokens_in:,} in / {batch.tokens_out:,} out"]
@@ -1178,7 +1209,8 @@ class Window(UI.AppWindow):
             self.run = runner.Run(self.ws, self.rows, indices, profile=profile, provider=PROVIDERS[profile.provider],
                                   sections=self.sections, terms=self.terms, settings=self.run_settings(), task=task,
                                   rules=rules, on_event=self.log_event, on_commit=self.row_committed,
-                                  on_batch=self.batch_done)
+                                  on_batch=self.batch_done,
+                                  parallel=[(other, PROVIDERS[other.provider]) for other in self.helpers()])
         except (VnTransError, IndexError) as exc:
             self.log_event("error", str(exc) or "Choose a profile")
             return
@@ -1190,8 +1222,9 @@ class Window(UI.AppWindow):
         ui.batch_current = -1
         ui.batch_follow = True
         self.rate_samples.clear()
-        ui.m_slots = self.run.settings["concurrency"]
-        self.log_event("info", f"Started with {profile.name} ({profile.model})")
+        ui.m_slots = self.run.slots
+        self.log_event("info", "Started with " + ", ".join(f"{worker.profile.name} ({worker.profile.model})"
+                                                           for worker in self.run.workers))
         self.run_timer.start(slint.TimerMode.Repeated, timedelta(milliseconds=500), self.show_run)
         try:
             await self.run.run()
@@ -1307,7 +1340,7 @@ class Window(UI.AppWindow):
         ui.sel_has_translation = any(row.translation is not None for row in rows)
         ui.sel_has_suggestion = any((row.file, row.id) in self.suggestions for row in rows)
         ui.sel_all_excluded = bool(rows) and all(row.status == "excluded" for row in rows)
-        ui.sel_fixable = any(self.tags.get(index, set()) & {"speaker", "ruby"} for index in self.targets())
+        ui.sel_fixable = any(self.tags.get(index, set()) & {"speaker", "ruby", "quote"} for index in self.targets())
 
     @slint.callback(global_name="App")
     def row_pressed(self, position, toggle, extend):

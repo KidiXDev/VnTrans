@@ -248,6 +248,23 @@ export component TranslatePage inherits Rectangle {
                         }
                     }
                 }
+                if App.run-parallel.length > 0: Field {
+                    label: "RUN IN PARALLEL WITH (PROFILES SHARE THE SAME BATCHES)";
+                    Flickable {
+                        height: 28px;
+                        content-width: max(self.width, chips.preferred-width);
+                        chips := HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            for row in App.run-parallel: Chip {
+                                text: row.name;
+                                checked: row.on;
+                                opacity: App.running ? 0.5 : 1;
+                                clicked => { App.run-parallel-toggled(row.name); }
+                            }
+                        }
+                    }
+                }
                 HorizontalLayout {
                     spacing: 12px;
                     Field {
@@ -289,7 +306,7 @@ export component TranslatePage inherits Rectangle {
                     }
                     Field {
                         horizontal-stretch: 1;
-                        label: "CONCURRENCY";
+                        label: "CONCURRENCY / PROFILE";
                         Number {
                             minimum: 1;
                             maximum: 64;
@@ -298,7 +315,7 @@ export component TranslatePage inherits Rectangle {
                     }
                     Field {
                         horizontal-stretch: 1;
-                        label: "RPM LIMIT (0 = OFF)";
+                        label: "RPM / PROFILE (0 = OFF)";
                         Number {
                             minimum: 0;
                             maximum: 10000;
