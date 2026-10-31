@@ -82,6 +82,25 @@ def write_json(path: Path, value):
     os.replace(temporary, path)
 
 
+def store_rows(root, entries, *, check=True, dismiss=False):
+    """Commit detached GUI edits on a private connection; publish their row values only after success."""
+    ws = Workspace(root)
+    try:
+        if check:
+            for row in entries:
+                if row.translation is not None:
+                    row.translation = ws.check(row, row.translation)
+        with ws.db:
+            ws.db.executemany("UPDATE units SET translation = ?, status = ?, error = ? WHERE file = ? AND id = ?",
+                              ((r.translation, r.status, r.error, r.file, r.id) for r in entries))
+            if dismiss:
+                ws.db.executemany("DELETE FROM suggestions WHERE file = ? AND id = ?",
+                                  ((r.file, r.id) for r in entries))
+        return entries
+    finally:
+        ws.close()
+
+
 def speakers(units):
     """Display speaker per unit: an explicit speaker unit in the same record wins."""
     names = {}

@@ -193,6 +193,26 @@ class ProviderTests(unittest.TestCase):
 
 
 class RunnerTests(WorkspaceCase):
+    def test_reply_waits_for_manual_edit_and_does_not_overwrite_it(self):
+        index = self.find("How are you?")
+        run = runner.Run(self.ws, self.rows, [index], profile=Profile("p", model="m", keys=["k"]),
+                         provider=FakeProvider(), sections=[], terms=[], settings={})
+        async def exercise():
+            run.writes_ready.clear()
+            task = asyncio.create_task(run.run())
+            for _ in range(200):
+                if run.stats.replies:
+                    break
+                await asyncio.sleep(.005)
+            self.assertGreater(run.stats.replies, 0)
+            self.assertIsNone(self.rows[index].translation)
+            self.ws.save(self.rows[index], "Manual edit")
+            run.writes_ready.set()
+            await task
+        asyncio.run(exercise())
+        self.assertEqual(self.rows[index].translation, "Manual edit")
+        self.assertEqual(self.rows[index].status, "edited")
+
     def run_with(self, provider, indices=None, terms=(), **settings):
         indices = [i for i, row in enumerate(self.rows) if row.status == "new"] if indices is None else indices
         run = runner.Run(self.ws, self.rows, indices, profile=Profile("p", model="m", keys=["k"]),

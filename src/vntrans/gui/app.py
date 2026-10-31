@@ -1,9 +1,12 @@
 """Slint front end. Workspace and model mutations run on the event-loop thread only."""
 
 import asyncio
+import gc
 from collections import Counter, deque
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from dataclasses import replace
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -20,22 +23,16 @@ from .. import config, workspace
 from ..model import VnTransError
 from ..translation import glossary, prompts, quality, runner
 from ..translation.providers import PROVIDERS, REASONING, Profile, ProviderError
-from . import geometry
+from . import geometry, jobs
 from .dialogs import pick
+from .jobs import Cancelled, Latest, Progress
+from .texts import STATES, TextState, check_rows, filter_rows, load, state
 
 UI = slint.load_file(Path(__file__).parent / "ui" / "main.slint", style="fluent-dark")
-STATES = ("all", "untranslated", "new", "machine", "edited", "failed", "excluded", "issues", "review")
 ISSUES = ("",) + tuple(quality.LABELS)
 TASKS = ("translate", "review", "discover")
 SCOPES = ("source", "translation", "both", "speaker", "id")
 KINDS = ("lines", "dialogue", "speaker", "choice", "title")
-FIELDS = {
-    "source": lambda row: (row.source,),
-    "translation": lambda row: (row.translation or "",),
-    "both": lambda row: (row.source, row.translation or ""),
-    "speaker": lambda row: (row.speaker,),
-    "id": lambda row: (row.id,),
-}
 ABOUT = {
     "characters": "Approved character entries whose names appear in the batch.",
     "glossary": "Approved terms that appear in the batch.",
@@ -45,49 +42,6 @@ ABOUT = {
                 "noticeably lowers quality. On by default.",
     "contract": "Fixed. VnTrans relies on this format to read and check replies.",
 }
-
-
-class Cancelled(Exception):
-    """Raised from a progress callback to stop work running in a worker thread."""
-
-
-def state(row) -> str:
-    return "failed" if row.error and row.status == "new" else row.status
-
-
-def filter_rows(rows, *, file=None, query="", scope="both", regex=False, case=False, kind="", status="all",
-                tags=None, issue=""):
-    """Indices passing every filter, and per-state counts that ignore the state filter.
-
-    kind "lines" keeps every kind except speaker names; "" keeps everything.
-    tags maps a row index to its issue codes and "review" (has a suggestion).
-    Raises re.error for an invalid regular expression."""
-    tags = tags or {}
-    search = re.compile(query if regex else re.escape(query), 0 if case else re.IGNORECASE).search if query else None
-    fields = FIELDS[scope]
-    counts = dict.fromkeys(STATES, 0)
-    indices = []
-    for index, row in enumerate(rows):
-        if file is not None and row.file != file:
-            continue
-        if (row.kind == "speaker") if kind == "lines" else (kind and row.kind != kind):
-            continue
-        if search and not any(search(value) for value in fields(row)):
-            continue
-        current = state(row)
-        marks = tags.get(index, ())
-        flagged = any(mark != "review" for mark in marks)
-        untranslated = current in ("new", "failed")
-        counts["all"] += 1
-        counts[current] += 1
-        counts["untranslated"] += untranslated
-        counts["issues"] += flagged
-        counts["review"] += "review" in marks
-        if status in ("all", current) or (status == "untranslated" and untranslated) \
-                or (status == "review" and "review" in marks) \
-                or (status == "issues" and (issue in marks if issue else flagged)):
-            indices.append(index)
-    return indices, counts
 
 
 def bars(values, count=60):
@@ -160,6 +114,12 @@ class Window(UI.AppWindow):
         self.tags = {}
         self.suggestions = {}
         self.checker = None
+        self.texts = TextState([], {})
+        self.filter_job = Latest(self.filter_error)
+        self.check_job = Latest(self.fail)
+        self.filter_reset = False
+        self.progress_updates = []
+        self.editing = False
         self.run = None
         self.parallel = set()
         self.cancel = threading.Event()
@@ -176,6 +136,8 @@ class Window(UI.AppWindow):
         self.geometry = geometry.normalize(self.settings.get("window"))
         self.native = None
         self.geometry_timer = slint.Timer()
+        self.gc_timer = slint.Timer()
+        self.gc_timer.start(slint.TimerMode.Repeated, timedelta(seconds=5), self.collect)
         self.ui.log = self.log
         self.ui.batches = self.batches
         self.ui.units = self.model
@@ -186,6 +148,11 @@ class Window(UI.AppWindow):
     @property
     def ui(self):
         return self.App
+
+    def collect(self):
+        if not (self.ui.loading or self.ui.busy or self.editing or self.run) \
+                and all(job.task is None or job.task.done() for job in (self.filter_job, self.check_job)):
+            gc.collect(0)
 
     def save_config(self):
         self.settings["profiles"] = [profile.dump() for profile in self.profiles]
@@ -286,20 +253,17 @@ class Window(UI.AppWindow):
         self.say("")
 
     def idle(self):
+        for progress in self.progress_updates:
+            progress.close()
+        self.progress_updates.clear()
         self.ui.busy = False
 
     def progress(self):
-        loop = asyncio.get_running_loop()
-
-        def update(phase, completed, total, filename):
-            if self.cancel.is_set():
-                raise Cancelled
-
-            def show():
-                if not self.cancel.is_set():
-                    self.ui.busy_text = f"{phase} {filename}".strip()
-                    self.ui.busy_progress = completed / total if total else 0
-            loop.call_soon_threadsafe(show)
+        def show(phase, completed, total, filename):
+            self.ui.busy_text = f"{phase} {filename}".strip()
+            self.ui.busy_progress = completed / total if total else 0
+        update = Progress(show, self.cancel)
+        self.progress_updates.append(update)
         return update
 
     @slint.callback(global_name="App")
@@ -342,12 +306,12 @@ class Window(UI.AppWindow):
         encoding = list(self.Languages.encodings)[ui.new_encoding]
         self.busy("Creating project")
         try:
-            root = await asyncio.to_thread(
+            root = await jobs.run(
                 workspace.create, Path(ui.new_original).expanduser(), Path(ui.new_workspace).expanduser(),
                 name=ui.new_name.strip(), encoding=None if encoding == "Auto" else encoding,
                 language_index=ui.new_language_index,
                 source_language=list(self.Languages.sources)[ui.new_source],
-                target_language=list(self.Languages.targets)[ui.new_target], progress=self.progress())
+                target_language=list(self.Languages.targets)[ui.new_target], progress=self.progress(), cancel=self.cancel)
         except Cancelled:
             self.say("Cancelled")
             return
@@ -379,23 +343,30 @@ class Window(UI.AppWindow):
             try:
                 ws = workspace.Workspace(path)
                 try:
-                    rows = await asyncio.to_thread(workspace.load_rows, ws.root)
+                    data = await asyncio.to_thread(load, ws.root)
                 except BaseException:
                     ws.close()
                     raise
             except (VnTransError, OSError, ValueError, sqlite3.Error) as exc:
                 self.fail(exc)
                 return
-            self.show_workspace(ws, rows)
+            self.show_workspace(ws, data)
 
-    def show_workspace(self, ws, rows):
+    def show_workspace(self, ws, data):
+        self.filter_job.invalidate()
+        self.check_job.invalidate()
         if self.ws:
             self.ws.close()
-        self.ws, self.rows = ws, rows
-        self.index_of = {(row.file, row.id): index for index, row in enumerate(rows)}
+        self.ws, self.rows = ws, data.rows
+        ws.manifest = data.manifest
+        self.texts = data.texts
+        self.index_of = data.texts.index_of
         self.tags = {}
         self.forget_undo()
-        skipped = self.prefilter()
+        skipped = len(data.undo)
+        if skipped:
+            self.undo_entry = ("auto-exclude", data.undo)
+            self.ui.can_undo, self.ui.undo_text = True, "Undo auto-exclude"
         config.remember(self.settings, ws.root, ws.manifest["name"])
         self.save_config()
         self.show_recent()
@@ -417,8 +388,8 @@ class Window(UI.AppWindow):
         self.show_builds()
         self.update_stats()
         self.apply_filter()
-        self.terms = ws.terms()
-        self.suggestions = ws.suggestions()
+        self.terms = data.terms
+        self.suggestions = data.suggestions
         self.recheck()
         ui.rules_text = ws.manifest.get("replacements", "")
         self.check_rules()
@@ -430,22 +401,6 @@ class Window(UI.AppWindow):
         ui.page = "texts"
         ui.has_project = True
         self.say(f"Excluded {skipped:,} lines with nothing to translate" if skipped else "")
-
-    def prefilter(self) -> int:
-        """Exclude units with nothing to translate, once per workspace; Undo brings them back."""
-        ws = self.ws
-        if ws.manifest.get("prefiltered"):
-            return 0
-        skipped = ws.untranslatable(self.rows)
-        if skipped:
-            self.remember_undo("auto-exclude", skipped)
-            ws.exclude_many(skipped, True)
-        ws.manifest["prefiltered"] = True
-        try:
-            ws.save_manifest()
-        except OSError as exc:
-            self.fail(exc)
-        return len(skipped)
 
     @slint.callback(global_name="App")
     def navigate(self, page):
@@ -460,9 +415,14 @@ class Window(UI.AppWindow):
         if self.ws:
             self.ws.close()
         self.ws, self.rows = None, []
+        self.filter_job.invalidate()
+        self.check_job.invalidate()
+        self.texts = TextState([], {})
+        self.checker = None
         self.picked.clear()
         self.model.reset([], [])
         self.ui.has_project = False
+        gc.collect()
         self.say("")
 
     def show_info(self):
@@ -471,22 +431,13 @@ class Window(UI.AppWindow):
         self.ui.project_info = f"{manifest['engine'].title()} · {languages['source']} → {languages['target']}"
 
     def update_stats(self):
-        totals = {name: [0, 0] for name in self.file_names}
-        included = translated = failed = 0
-        for row in self.rows:
-            if row.status == "excluded":
-                continue
-            done = row.translation is not None
-            totals[row.file][0] += 1
-            totals[row.file][1] += done
-            included += 1
-            translated += done
-            failed += state(row) == "failed"
+        included, translated, failed = self.texts.totals
         ui = self.ui
         ui.total, ui.translated, ui.failed = included, translated, failed
         ui.progress_text = f"{translated:,} / {included:,}"
         ui.status_text = f"{len(self.rows):,} units · {translated:,} translated" + (f" · {failed:,} failed" if failed else "")
-        files = [dict(name=name, total=total, done=done) for name, (total, done) in totals.items()]
+        files = [dict(name=name, total=self.texts.files[name][0], done=self.texts.files[name][1])
+                 for name in self.file_names]
         if [row["name"] for row in self.files] == self.file_names:
             for index, value in enumerate(files):
                 if self.files[index] != value:
@@ -504,6 +455,7 @@ class Window(UI.AppWindow):
     @slint.callback(global_name="App")
     def query_edited(self, text):
         self.ui.query = text
+        self.filter_job.invalidate()
         self.debounce.start(slint.TimerMode.SingleShot, timedelta(milliseconds=200), self.apply_filter)
 
     @slint.callback(global_name="App")
@@ -511,12 +463,38 @@ class Window(UI.AppWindow):
         self.apply_filter()
 
     def apply_filter(self):
-        ui = self.ui
-        try:
-            indices, counts = filter_rows(self.rows, **self.filters())
-        except re.error:
-            ui.regex_error = True
+        self.queue_filter(True)
+
+    def filter_error(self, exc):
+        if isinstance(exc, re.error):
+            self.ui.regex_error = True
+        else:
+            self.fail(exc)
+
+    def queue_filter(self, reset=False):
+        if self.ws is None:
             return
+        self.filter_reset |= reset
+        texts = self.texts
+        revision = texts.revision
+        rows = texts.snapshot()
+        options = self.filters() | dict(tags=dict(self.tags))
+        def apply(result):
+            if texts is not self.texts:
+                return
+            if revision != texts.revision:
+                self.queue_filter()
+                return
+            indices, counts = result
+            if self.filter_reset:
+                self.filtered(indices, counts)
+                self.filter_reset = False
+            else:
+                self.show_counts(counts)
+        self.filter_job.submit(lambda: filter_rows(rows, **options), apply)
+
+    def filtered(self, indices, counts):
+        ui = self.ui
         ui.regex_error = False
         selected = self.model.indices[ui.current] if 0 <= ui.current < len(self.model.indices) else None
         self.picked.clear()
@@ -525,16 +503,12 @@ class Window(UI.AppWindow):
         self.positions = {index: position for position, index in enumerate(indices)}
         self.show_counts(counts)
         try:
-            self.select(indices.index(selected))
-        except ValueError:
+            self.select(self.positions[selected])
+        except KeyError:
             self.select(0 if indices else -1)
 
     def refresh_counts(self):
-        try:
-            _, counts = filter_rows(self.rows, **self.filters())
-        except re.error:
-            return
-        self.show_counts(counts)
+        self.queue_filter()
 
     def show_counts(self, counts):
         self.ui.counts = slint.ListModel(f"{counts[name]:,}" for name in STATES)
@@ -585,24 +559,23 @@ class Window(UI.AppWindow):
 
     def recheck(self):
         """Recompute issue tags for every row off the event loop, then refresh the view."""
-        self.checker = quality.Checker(self.ws.check, self.ws.manifest["languages"]["target"], self.terms,
-                                       quality.speaker_names(self.rows, self.terms), self.ws.formats)
-        checker, rows, suggestions = self.checker, list(self.rows), dict(self.suggestions)
+        ws, texts = self.ws, self.texts
+        revision = texts.revision
+        rows, suggestions = texts.snapshot(), dict(self.suggestions)
+        terms = [replace(term) for term in self.terms]
+        target = ws.manifest["languages"]["target"]
 
         def scan():
-            tags = {}
-            for index, row in enumerate(rows):
-                marks = set(checker.issues(row))
-                if (row.file, row.id) in suggestions:
-                    marks.add("review")
-                if marks:
-                    tags[index] = marks
-            return tags
+            checker = quality.Checker(ws.check, target, terms, quality.speaker_names(rows, terms), ws.formats)
+            return checker, check_rows(checker, rows, suggestions)
 
-        async def apply():
-            tags = await asyncio.to_thread(scan)
-            if self.ws is None or checker is not self.checker:
+        def apply(result):
+            if ws is not self.ws or texts is not self.texts:
                 return
+            if revision != texts.revision:
+                self.recheck()
+                return
+            self.checker, tags = result
             self.tags = tags
             if self.ui.status_filter in ("issues", "review"):
                 self.apply_filter()
@@ -612,9 +585,10 @@ class Window(UI.AppWindow):
             if row is not None:
                 self.show_marks(row)
 
-        asyncio.ensure_future(apply())
+        self.check_job.submit(scan, apply)
 
     def row_changed(self, row):
+        self.texts.changed(self.index_of[(row.file, row.id)])
         self.retag(self.index_of[(row.file, row.id)])
         self.model.notify_row_changed(self.ui.current)
         self.ui.cur_state = state(row)
@@ -623,7 +597,7 @@ class Window(UI.AppWindow):
         self.refresh_counts()
 
     @slint.callback(global_name="App")
-    def save(self, text, advance):
+    async def save(self, text, advance):
         row = self.current_row()
         if row is None:
             return
@@ -635,21 +609,14 @@ class Window(UI.AppWindow):
             self.ui.cur_error = str(exc).removeprefix(f"{row.id}: ")
             return
         twins = [] if text is None else self.twins(row)
-        if twins:
-            self.remember_undo("edit", [row, *twins])
-        else:
-            self.forget_undo()
-        try:
-            self.ws.save_many([(other, text) for other in (row, *twins)])
-        except OSError as exc:
-            self.ui.cur_error = str(exc)
+        entries = await self.edit("edit" if twins else None, lambda: [
+            replace(other, translation=text, status="new" if text is None else "edited", error=None)
+            for other in (row, *twins)])
+        if entries is None:
             return
         self.ui.cur_error = ""
         if twins:
-            self.changed_rows([row, *twins])
             self.say(f"Also applied to {len(twins):,} identical line{'s' * (len(twins) != 1)}")
-        else:
-            self.row_changed(row)
         if advance and self.ui.current + 1 < len(self.model.indices):
             self.select(self.ui.current + 1)
 
@@ -657,11 +624,7 @@ class Window(UI.AppWindow):
         """Other rows with matching text and protected controls whose translation follows `row`'s.
 
         Manual edits that differ from `row`'s current translation and excluded rows are left alone."""
-        key = row.translation_key(self.ws.formats[row.file])
-        return [other for other in self.rows if other.source == row.source and other is not row
-                and other.status != "excluded"
-                and other.translation_key(self.ws.formats[other.file]) == key
-                and (other.translation is None or other.status == "machine" or other.translation == row.translation)]
+        return self.texts.twins(row)
 
     @slint.callback(global_name="App")
     def revert(self):
@@ -717,7 +680,7 @@ class Window(UI.AppWindow):
         self.busy("Building")
         try:
             ws.save_manifest()
-            target, report = await asyncio.to_thread(ws.build, ws.translations(), **settings, progress=self.progress())
+            target, report = await jobs.run(jobs.build, ws.root, **settings, progress=self.progress(), cancel=self.cancel)
         except Cancelled:
             self.say("Build cancelled")
             return
@@ -853,9 +816,9 @@ class Window(UI.AppWindow):
                 self.fail(exc)
                 return
             rows = [row for row, _ in pairs]
-            self.remember_undo("import", rows)
-            self.ws.save_many(pairs, "machine")
-            self.changed_rows(rows)
+            if await self.edit("import", lambda: [replace(row, translation=text, status="machine", error=None)
+                                                  for row, text in pairs]) is None:
+                return
         notes = [f"{skipped:,} failed checks"] * bool(skipped) + [f"{len(ignored):,} files not matched"] * bool(ignored)
         self.say(f"Imported {len(rows):,} translations" + (f" ({', '.join(notes)})" if notes else ""),
                  error=not rows and bool(notes))
@@ -956,7 +919,8 @@ class Window(UI.AppWindow):
             ui.preview_stats = f"Replacement rules: {exc}"
             return
         selected = self.model.indices[ui.current] if 0 <= ui.current < len(self.model.indices) else 0
-        candidates = [i for i in range(selected, len(self.rows)) if self.rows[i].kind != "speaker"][:settings["batch_lines"]]
+        candidates = list(islice((i for i in range(selected, len(self.rows)) if self.rows[i].kind != "speaker"),
+                                 settings["batch_lines"]))
         if not candidates:
             ui.preview_system = ui.preview_user = ui.preview_stats = ""
             return
@@ -1121,6 +1085,7 @@ class Window(UI.AppWindow):
             del self.log[500]
 
     def row_committed(self, index):
+        self.texts.changed(index)
         self.retag(index)
         position = self.positions.get(index)
         if position is not None:
@@ -1299,36 +1264,35 @@ class Window(UI.AppWindow):
             self.row_changed(row)
 
     @slint.callback(global_name="App")
-    def replace_all(self):
+    async def replace_all(self):
         ui = self.ui
         try:
             pattern = re.compile(ui.query if ui.regex else re.escape(ui.query), 0 if ui.match_case else re.IGNORECASE)
-            replacement = ui.replace_with if ui.regex else (lambda match: ui.replace_with)
-            pairs, skipped = [], 0
-            for index in self.model.indices:
-                row = self.rows[index]
+            replace_with = ui.replace_with
+            replacement = replace_with if ui.regex else (lambda match: replace_with)
+        except re.error as exc:
+            self.fail(f"Replace: {exc}")
+            return
+        rows = [self.texts.views[index] for index in self.model.indices]
+        ws = self.ws
+        skipped = 0
+        def prepare():
+            nonlocal skipped
+            entries = []
+            for row in rows:
                 if row.translation is None:
                     continue
                 text = pattern.sub(replacement, row.translation)
                 if text == row.translation:
                     continue
                 try:
-                    pairs.append((row, self.ws.check(row, text)))
+                    entries.append(replace(row, translation=ws.check(row, text), status="edited", error=None))
                 except VnTransError:
                     skipped += 1
-        except re.error as exc:
-            self.fail(f"Replace: {exc}")
-            return
-        self.remember_undo("replace", [row for row, _ in pairs])
-        self.ws.save_many(pairs)
-        for row, _ in pairs:
-            index = self.index_of[(row.file, row.id)]
-            self.retag(index)
-            self.model.notify_row_changed(self.positions[index])
-        self.update_stats()
-        self.refresh_counts()
-        self.select(ui.current)
-        self.say(f"Replaced in {len(pairs)} units" + (f", {skipped} skipped (checks failed)" if skipped else ""))
+            return entries
+        entries = await self.edit("replace", prepare)
+        if entries is not None:
+            self.say(f"Replaced in {len(entries)} units" + (f", {skipped} skipped (checks failed)" if skipped else ""))
 
     @slint.callback(global_name="App")
     def rules_edited(self, text):
@@ -1358,6 +1322,9 @@ class Window(UI.AppWindow):
         return [self.model.indices[self.ui.current]] if row is not None else []
 
     def repaint(self, indices):
+        if len(indices) > 250:
+            self.model.reset(self.rows, self.model.indices)
+            return
         for index in indices:
             position = self.positions.get(index)
             if position is not None:
@@ -1420,39 +1387,69 @@ class Window(UI.AppWindow):
             self.repaint(before)
             self.show_selection()
 
-    def remember_undo(self, label, rows):
-        self.undo_entry = (label, self.ws.snapshot(rows))
-        self.ui.can_undo = True
-        self.ui.undo_text = f"Undo {label}"
-
     def forget_undo(self):
         self.undo_entry = None
         self.ui.can_undo = False
 
-    def changed_rows(self, rows):
-        indices = [self.index_of[(row.file, row.id)] for row in rows]
-        for index in indices:
-            self.retag(index)
-        self.repaint(indices)
-        row = self.current_row()
-        if row is not None:
-            self.select(self.ui.current)
-        self.update_stats()
-        self.refresh_counts()
-        self.show_selection()
+    async def edit(self, label, prepare, *, check=True, dismiss=False):
+        """Validate and commit detached rows, then apply them on the UI thread after the transaction."""
+        if self.editing:
+            return None
+        self.editing = True
+        ws, texts, run = self.ws, self.texts, self.run
+        if run:
+            # Replies may finish during an edit; accept them after the manual changes are visible.
+            run.writes_ready.clear()
+        before = texts.snapshot()
+        def store():
+            return workspace.store_rows(ws.root, prepare(), check=check, dismiss=dismiss)
+        try:
+            with self.overlay("Saving changes…"):
+                entries = await asyncio.to_thread(store)
+                if ws is not self.ws:
+                    return None
+                undo = []
+                for start in range(0, len(entries), 250):
+                    for entry in entries[start:start + 250]:
+                        index = self.index_of[(entry.file, entry.id)]
+                        row, old = self.rows[index], before[index]
+                        undo.append((row, old.translation, old.status, old.error))
+                        row.translation, row.status, row.error = entry.translation, entry.status, entry.error
+                        if dismiss:
+                            self.suggestions.pop((row.file, row.id), None)
+                        texts.changed(index, entry)
+                    await asyncio.sleep(.001)
+                if label:
+                    self.undo_entry = label, undo
+                    self.ui.can_undo, self.ui.undo_text = True, f"Undo {label}"
+                else:
+                    self.forget_undo()
+                self.model.reset(self.rows, self.model.indices)
+                self.update_stats()
+                self.refresh_counts()
+                self.recheck()
+                self.select(self.ui.current)
+                self.show_selection()
+                return entries
+        except (VnTransError, OSError, sqlite3.Error, re.error) as exc:
+            self.fail(exc)
+            return None
+        finally:
+            self.editing = False
+            if run:
+                run.writes_ready.set()
 
     @slint.callback(global_name="App")
-    def undo(self):
+    async def undo(self):
         if self.undo_entry is None:
             return
         label, snapshot = self.undo_entry
-        self.ws.restore(snapshot)
-        self.forget_undo()
-        self.changed_rows([row for row, *_ in snapshot])
-        self.say(f"Undid {label}")
+        if await self.edit(None, lambda: [replace(row, translation=text, status=status, error=error)
+                                         for row, text, status, error in snapshot], check=False) is not None:
+            self.say(f"Undid {label}")
 
     @slint.callback(global_name="App")
-    def menu_action(self, action):
+    async def menu_action(self, action):
         indices = self.targets()
         rows = [self.rows[index] for index in indices]
         if not rows:
@@ -1466,42 +1463,32 @@ class Window(UI.AppWindow):
             self.say(f"Copied {count}")
         elif action == "clear":
             rows = [row for row in rows if row.translation is not None]
-            self.remember_undo("clear", rows)
-            self.ws.save_many([(row, None) for row in rows])
-            self.changed_rows(rows)
+            if await self.edit("clear", lambda: [replace(row, translation=None, status="new", error=None)
+                                                  for row in rows]) is None:
+                return
             self.say(f"Cleared {len(rows):,} translation{'s' * (len(rows) != 1)}")
         elif action == "exclude":
             excluded = not all(row.status == "excluded" for row in rows)
-            self.remember_undo("exclude" if excluded else "include", rows)
-            self.ws.exclude_many(rows, excluded)
-            self.changed_rows(rows)
+            if await self.edit("exclude" if excluded else "include", lambda: [
+                    replace(row, status="excluded" if excluded else ("new" if row.translation is None else "edited"))
+                    for row in rows], check=False) is None:
+                return
             self.say(f"{'Excluded' if excluded else 'Included'} {count}")
         elif action == "tidy":
             names = self.checker.names if self.checker else quality.speaker_names(self.rows, self.terms)
-            pairs = [(row, quality.tidy(row.translation, row, names, self.ws.formats)) for row in rows
-                     if row.translation is not None]
-            pairs = [(row, text) for row, text in pairs if text != row.translation]
-            self.remember_undo("fixes", [row for row, _ in pairs])
-            try:
-                for status in {row.status for row, _ in pairs}:
-                    self.ws.save_many([(row, text) for row, text in pairs if row.status == status], status)
-            except VnTransError as exc:
-                self.fail(exc)
+            formats = self.ws.formats
+            def prepare():
+                return [replace(row, translation=text, error=None) for row in rows if row.translation is not None
+                        and (text := quality.tidy(row.translation, row, names, formats)) != row.translation]
+            entries = await self.edit("fixes", prepare)
+            if entries is None:
                 return
-            self.changed_rows([row for row, _ in pairs])
-            self.say(f"Fixed {len(pairs):,} translation{'s' * (len(pairs) != 1)}")
+            self.say(f"Fixed {len(entries):,} translation{'s' * (len(entries) != 1)}")
         elif action == "suggest":
             pairs = [(row, self.suggestions[(row.file, row.id)][0]) for row in rows if (row.file, row.id) in self.suggestions]
-            self.remember_undo("suggestions", [row for row, _ in pairs])
-            try:
-                self.ws.save_many(pairs)
-            except VnTransError as exc:
-                self.fail(exc)
+            if await self.edit("suggestions", lambda: [replace(row, translation=text, status="edited", error=None)
+                                                       for row, text in pairs], dismiss=True) is None:
                 return
-            for row, _ in pairs:
-                self.suggestions.pop((row.file, row.id), None)
-                self.ws.dismiss(row)
-            self.changed_rows([row for row, _ in pairs])
             self.say(f"Applied {len(pairs):,} suggestion{'s' * (len(pairs) != 1)}")
         elif action in ("translate", "review"):
             if action == "translate":

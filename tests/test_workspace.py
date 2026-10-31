@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from dataclasses import replace
 
 from fixtures import scenario
 from vntrans import VnTransError, extract, workspace
@@ -224,6 +225,19 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "cancelled"):
             ws.build(progress=progress)
         self.assertEqual(list((ws.root / "builds").iterdir()), [])
+
+    def test_detached_edits_validate_the_entire_transaction_before_writing(self):
+        ws = self.create()
+        title, dialogue = self.row(ws, "test.ks", "title"), self.row(ws, "test.ks", "dialogue")
+        entries = [replace(title, translation="Opening", status="edited"),
+                   replace(dialogue, translation="missing controls", status="edited")]
+        with self.assertRaises(VnTransError):
+            workspace.store_rows(ws.root, entries)
+        self.assertEqual(ws.translations(), {})
+        entries[1].translation = "Hello⟦0⟧world"
+        workspace.store_rows(ws.root, entries)
+        self.assertEqual(len(ws.translations()), 2)
+        self.assertIsNone(title.translation)
 
 
 if __name__ == "__main__":

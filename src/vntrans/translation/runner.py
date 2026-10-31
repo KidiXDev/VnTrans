@@ -168,6 +168,8 @@ class Run:
         self.counter = 0
         self.stopping = False
         self.stopped = asyncio.Event()
+        self.writes_ready = asyncio.Event()
+        self.writes_ready.set()
         self.error = None
         concurrency = max(1, self.settings["concurrency"])
         self.slots = concurrency * len(self.workers)
@@ -534,6 +536,7 @@ class Run:
                 reply = await asyncio.to_thread(worker.provider.complete, profile, key, prompt.system, prompt.user,
                                                 schema)
             except ProviderError as exc:
+                await self.writes_ready.wait()
                 self.ws.record_attempt(profile.name, profile.model, prompt.version, len(prompt.rows),
                                        exc.kind, str(exc))
                 if exc.kind not in ("rate", "transient") or attempt == TRANSPORT_TRIES - 1 or self.stopping:
@@ -558,6 +561,7 @@ class Run:
             self.stats.output.append((time.monotonic(), reply.tokens_out or 0))
             self.stats.tokens_in += reply.tokens_in or 0
             self.stats.tokens_out += reply.tokens_out or 0
+            await self.writes_ready.wait()
             self.ws.record_attempt(profile.name, profile.model, prompt.version, len(prompt.rows),
                                    "ok", None, reply.tokens_in, reply.tokens_out)
             return reply

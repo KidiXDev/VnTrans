@@ -15,6 +15,9 @@ import tracemalloc
 from fixtures import make_psb
 from vntrans import pipeline, workspace
 from vntrans.engines.kirikiri.ks import KsScript
+from vntrans.gui.texts import TextState, check_rows, filter_rows, load
+from vntrans.translation.quality import Checker
+from vntrans.workspace import Row
 
 
 def sources(folder, files, lines, format):
@@ -31,6 +34,25 @@ def sources(folder, files, lines, format):
 def workload(args, case):
     with tempfile.TemporaryDirectory(prefix="vntrans-benchmark-") as temporary:
         root = Path(temporary)
+        if case.startswith("gui-"):
+            rows = [Row(f"{i // args.lines}.ks", str(i), "dialogue", "Original text ⟦0⟧", "Alice", "start",
+                        '{"controls":["[l]"],"original":"Original text [l]"}',
+                        "Translated text ⟦0⟧", "machine", None) for i in range(args.files * args.lines)]
+            formats = {row.file: "ks" for row in rows}
+            texts = TextState(rows, formats)
+            snapshot = texts.snapshot()
+            if case == "gui-filter":
+                yield lambda: filter_rows(snapshot, query="Original", kind="lines")
+            elif case == "gui-duplicates":
+                yield lambda: texts.twins(rows[0])
+            elif case == "gui-stats":
+                yield lambda: (tuple(texts.totals), [(name, *counts) for name, counts in texts.files.items()])
+            else:
+                from types import SimpleNamespace
+                checker = Checker(lambda row, text: workspace.Workspace.check(SimpleNamespace(formats=formats), row, text),
+                                  "English", [])
+                yield lambda: check_rows(checker, snapshot, {})
+            return
         if case.startswith("ks-"):
             data = b"\xef\xbb\xbf" + (("Original text " + "x" * 80 + "[l]\n") * args.large_lines).encode()
             if case == "ks-parse":
@@ -50,7 +72,7 @@ def workload(args, case):
             return
         workspace.create(source, root / "work", name="Benchmark", source_language="English")
         if case == "open":
-            yield lambda: workspace.load_rows(root / "work")
+            yield lambda: load(root / "work")
             return
         ws = workspace.Workspace(root / "work")
         try:
@@ -91,7 +113,8 @@ async def heartbeat(action):
 
 def main():
     cases = ("ks-parse", "ks-rebuild", "extract", "create", "open", "validate",
-             "build-unchanged", "build-sparse", "build-full")
+             "build-unchanged", "build-sparse", "build-full", "gui-filter", "gui-duplicates",
+             "gui-stats", "gui-quality")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--files", type=int, default=1000)
     parser.add_argument("--lines", type=int, default=100)
@@ -100,8 +123,12 @@ def main():
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--case", choices=cases, action="append")
     parser.add_argument("--profile", help="Write cProfile data instead of timing/memory/heartbeat checks")
+    parser.add_argument("--encoder", choices=("stdlib", "orjson"), default="stdlib")
     parser.add_argument("--output", type=Path, help="Optional JSON results file")
     args = parser.parse_args()
+    if args.encoder == "orjson":
+        import orjson
+        pipeline.encode_document = lambda doc: orjson.dumps(doc, option=orjson.OPT_INDENT_2 | orjson.OPT_APPEND_NEWLINE)
     if min(args.files, args.lines, args.large_lines, args.runs) < 1:
         parser.error("sizes and runs must be positive")
     results = []

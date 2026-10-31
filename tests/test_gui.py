@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import re
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -12,6 +13,11 @@ from vntrans.text import make_unit
 from vntrans.translation import prompts
 from vntrans.gui.geometry import normalize, place
 from vntrans.workspace import Row
+from vntrans.gui.texts import TextState
+from vntrans.gui.jobs import Cancelled, Latest, Progress, build, run
+from contextlib import nullcontext
+from dataclasses import replace
+from vntrans import workspace
 
 try:
     from vntrans.gui.app import Window, bars, compact, duration, filter_rows
@@ -83,7 +89,8 @@ class EditingTests(unittest.TestCase):
             unit = make_unit(str(index), "dialogue", text, "ks", **context)
             rows.append(Row("a.ks", unit.id, unit.kind, unit.source, "", "", json.dumps(unit.context),
                             None, "new", None))
-        window = SimpleNamespace(rows=rows, ws=SimpleNamespace(formats={"a.ks": "ks"}))
+        window = SimpleNamespace(rows=rows, ws=SimpleNamespace(formats={"a.ks": "ks"}),
+                                 texts=TextState(rows, {"a.ks": "ks"}))
         self.assertEqual(Window.twins(window, rows[0]), [rows[3]])
         self.assertEqual(Window.twins(window, rows[4]), [])
 
@@ -198,6 +205,140 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(config.load(), {})
                 self.assertEqual((directory / f"config.json.bad.{number}").read_text(encoding="utf-8"), text)
             self.assertEqual((directory / "config.json.bad").read_text(encoding="utf-8"), original)
+
+
+class TextStateTests(unittest.TestCase):
+    def test_snapshots_and_incremental_counts(self):
+        rows = [row("a.ks", "dialogue", "Hello"), row("b.ks", "choice", "Go", status="excluded")]
+        texts = TextState(rows, {"a.ks": "ks", "b.ks": "ks"})
+        snapshot = texts.snapshot()
+        rows[0].translation, rows[0].status = "Halo", "edited"
+        texts.changed(0)
+        self.assertEqual(texts.totals, [1, 1, 0])
+        self.assertEqual(texts.files["a.ks"], [1, 1, 0])
+        self.assertIsNone(snapshot[0].translation)
+        rows[0].translation, rows[0].status, rows[0].error = None, "new", "failed"
+        texts.changed(0)
+        self.assertEqual(texts.totals, [1, 0, 1])
+        rows[0].status = "excluded"
+        texts.changed(0)
+        self.assertEqual(texts.totals, [0, 0, 0])
+
+
+class JobTests(unittest.IsolatedAsyncioTestCase):
+    async def test_spawned_build_and_cooperative_cancellation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "source"
+            source.mkdir()
+            (source / "a.ks").write_bytes(b"Hello[l]world\n")
+            workspace.create(source, root / "work", name="Test")
+            updates, cancel = [], threading.Event()
+            target, report = await run(build, root / "work", cancel=cancel, progress=lambda *args: updates.append(args))
+            self.assertTrue((target / "patch/a.ks").is_file())
+            self.assertEqual(report.files, 1)
+            self.assertEqual(updates[-1], ("Writing output", 1, 1, ""))
+            cancel.set()
+            with self.assertRaises(Cancelled):
+                await run(workspace.create, source, root / "cancelled", name="Test", cancel=cancel,
+                          progress=lambda *args: None)
+            self.assertFalse((root / "cancelled").exists())
+            self.assertFalse(list(root.glob(".vntrans-*")))
+
+    async def test_only_latest_pending_request_runs_and_applies(self):
+        started, release = threading.Event(), threading.Event()
+        applied, called = [], []
+        errors = []
+        jobs = Latest(errors.append)
+        def old():
+            called.append("old")
+            started.set()
+            release.wait(5)
+            return "old"
+        jobs.submit(old, applied.append)
+        await asyncio.to_thread(started.wait, 5)
+        jobs.submit(lambda: called.append("discarded"), applied.append)
+        jobs.submit(lambda: "latest", applied.append)
+        release.set()
+        await jobs.task
+        self.assertEqual(called, ["old"])
+        self.assertEqual(applied, ["latest"])
+        self.assertEqual(errors, [])
+        jobs.submit(lambda: "closed workspace", applied.append)
+        jobs.invalidate()
+        await jobs.task
+        self.assertEqual(applied, ["latest"])
+
+    async def test_progress_coalesces_and_delivers_final_update(self):
+        shown, cancel = [], threading.Event()
+        progress = Progress(lambda *value: shown.append(value), cancel)
+        await asyncio.to_thread(lambda: [progress("Working", i, 10000, "a.ks") for i in range(10001)])
+        progress.close()
+        await asyncio.sleep(0)
+        self.assertLessEqual(len(shown), 3)
+        self.assertEqual(shown[-1], ("Working", 10000, 10000, "a.ks"))
+        cancel.set()
+        with self.assertRaises(Cancelled):
+            progress("Working", 1, 2, "a.ks")
+
+    @unittest.skipIf(filter_rows is None, "gui extra not installed")
+    async def test_filter_rejects_a_result_after_an_edit(self):
+        rows = [row("a.ks", "dialogue", "Hello")]
+        texts = TextState(rows, {"a.ks": "ks"})
+        started, release = threading.Event(), threading.Event()
+        window = SimpleNamespace(ws=object(), texts=texts, tags={}, filter_reset=False,
+                                 filters=lambda: dict(query="Halo"), filtered=Mock(), show_counts=Mock())
+        window.queue_filter = lambda reset=False: Window.queue_filter(window, reset)
+        window.filter_job = Latest(lambda exc: self.fail(str(exc)))
+        def delayed(snapshot, **options):
+            started.set()
+            release.wait(5)
+            return filter_rows(snapshot, **options)
+        with patch("vntrans.gui.app.filter_rows", side_effect=delayed):
+            window.queue_filter(True)
+            await asyncio.to_thread(started.wait, 5)
+            rows[0].translation = "Halo"
+            texts.changed(0)
+            release.set()
+            await window.filter_job.task
+        self.assertEqual(window.filtered.call_count, 1)
+        self.assertEqual(window.filtered.call_args.args[0], [0])
+
+    @unittest.skipIf(filter_rows is None, "gui extra not installed")
+    async def test_bulk_edit_waits_for_commit_and_preserves_undo(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "source"
+            source.mkdir()
+            (source / "a.ks").write_bytes(b"Hello[l]world\n")
+            workspace.create(source, root / "work", name="Test")
+            ws = workspace.Workspace(root / "work")
+            try:
+                rows = ws.rows()
+                texts = TextState(rows, ws.formats)
+                ready = asyncio.Event()
+                ready.set()
+                window = SimpleNamespace(ws=ws, texts=texts, rows=rows, index_of=texts.index_of, editing=False,
+                                         run=SimpleNamespace(writes_ready=ready), ui=SimpleNamespace(current=0),
+                                         overlay=lambda text: nullcontext(), model=Mock(indices=[0]),
+                                         update_stats=Mock(), refresh_counts=Mock(), recheck=Mock(),
+                                         select=Mock(), show_selection=Mock(), forget_undo=Mock(), fail=Mock())
+                def prepare():
+                    self.assertFalse(ready.is_set())
+                    self.assertIsNone(rows[0].translation)
+                    return [replace(rows[0], translation="Halo⟦0⟧dunia", status="edited")]
+                await Window.edit(window, "edit", prepare)
+                self.assertEqual(rows[0].translation, "Halo⟦0⟧dunia")
+                self.assertEqual(ws.translations()[(rows[0].file, rows[0].id)], rows[0].translation)
+                self.assertIsNone(window.undo_entry[1][0][1])
+                self.assertTrue(ready.is_set())
+                window.fail.assert_not_called()
+                await Window.edit(window, "invalid", lambda: [replace(rows[0], translation="missing control")])
+                self.assertEqual(rows[0].translation, "Halo⟦0⟧dunia")
+                self.assertTrue(ready.is_set())
+                self.assertEqual(window.fail.call_count, 1)
+            finally:
+                ws.close()
 
 
 class GeometryTests(unittest.TestCase):
