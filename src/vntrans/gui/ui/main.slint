@@ -479,8 +479,19 @@ component EditorDialog inherits Rectangle {
 export component AppWindow inherits Window {
     title: App.has-project ? App.project-name + " — VnTrans" : "VnTrans";
     icon: @image-url("icons/languages.svg");
-    preferred-width: 1360px;
-    preferred-height: 840px;
+    in property <length> saved-width: 1360px;
+    in property <length> saved-height: 840px;
+    in-out property <bool> window-maximized <=> root.maximized;
+    out property <bool> window-minimized: root.minimized;
+    out property <length> window-width: root.width;
+    out property <length> window-height: root.height;
+    callback geometry-changed();
+    changed width => { root.geometry-changed(); }
+    changed height => { root.geometry-changed(); }
+    changed maximized => { root.geometry-changed(); }
+    changed minimized => { root.geometry-changed(); }
+    preferred-width: max(root.min-width, root.saved-width);
+    preferred-height: max(root.min-height, root.saved-height);
     min-width: 1180px;
     min-height: 700px;
     background: Theme.bg;

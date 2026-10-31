@@ -18,6 +18,7 @@ from .. import config, workspace
 from ..model import VnTransError
 from ..translation import glossary, prompts, quality, runner
 from ..translation.providers import PROVIDERS, REASONING, Profile, ProviderError
+from . import geometry
 from .dialogs import pick
 
 UI = slint.load_file(Path(__file__).parent / "ui" / "main.slint", style="fluent-dark")
@@ -150,6 +151,9 @@ class Window(UI.AppWindow):
         self.run_timer = slint.Timer()
         self.settings = config.load()
         self.profiles = [Profile.load(value) for value in self.settings.get("profiles", [])]
+        self.geometry = geometry.normalize(self.settings.get("window"))
+        self.native = None
+        self.geometry_timer = slint.Timer()
         self.ui.log = self.log
         self.ui.batches = self.batches
         self.show_recent()
@@ -166,6 +170,65 @@ class Window(UI.AppWindow):
             config.save(self.settings)
         except OSError as exc:
             self.fail(exc)
+
+    def restore_geometry(self):
+        """Apply the saved size; call before the window is first shown."""
+        self.saved_width = self.geometry.get("width", self.saved_width)
+        self.saved_height = self.geometry.get("height", self.saved_height)
+
+    async def track_geometry(self):
+        """Once the event loop has created the native window, restore its position (Windows) and maximized
+        state, then follow its moves.
+
+        Maximizing before the window exists lets Slint shrink it back to its preferred size while it stays
+        flagged as maximized, stuck at the screen's top-left corner. Without a native window to wait for
+        (other platforms), a short delay stands in for window creation."""
+        position, maximized = self.geometry.get("position"), self.geometry["maximized"]
+        if geometry.Native is not None:
+            for _ in range(100):
+                self.native = geometry.Native.find()
+                if self.native:
+                    break
+                await asyncio.sleep(0.02)
+        if self.native and position:
+            self.native.restore(position, maximized)
+        else:
+            if self.native is None:
+                await asyncio.sleep(0.1)
+            self.window_maximized = maximized
+        if self.native:
+            self.native.watch(self.capture_geometry)
+            self.capture_geometry()
+
+    @slint.callback()
+    def geometry_changed(self):
+        self.geometry_timer.start(slint.TimerMode.SingleShot, timedelta(milliseconds=250), self.capture_geometry)
+
+    def capture_geometry(self):
+        """Record the current state. A minimized window keeps its earlier state, so the app never starts
+        minimized, and the size is taken only while the window is neither maximized nor minimized."""
+        state = self.geometry
+        found = self.native.read() if self.native else None
+        if found:
+            (left, top, _, _), shown, state["maximized"] = found
+            state["position"] = [left, top]
+            normal = shown == geometry.NORMAL
+        else:
+            normal = True
+            if not self.window_minimized:
+                state["maximized"] = self.window_maximized
+        if normal and not self.window_maximized and not self.window_minimized:
+            state["width"], state["height"] = self.window_width, self.window_height
+
+    def save_geometry(self):
+        """Store the window state at exit; the native window is gone by then, so Slint's last values count."""
+        self.geometry_timer.stop()
+        if self.native:
+            self.native.close()
+            self.native = None
+        self.capture_geometry()
+        self.settings["window"] = self.geometry
+        self.save_config()
 
     def show_recent(self):
         self.ui.recent = slint.ListModel(

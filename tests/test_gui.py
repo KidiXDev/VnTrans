@@ -1,6 +1,7 @@
 import re
 import unittest
 
+from vntrans.gui.geometry import normalize, place
 from vntrans.workspace import Row
 
 try:
@@ -56,6 +57,28 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(bars(range(10), count=2), [8 / 9, 1.0])
         self.assertEqual((compact(999), compact(12_345), compact(2_500_000)), ("999", "12.3k", "2.5M"))
         self.assertEqual((duration(75), duration(3725)), ("1:15", "1:02:05"))
+
+
+class GeometryTests(unittest.TestCase):
+    def test_normalize_keeps_only_valid_fields(self):
+        self.assertEqual(normalize(None), dict(maximized=False))
+        self.assertEqual(normalize("garbage"), dict(maximized=False))
+        self.assertEqual(normalize(dict(width=1500, height=900.5, maximized=True, position=[-1920, 40])),
+                         dict(maximized=True, width=1500.0, height=900.5, position=[-1920, 40]))
+        malformed = dict(width=True, height=float("nan"), maximized="yes", position=[1.5, 2])
+        self.assertEqual(normalize(malformed), dict(maximized=False))
+        self.assertEqual(normalize(dict(width=0, height=10**9, position=[1, 2, 3])), dict(maximized=False))
+        self.assertEqual(normalize(dict(width=float("inf"), position=[10**7, 0])), dict(maximized=False))
+
+    def test_place_keeps_reachable_windows_and_rescues_lost_ones(self):
+        primary, left = (0, 0, 1920, 1040), (-1920, 0, 0, 1040)
+        on_left = (-1800, 50, -400, 850)
+        self.assertEqual(place((100, 100, 1500, 900), [primary, left]), ((100, 100, 1500, 900), True))
+        self.assertEqual(place(on_left, [primary, left]), (on_left, True))
+        self.assertEqual(place(on_left, [primary]), ((0, 50, 1400, 850), True))
+        self.assertEqual(place((100, -500, 1500, 300), [primary]), ((100, 0, 1500, 800), True))
+        self.assertEqual(place((1880, 100, 3280, 900), [primary]), ((520, 100, 1920, 900), True))
+        self.assertEqual(place((50, 50, 2650, 1490), [primary]), ((0, 0, 2600, 1440), False))
 
 
 if __name__ == "__main__":
