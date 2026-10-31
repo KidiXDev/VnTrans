@@ -77,8 +77,8 @@ The app is built with [Slint](https://slint.dev). Everything happens in a
 
 - **Texts**: every unit in a virtualized list. Search by source, translation,
   speaker or ID, with plain text or regular expressions and case matching. Filter
-  by file, kind and status (new, machine, edited, failed, excluded, issues,
-  review). Speaker-name units are listed only under the "Speaker names" kind;
+  by file, kind and status (untranslated, new, machine, edited, failed, excluded,
+  issues, review). Progress counts only units that are not excluded. Speaker-name units are listed only under the "Speaker names" kind;
   the default "All lines" shows them in the speaker column. Edits are checked
   with the same placeholder rules as rebuild before they are saved, and a saved
   translation also fills identical units (same kind and source) that are
@@ -108,9 +108,14 @@ The app is built with [Slint](https://slint.dev). Everything happens in a
   Manual edits are never overwritten. Speaker names are filled from the glossary,
   and identical units (same kind and source, project-wide) are sent once; new
   units reuse an existing translation of the same text without a request.
+  **Run in parallel with** adds more profiles (for example the same key with
+  another model) that take batches from the same queue; each batch goes to one
+  profile, concurrency and the RPM limit apply per profile, and a profile with a
+  bad key or model leaves the run while the others finish it.
   The model sees lines without ruby (furigana) readings, and any speaker name it
-  puts in front of a line is removed. In Texts, **Remove speaker names &
-  furigana** fixes lines translated before. The same page runs **Review translations**
+  puts in front of a line is removed. When the source is one 「…」 quote, missing
+  or wrong outer quote marks in the translation become “…”. In Texts, **Fix
+  speaker names, furigana & quotes** fixes lines translated before. The same page runs **Review translations**
   (suggestions you accept or dismiss in Texts) and **Discover terms** (draft
   glossary entries with example lines, for you to approve).
 - **Build**: exports the JSON and rebuilds a patch with optional wrapping and
