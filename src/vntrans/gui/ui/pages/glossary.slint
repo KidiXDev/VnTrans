@@ -190,6 +190,7 @@ export component GlossaryPage inherits Rectangle {
                                 text: App.rules-error != "" ? App.rules-error : "pre|post FIND => REPLACE · /regex/";
                                 color: App.rules-error != "" ? Theme.danger : Theme.faint;
                                 font-size: 11px;
+                                overflow: elide;
                             }
                         }
                         TextEdit {

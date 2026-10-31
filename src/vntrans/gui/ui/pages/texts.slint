@@ -773,8 +773,8 @@ export component TextsPage inherits Rectangle {
             }
 
             Card {
-                vertical-stretch: 2;
-                min-height: App.cur-suggestion != "" ? 270px : 190px;
+                vertical-stretch: 0;
+                height: App.cur-suggestion != "" ? 250px : 170px;
                 border-radius: 10px;
                 border-color: Theme.border;
                 UnitEditor {

@@ -908,7 +908,7 @@ class Window(UI.AppWindow):
         profile = self.profiles[index]
         ui = self.ui
         ui.profile_current = index
-        ui.pf_name, ui.pf_model, ui.pf_keys = profile.name, profile.model, ", ".join(profile.keys)
+        ui.pf_name, ui.pf_model, ui.pf_keys = profile.name, profile.model, "\n".join(profile.keys)
         ui.pf_provider = list(PROVIDERS).index(profile.provider)
         ui.pf_temperature, ui.pf_max_tokens, ui.pf_timeout = profile.temperature, profile.max_output_tokens, profile.timeout
         ui.pf_reasoning = REASONING.index(profile.reasoning)

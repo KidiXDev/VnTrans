@@ -64,7 +64,7 @@ export component PromptPage inherits Rectangle {
         padding: 16px;
         spacing: 12px;
         VerticalLayout {
-            width: 300px;
+            width: 260px;
             spacing: 12px;
             Card {
                 border-radius: 10px;
@@ -125,7 +125,7 @@ export component PromptPage inherits Rectangle {
         Card {
             horizontal-stretch: 1;
             preferred-width: 0;
-            min-width: 320px;
+            min-width: 280px;
             border-radius: 10px;
             border-color: Theme.border;
             VerticalLayout {
@@ -141,18 +141,22 @@ export component PromptPage inherits Rectangle {
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                     }
-                    if App.section-key == "style": AppButton {
-                        text: "Keep honorifics";
-                        clicked => { App.style-preset("Keep honorifics"); }
-                    }
-                    if App.section-key == "style": AppButton {
-                        text: "Localize";
-                        clicked => { App.style-preset("Localize"); }
-                    }
                     if App.section-editable: AppButton {
                         icon: @image-url("../icons/rotate-ccw.svg");
                         text: "Reset Default";
                         clicked => { App.section-reset(); }
+                    }
+                }
+                if App.section-key == "style": HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    AppButton {
+                        text: "Keep honorifics";
+                        clicked => { App.style-preset("Keep honorifics"); }
+                    }
+                    AppButton {
+                        text: "Localize";
+                        clicked => { App.style-preset("Localize"); }
                     }
                 }
                 if App.section-about != "": Rectangle {
@@ -185,7 +189,7 @@ export component PromptPage inherits Rectangle {
         Card {
             horizontal-stretch: 1;
             preferred-width: 0;
-            min-width: 320px;
+            min-width: 280px;
             border-radius: 10px;
             border-color: Theme.border;
             VerticalLayout {
@@ -224,6 +228,7 @@ export component PromptPage inherits Rectangle {
                             color: Theme.dim;
                             font-size: 11px;
                             vertical-alignment: center;
+                            overflow: elide;
                         }
                     }
                 }

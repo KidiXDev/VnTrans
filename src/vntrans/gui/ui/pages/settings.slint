@@ -1,4 +1,4 @@
-import { LineEdit, ComboBox, SpinBox, Slider, ListView, CheckBox } from "../widgets.slint";
+import { LineEdit, ComboBox, SpinBox, Slider, ListView, CheckBox, TextEdit } from "../widgets.slint";
 import { AboutSlint } from "std-widgets.slint";
 import { Theme, Card, AppButton, Field, Label, EmptyState, Badge } from "../theme.slint";
 import { App } from "../app.slint";
@@ -122,11 +122,13 @@ export component SettingsPage inherits Rectangle {
                         }
                     }
                     Field {
-                        label: "API KEYS (COMMA-SEPARATED FOR AUTOMATIC KEY ROTATION)";
-                        LineEdit {
-                            input-type: password;
+                        label: "API KEYS (ONE PER LINE, ROTATED AUTOMATICALLY)";
+                        TextEdit {
+                            height: 96px;
+                            vertical-stretch: 0;
+                            wrap: char-wrap;
                             text <=> App.pf-keys;
-                            placeholder-text: "Enter API key(s), comma-separated for rotation...";
+                            placeholder-text: "Enter one API key per line...";
                         }
                     }
                     Field {
@@ -189,7 +191,7 @@ export component SettingsPage inherits Rectangle {
                         }
                     }
                     CheckBox {
-                        text: "Show the model's thinking in the Translate page (when the model provides it)";
+                        text: "Show the model's thinking on the Translate page";
                         checked <=> App.pf-thinking;
                     }
                     Rectangle {
@@ -213,6 +215,7 @@ export component SettingsPage inherits Rectangle {
                                     font-size: 12px;
                                     font-weight: 500;
                                     vertical-alignment: center;
+                                    overflow: elide;
                                 }
                             }
                         }
@@ -260,11 +263,13 @@ export component SettingsPage inherits Rectangle {
                             text: "VnTrans — Lossless visual novel script extraction & translation reinsertion";
                             color: Theme.text;
                             font-weight: 600;
+                            wrap: word-wrap;
                         }
                         Text {
                             text: "Open Source under the MIT License · Built with Slint UI & Python";
                             color: Theme.dim;
                             font-size: 12px;
+                            wrap: word-wrap;
                         }
                     }
                     AboutSlint {
