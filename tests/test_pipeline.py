@@ -48,6 +48,13 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual((self.output / "test.ks").read_bytes(), b"; comment\r\nHello\n")
         self.assertEqual(before, {p: p.read_bytes() for p in self.json_dir.rglob("*.json")})
 
+    def test_accelerated_document_output_matches_utf8_json(self):
+        from vntrans.pipeline import encode_document
+        value = {"source": "こんにちは\u2028世界", "units": [{"id": "span/1", "translation": "⟦0⟧\nHi",
+                 "context": {"controls": ["[l]"], "literal": False, "scene": 1, "speaker": None}}]}
+        expected = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        self.assertEqual(encode_document(value), expected)
+
     def test_reordered_units_and_cli_api_parity(self):
         self.export()
         def edit(doc):
@@ -214,6 +221,33 @@ class PipelineTests(unittest.TestCase):
                 rebuild(self.source, translations=self.json_dir, output=self.output)
         self.assertFalse(self.output.exists())
         self.assertFalse(list(self.root.glob(".vntrans-*")))
+
+    def test_prefixed_source_names_keep_source_order(self):
+        (self.source / "test.ks.extra.ks").write_bytes(b"Another line\n")
+        self.export()
+        report = rebuild(self.source, translations=self.json_dir, output=self.output)
+        self.assertEqual(report.files, 3)
+        self.assertEqual((self.output / "test.ks.extra.ks").read_bytes(), b"Another line\n")
+
+    def test_read_ahead_closes_unused_file_handles(self):
+        paths = []
+        for index in range(8):
+            path = self.root / f"open-{index}.ks"
+            path.write_bytes(b"Hello\n")
+            paths.append(path)
+        from vntrans import pipeline
+        opened = []
+        original_open = pipeline._open
+        def remember(path):
+            stream = original_open(path)
+            opened.append(stream)
+            return stream
+        with patch("vntrans.pipeline._open", side_effect=remember):
+            iterator = pipeline.opened_files(paths)
+            next(iterator)
+            iterator.close()
+        self.assertTrue(opened)
+        self.assertTrue(all(stream.closed for stream in opened))
 
     def test_single_file_and_invalid_options(self):
         report = extract(self.source / "test.ks", output=self.json_dir)

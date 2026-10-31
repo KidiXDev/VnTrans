@@ -7,8 +7,9 @@ GARbro / external unpacker → original scripts → translation JSON → rebuilt
 ```
 
 V1 supports unencrypted PSB v3 Kirikiri scenarios (`.scn`, including `.ks.scn`)
-and plain Kirikiri/KAG `.ks` scripts. The core uses only the Python standard library
-and works through a CLI or a Python API. An optional desktop app adds project
+and plain Kirikiri/KAG `.ks` scripts. The core uses `orjson` for fast JSON output
+and works through a CLI or a Python API. JSON input uses the standard library's
+strict reader to reject duplicate keys and invalid constants. An optional desktop app adds project
 workspaces and LLM translation (Gemini and OpenRouter). Python 3.13 or newer is required.
 
 ## Quick start
@@ -305,6 +306,9 @@ Results include five-run median wall time, separately measured peak Python
 allocations, and 10 ms asyncio heartbeat gaps during worker-thread execution.
 Fixture setup and cleanup are excluded from each measurement. Use `--output
 results.json` to save results or `--profile profile` for separate cProfile files.
+Use `--case gui-filter`, `gui-duplicates`, `gui-stats`, or `gui-quality` to measure
+the text-state operations without a window. `--encoder stdlib` compares the
+standard-library output encoder with the default accelerated encoder.
 
 Tests include independent synthetic binary fixtures, multilingual dialogue and
 choices, shared strings, resources, long translations, encoding conversions,

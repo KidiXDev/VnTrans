@@ -8,6 +8,7 @@ import gc
 import json
 from pathlib import Path
 import statistics
+import shutil
 import tempfile
 import time
 import tracemalloc
@@ -31,7 +32,7 @@ def sources(folder, files, lines, format):
 
 
 @contextmanager
-def workload(args, case):
+def workload(args, case, source=None, prepared=None):
     with tempfile.TemporaryDirectory(prefix="vntrans-benchmark-") as temporary:
         root = Path(temporary)
         if case.startswith("gui-"):
@@ -62,19 +63,23 @@ def workload(args, case):
                 values = {u.id: u.source.replace("Original", "Translated") for u in script.units}
                 yield lambda: script.rebuild(values)
             return
-        source = root / "source"
-        sources(source, args.files, args.lines, args.format)
+        if source is None:
+            source = root / "source"
+            sources(source, args.files, args.lines, args.format)
         if case == "extract":
             yield lambda: pipeline.extract(source, output=root / "json")
             return
         if case == "create":
             yield lambda: workspace.create(source, root / "work", name="Benchmark", source_language="English")
             return
-        workspace.create(source, root / "work", name="Benchmark", source_language="English")
+        project = prepared or root / "work"
+        if prepared is None:
+            workspace.create(source, project, name="Benchmark", source_language="English")
         if case == "open":
-            yield lambda: load(root / "work")
+            yield lambda: load(project)
             return
-        ws = workspace.Workspace(root / "work")
+        ws = workspace.Workspace(project)
+        built = []
         try:
             if case == "validate":
                 yield lambda: pipeline.validate(ws.root / "source", translations=ws.root / "extracted")
@@ -83,9 +88,16 @@ def workload(args, case):
                 step = 100 if case == "build-sparse" else 1
                 values = {} if case == "build-unchanged" else {
                     (row.file, row.id): row.source.replace("Original", "Translated") for row in rows[::step]}
-                yield lambda: ws.build(values)
+                def build():
+                    target, report = ws.build(values)
+                    built.append(target)
+                    return target, report
+                yield build
         finally:
             ws.close()
+            for target in built:
+                assert target.resolve().is_relative_to(project.resolve() / "builds")
+                shutil.rmtree(target)
 
 
 async def heartbeat(action):
@@ -123,44 +135,58 @@ def main():
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--case", choices=cases, action="append")
     parser.add_argument("--profile", help="Write cProfile data instead of timing/memory/heartbeat checks")
-    parser.add_argument("--encoder", choices=("stdlib", "orjson"), default="stdlib")
+    parser.add_argument("--encoder", choices=("default", "stdlib", "orjson"), default="default")
     parser.add_argument("--output", type=Path, help="Optional JSON results file")
     args = parser.parse_args()
+    if args.encoder == "stdlib":
+        pipeline.encode_document = lambda doc: (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if args.encoder == "orjson":
         import orjson
         pipeline.encode_document = lambda doc: orjson.dumps(doc, option=orjson.OPT_INDENT_2 | orjson.OPT_APPEND_NEWLINE)
     if min(args.files, args.lines, args.large_lines, args.runs) < 1:
         parser.error("sizes and runs must be positive")
-    results = []
-    for case in args.case or cases:
-        if args.profile:
-            with workload(args, case) as action:
-                cProfile.runctx("action()", globals(), locals(), f"{args.profile}-{case}.prof")
-            continue
-        samples = []
-        for _ in range(args.runs):
-            with workload(args, case) as action:
-                gc.collect()
-                start = time.perf_counter()
-                action()
-                samples.append(time.perf_counter() - start)
-        with workload(args, case) as action:
-            gc.collect()
-            tracemalloc.start()
-            try:
-                action()
-                peak = tracemalloc.get_traced_memory()[1]
-            finally:
-                tracemalloc.stop()
-        with workload(args, case) as action:
-            p95, maximum = asyncio.run(heartbeat(action))
-        result = dict(case=case, median_s=statistics.median(samples), samples_s=samples,
-                      peak_python_mib=peak / 1024**2, heartbeat_p95_ms=p95, heartbeat_max_ms=maximum)
-        results.append(result)
-        print(json.dumps(result), flush=True)
+    with tempfile.TemporaryDirectory(prefix="vntrans-fixture-") as directory:
+        selected = args.case or cases
+        source = prepared = None
+        if any(not case.startswith(("ks-", "gui-")) for case in selected):
+            source = Path(directory) / "source"
+            sources(source, args.files, args.lines, args.format)
+        if any(case in ("open", "validate", "build-unchanged", "build-sparse", "build-full") for case in selected):
+            prepared = Path(directory) / "work"
+            workspace.create(source, prepared, name="Benchmark", source_language="English")
+        results = [measure(args, case, source, prepared) for case in selected]
     if args.output:
         args.output.write_text(json.dumps(dict(workload=vars(args) | {"output": str(args.output)},
                                                results=results), indent=2) + "\n", encoding="utf-8")
+
+
+def measure(args, case, source, prepared):
+    if args.profile:
+        with workload(args, case, source, prepared) as action:
+            cProfile.runctx("action()", globals(), locals(), f"{args.profile}-{case}.prof")
+        return dict(case=case, profile=f"{args.profile}-{case}.prof")
+    samples = []
+    for _ in range(args.runs):
+        with workload(args, case, source, prepared) as action:
+            gc.collect()
+            start = time.perf_counter()
+            action()
+            samples.append(time.perf_counter() - start)
+    with workload(args, case, source, prepared) as action:
+        gc.collect()
+        tracemalloc.start()
+        try:
+            action()
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+    with workload(args, case, source, prepared) as action:
+        gc.collect()
+        p95, maximum = asyncio.run(heartbeat(action))
+    result = dict(case=case, median_s=statistics.median(samples), samples_s=samples,
+                  peak_python_mib=peak / 1024**2, heartbeat_p95_ms=p95, heartbeat_max_ms=maximum)
+    print(json.dumps(result), flush=True)
+    return result
 
 
 if __name__ == "__main__":

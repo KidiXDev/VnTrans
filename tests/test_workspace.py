@@ -215,6 +215,15 @@ class WorkspaceTests(unittest.TestCase):
         self.assertFalse(list(self.root.glob(".vntrans-*")))
         self.create()
 
+    def test_create_does_not_replace_a_destination_created_during_processing(self):
+        def collide(phase, completed, total, filename):
+            if phase == "Indexing" and total and completed == total:
+                self.ws_root.mkdir()
+        with self.assertRaisesRegex(VnTransError, "destination appeared"):
+            workspace.create(self.source, self.ws_root, name="Test", progress=collide)
+        self.assertTrue(self.ws_root.is_dir())
+        self.assertEqual(list(self.ws_root.iterdir()), [])
+
     def test_build_keeps_complete_directory_private_until_success(self):
         ws = self.create()
 

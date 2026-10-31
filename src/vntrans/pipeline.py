@@ -2,7 +2,10 @@
 
 from dataclasses import dataclass, field
 from collections.abc import Callable
-from contextlib import contextmanager, nullcontext
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, contextmanager, nullcontext
+from itertools import islice
 import hashlib
 import json
 import os
@@ -10,6 +13,8 @@ from pathlib import Path
 import shutil
 import tempfile
 import warnings
+
+import orjson
 
 from .engines import get_engine
 from .model import VnTransError
@@ -51,6 +56,37 @@ def disjoint(*paths):
                 raise VnTransError(f"input, translations, and output must not overlap: {left}, {right}")
 
 
+def _open(path):
+    safe_path(path)
+    return path.open("rb") if path.is_file() else None
+
+
+def opened_files(paths):
+    """Overlap slow file opens, retaining at most four handles and reading payloads on demand."""
+    with ThreadPoolExecutor(max_workers=min(4, max(1, len(paths)))) as pool:
+        remaining = iter(paths)
+        pending = deque((path, pool.submit(_open, path)) for path in islice(remaining, 4))
+        try:
+            while pending:
+                path, future = pending.popleft()
+                stream = future.result()
+                following = next(remaining, None)
+                if following is not None:
+                    pending.append((following, pool.submit(_open, following)))
+                with stream if stream is not None else nullcontext():
+                    yield path, stream
+        finally:
+            for _, future in pending:
+                if future.cancel():
+                    continue
+                try:
+                    stream = future.result()
+                    if stream is not None:
+                        stream.close()
+                except (OSError, VnTransError):
+                    pass
+
+
 def source_files(path: Path, engine, progress=_no_progress):
     if not path.exists():
         raise VnTransError(f"input does not exist: {path}")
@@ -59,19 +95,18 @@ def source_files(path: Path, engine, progress=_no_progress):
     for item in candidates:
         safe_path(item)
     found = False
-    for index, item in enumerate(candidates):
-        progress("Reading scripts", index, len(candidates), str(item))
-        safe_path(item)
-        if not item.is_file():
-            continue
-        with item.open("rb") as stream:
+    with closing(opened_files(candidates)) as opened:
+        for index, (item, stream) in enumerate(opened):
+            progress("Reading scripts", index, len(candidates), str(item))
+            if stream is None:
+                continue
             header = stream.read(8)
             if not engine.probe(item.name, header):
                 continue
             data = header + stream.read()
-        relative = Path(item.name) if path.is_file() else item.relative_to(path)
-        found = True
-        yield relative, data
+            relative = Path(item.name) if path.is_file() else item.relative_to(path)
+            found = True
+            yield relative, data
     progress("Reading scripts", len(candidates), len(candidates), "")
     if not found:
         raise VnTransError("no supported scripts found in input")
@@ -97,9 +132,10 @@ def invalid_constant(value):
     raise VnTransError(f"invalid JSON constant: {value}")
 
 
-def read_document(path):
+def read_document(path, stream=None):
     try:
-        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=strict_object,
+        text = path.read_text(encoding="utf-8") if stream is None else stream.read().decode("utf-8")
+        value = json.loads(text, object_pairs_hook=strict_object,
                            parse_constant=invalid_constant)
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise VnTransError(f"invalid translation JSON: {exc}") from exc
@@ -144,13 +180,17 @@ def translations_for(actual, expected):
 
 @contextmanager
 def staging(output: Path, *, empty=False):
-    if not (empty and not output.is_symlink() and output.is_dir() and not any(output.iterdir())):
+    replace_empty = empty and not output.is_symlink() and output.is_dir() and not any(output.iterdir())
+    identity = output.stat() if replace_empty else None
+    if not replace_empty:
         check_destination(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".vntrans-", dir=output.parent))
     try:
         yield temporary
-        if empty and not output.is_symlink() and output.is_dir():
+        if replace_empty and not output.is_symlink() and output.is_dir():
+            if not os.path.samestat(identity, output.stat()):
+                raise VnTransError(f"destination appeared during processing: {output}")
             output.rmdir()  # Only an empty, user-selected workspace can be removed.
         if output.exists() or output.is_symlink():
             raise VnTransError(f"destination appeared during processing: {output}")
@@ -167,7 +207,7 @@ def write_file(folder, relative, data):
 
 
 def encode_document(doc):
-    return (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    return orjson.dumps(doc, option=orjson.OPT_INDENT_2 | orjson.OPT_APPEND_NEWLINE)
 
 
 def publish(output: Path, files, progress=_no_progress):
@@ -219,32 +259,34 @@ def translation_sources(source, json_dir, progress=_no_progress):
     progress("Scanning translations", 0, 0, str(json_dir))
     for item in json_dir.rglob("*"):
         safe_path(item)
-    docs = sorted(json_dir.rglob("*.json"))
+    docs = sorted(json_dir.rglob("*.json"), key=lambda path: path.with_suffix(""))
     if not docs:
         raise VnTransError("no translation JSON files found")
-    first = read_document(docs[0])
-    engine = first.get("engine")
-    if not isinstance(engine, str):
-        raise VnTransError("translation batch must identify one engine")
-    handler = get_engine(engine)
-    remaining = {p.relative_to(json_dir): p for p in docs}
-    for index, (relative, data) in enumerate(source_files(source, handler, progress)):
-        path = remaining.pop(Path(str(relative) + ".json"), None)
-        if path is None:
-            raise VnTransError("translation files do not match source scripts; missing or extra JSON")
-        progress("Loading JSON", index, len(docs), str(path.relative_to(json_dir)))
-        try:
-            doc = first if path == docs[0] else read_document(path)
-        except VnTransError as exc:
-            raise VnTransError(f"{relative}: {exc}") from exc
-        if path == docs[0]:
-            first = None
-        if doc.get("engine") != engine:
+    with closing(opened_files(docs)) as opened:
+        first_path, stream = next(opened)
+        first = read_document(first_path, stream)
+        engine = first.get("engine")
+        if not isinstance(engine, str):
             raise VnTransError("translation batch must identify one engine")
-        progress("Loading JSON", index + 1, len(docs), "")
-        yield relative, data, doc, engine, len(docs)
-    if remaining:
-        raise VnTransError("translation files do not match source scripts; missing or extra JSON")
+        handler = get_engine(engine)
+        with closing(source_files(source, handler, progress)) as sources:
+            for index, (relative, data) in enumerate(sources):
+                item = (first_path, None) if index == 0 else next(opened, None)
+                if item is None or item[0].relative_to(json_dir) != Path(str(relative) + ".json"):
+                    raise VnTransError("translation files do not match source scripts; missing or extra JSON")
+                path, stream = item
+                progress("Loading JSON", index, len(docs), str(path.relative_to(json_dir)))
+                try:
+                    doc = first if index == 0 else read_document(path, stream)
+                except VnTransError as exc:
+                    raise VnTransError(f"{relative}: {exc}") from exc
+                first = None
+                if doc.get("engine") != engine:
+                    raise VnTransError("translation batch must identify one engine")
+                progress("Loading JSON", index + 1, len(docs), "")
+                yield relative, data, doc, engine, len(docs)
+        if next(opened, None) is not None:
+            raise VnTransError("translation files do not match source scripts; missing or extra JSON")
 
 
 def rebuild_file(relative, data, doc, engine, report, *, wrap_columns=None, output_encoding=None):
