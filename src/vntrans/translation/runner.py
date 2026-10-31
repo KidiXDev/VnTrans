@@ -8,6 +8,7 @@ import asyncio
 from collections import deque
 from dataclasses import dataclass, field
 import json
+from itertools import islice
 import re
 import time
 
@@ -145,7 +146,7 @@ class Run:
 
     def __init__(self, ws, rows, indices, *, profile, provider, sections, terms, settings, task="translate",
                  rules=None, on_event=lambda kind, text: None, on_commit=lambda index: None,
-                 on_batch=lambda batch: None, parallel=()):
+                 on_batch=lambda batch: None, parallel=(), offload=None):
         self.workers = []
         for each, service in [(profile, provider), *parallel]:
             keys = each.api_keys()
@@ -165,6 +166,7 @@ class Run:
         self.planned = {index: (rows[index].status, rows[index].translation) for index in indices}
         self.stats = Stats(total=len(indices))
         self.on_event, self.on_commit, self.on_batch = on_event, on_commit, on_batch
+        self.offload = offload
         self.counter = 0
         self.stopping = False
         self.stopped = asyncio.Event()
@@ -374,8 +376,8 @@ class Run:
             if not isinstance(source, str) or not isinstance(target, str):
                 continue
             source = source.strip()
-            examples = [row.source for row in self.rows
-                        if source and source in prompts.shown(row, self.ws.formats)][:3]
+            examples = list(islice((row.source for row in self.rows
+                                    if source in prompts.shown(row, self.ws.formats)), 3)) if source else []
             if not source or source in known or not examples:
                 if source:
                     records.append(("", source, target.strip(), "skipped",
@@ -533,8 +535,8 @@ class Run:
             self.stats.active += 1
             started = time.monotonic()
             try:
-                reply = await asyncio.to_thread(worker.provider.complete, profile, key, prompt.system, prompt.user,
-                                                schema)
+                reply = await (self.offload or asyncio.to_thread)(
+                    worker.provider.complete, profile, key, prompt.system, prompt.user, schema)
             except ProviderError as exc:
                 await self.writes_ready.wait()
                 self.ws.record_attempt(profile.name, profile.model, prompt.version, len(prompt.rows),

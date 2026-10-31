@@ -122,7 +122,11 @@ def load(root):
     """Read and prepare a workspace entirely on the worker connection."""
     ws = workspace.Workspace(root)
     try:
-        rows = ws.rows()
+        rows = []
+        for index, values in enumerate(ws.db.execute(workspace.ROWS)):
+            rows.append(workspace.Row(*values))
+            if index % 250 == 249:
+                time.sleep(.001)
         undo = []
         if not ws.manifest.get("prefiltered"):
             skipped = ws.untranslatable(rows)

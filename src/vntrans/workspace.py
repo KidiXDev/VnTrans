@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import time
 
 from . import pipeline
 from .engines import get_engine
@@ -85,17 +86,22 @@ def write_json(path: Path, value):
 def store_rows(root, entries, *, check=True, dismiss=False):
     """Commit detached GUI edits on a private connection; publish their row values only after success."""
     ws = Workspace(root)
+    def cooperative():
+        for index, row in enumerate(entries):
+            yield row
+            if index % 250 == 249:
+                time.sleep(.001)  # Rapid SQLite calls can otherwise starve the Slint thread of the GIL.
     try:
         if check:
-            for row in entries:
+            for row in cooperative():
                 if row.translation is not None:
                     row.translation = ws.check(row, row.translation)
         with ws.db:
             ws.db.executemany("UPDATE units SET translation = ?, status = ?, error = ? WHERE file = ? AND id = ?",
-                              ((r.translation, r.status, r.error, r.file, r.id) for r in entries))
+                              ((r.translation, r.status, r.error, r.file, r.id) for r in cooperative()))
             if dismiss:
                 ws.db.executemany("DELETE FROM suggestions WHERE file = ? AND id = ?",
-                                  ((r.file, r.id) for r in entries))
+                                  ((r.file, r.id) for r in cooperative()))
         return entries
     finally:
         ws.close()

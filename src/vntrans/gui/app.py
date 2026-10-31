@@ -275,7 +275,7 @@ class Window(UI.AppWindow):
     @slint.callback(global_name="App")
     async def browse(self, target):
         titles = dict(open="Open workspace", original="Game scripts", workspace="Workspace folder")
-        path = await asyncio.to_thread(pick, titles[target])
+        path = await jobs.thread(pick, titles[target])
         if not path:
             return
         if target == "open":
@@ -343,7 +343,7 @@ class Window(UI.AppWindow):
             try:
                 ws = workspace.Workspace(path)
                 try:
-                    data = await asyncio.to_thread(load, ws.root)
+                    data = await jobs.thread(load, ws.root)
                 except BaseException:
                     ws.close()
                     raise
@@ -767,7 +767,7 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     async def term_import(self):
-        path = await asyncio.to_thread(pick, "Import glossary", False)
+        path = await jobs.thread(pick, "Import glossary", False)
         if not path:
             return
         try:
@@ -797,7 +797,7 @@ class Window(UI.AppWindow):
         folder = self.ws.root / "exports" / f"linguagacha-{datetime.now():%Y%m%d-%H%M%S}"
         with self.overlay("Exporting LinguaGacha JSON…"):
             try:
-                count = await asyncio.to_thread(self.ws.export_messages, folder, list(self.rows))
+                count = await jobs.thread(self.ws.export_messages, folder, list(self.rows))
             except OSError as exc:
                 self.fail(exc)
                 return
@@ -805,12 +805,12 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     async def lg_import(self):
-        path = await asyncio.to_thread(pick, "LinguaGacha output folder")
+        path = await jobs.thread(pick, "LinguaGacha output folder")
         if not path or self.ws is None or self.run:
             return
         with self.overlay("Importing LinguaGacha translations…"):
             try:
-                pairs, skipped, ignored = await asyncio.to_thread(
+                pairs, skipped, ignored = await jobs.thread(
                     self.ws.import_messages, Path(path).expanduser(), self.rows)
             except OSError as exc:
                 self.fail(exc)
@@ -1005,7 +1005,7 @@ class Window(UI.AppWindow):
         profile = self.form_profile()
         self.ui.pf_working = "fetch"
         try:
-            models = await asyncio.to_thread(PROVIDERS[profile.provider].models, profile, profile.api_keys()[0])
+            models = await jobs.thread(PROVIDERS[profile.provider].models, profile, profile.api_keys()[0])
         except (ProviderError, IndexError) as exc:
             self.profile_status(str(exc) or "No API key", error=True)
             return
@@ -1023,7 +1023,7 @@ class Window(UI.AppWindow):
         self.profile_status("")
         started = time.monotonic()
         try:
-            reply = await asyncio.to_thread(PROVIDERS[profile.provider].complete, profile, profile.api_keys()[0],
+            reply = await jobs.thread(PROVIDERS[profile.provider].complete, profile, profile.api_keys()[0],
                                             prompts.CONTRACT, user)
             text = runner.decode(reply.text)[0].get(1, "")
         except (ProviderError, ValueError, IndexError) as exc:
@@ -1204,7 +1204,7 @@ class Window(UI.AppWindow):
             self.run = runner.Run(self.ws, self.rows, indices, profile=profile, provider=PROVIDERS[profile.provider],
                                   sections=self.sections, terms=self.terms, settings=self.run_settings(), task=task,
                                   rules=rules, on_event=self.log_event, on_commit=self.row_committed,
-                                  on_batch=self.batch_done,
+                                  on_batch=self.batch_done, offload=jobs.thread,
                                   parallel=[(other, PROVIDERS[other.provider]) for other in self.helpers()])
         except (VnTransError, IndexError) as exc:
             self.log_event("error", str(exc) or "Choose a profile")
@@ -1405,7 +1405,7 @@ class Window(UI.AppWindow):
             return workspace.store_rows(ws.root, prepare(), check=check, dismiss=dismiss)
         try:
             with self.overlay("Saving changes…"):
-                entries = await asyncio.to_thread(store)
+                entries = await jobs.thread(store)
                 if ws is not self.ws:
                     return None
                 undo = []
@@ -1418,13 +1418,15 @@ class Window(UI.AppWindow):
                         if dismiss:
                             self.suggestions.pop((row.file, row.id), None)
                         texts.changed(index, entry)
+                        position = self.positions.get(index)
+                        if position is not None:
+                            self.model.notify_row_changed(position)
                     await asyncio.sleep(.001)
                 if label:
                     self.undo_entry = label, undo
                     self.ui.can_undo, self.ui.undo_text = True, f"Undo {label}"
                 else:
                     self.forget_undo()
-                self.model.reset(self.rows, self.model.indices)
                 self.update_stats()
                 self.refresh_counts()
                 self.recheck()

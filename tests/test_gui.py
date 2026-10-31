@@ -15,6 +15,8 @@ from vntrans.gui.geometry import normalize, place
 from vntrans.workspace import Row
 from vntrans.gui.texts import TextState
 from vntrans.gui.jobs import Cancelled, Latest, Progress, build, run
+from vntrans.gui import jobs
+import time
 from contextlib import nullcontext
 from dataclasses import replace
 from vntrans import workspace
@@ -226,6 +228,13 @@ class TextStateTests(unittest.TestCase):
 
 
 class JobTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_handoff_does_not_call_the_native_threadsafe_bridge(self):
+        loop = asyncio.get_running_loop()
+        with patch.object(loop, "call_soon_threadsafe", side_effect=AssertionError("off-thread UI callback")):
+            result = await jobs.thread(lambda: (time.sleep(.02), 42)[1])
+        self.assertEqual(result, 42)
+        with self.assertRaisesRegex(ValueError, "worker error"):
+            await jobs.thread(lambda: (_ for _ in ()).throw(ValueError("worker error")))
     async def test_spawned_build_and_cooperative_cancellation(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -319,6 +328,7 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
                 ready = asyncio.Event()
                 ready.set()
                 window = SimpleNamespace(ws=ws, texts=texts, rows=rows, index_of=texts.index_of, editing=False,
+                                         positions={0: 0},
                                          run=SimpleNamespace(writes_ready=ready), ui=SimpleNamespace(current=0),
                                          overlay=lambda text: nullcontext(), model=Mock(indices=[0]),
                                          update_stats=Mock(), refresh_counts=Mock(), recheck=Mock(),

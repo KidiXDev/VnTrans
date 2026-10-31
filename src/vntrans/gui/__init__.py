@@ -8,6 +8,7 @@ def main(argv=None):
     import slint
 
     from .app import Window
+    from . import jobs
 
     argv = sys.argv[1:] if argv is None else argv
     slint.set_xdg_app_id("vntrans")
@@ -28,6 +29,7 @@ def main(argv=None):
         window.gc_timer.stop()
         window.save_geometry()
     finally:
+        jobs.shutdown()
         gc.collect()
         if automatic_gc:
             gc.enable()

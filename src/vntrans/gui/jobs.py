@@ -2,11 +2,32 @@
 
 import asyncio
 import multiprocessing
+from concurrent.futures import ThreadPoolExecutor
 from queue import Empty, Full
 import threading
 import time
 
 from .. import workspace
+
+_threads = None
+
+
+async def thread(function, *args, **options):
+    """Poll completion on the UI thread; Slint's native thread-safe callbacks can drop UI objects off-thread."""
+    global _threads
+    if _threads is None:
+        _threads = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vntrans")
+    future = _threads.submit(function, *args, **options)
+    while not future.done():
+        await asyncio.sleep(.005)
+    return future.result()
+
+
+def shutdown():
+    global _threads
+    if _threads is not None:
+        _threads.shutdown(wait=True, cancel_futures=True)
+        _threads = None
 
 
 def build(root, **options):
@@ -67,7 +88,7 @@ async def run(function, *args, cancel, progress, **options):
                     progress(*value)
             if receive.poll():
                 try:
-                    ok, value, last = await asyncio.to_thread(receive.recv)
+                    ok, value, last = await thread(receive.recv)
                 except EOFError as exc:
                     raise OSError("background worker exited without a result") from exc
                 if last is not None and not cancel.is_set():
@@ -81,7 +102,7 @@ async def run(function, *args, cancel, progress, **options):
     finally:
         stop.set()
         receive.close()
-        await asyncio.to_thread(process.join)
+        await thread(process.join)
         process.close()
         updates.close()
         updates.join_thread()
@@ -114,7 +135,7 @@ class Latest:
             serial, work, apply = self.pending
             self.pending = None
             try:
-                result = await asyncio.to_thread(work)
+                result = await thread(work)
                 if serial == self.serial:
                     apply(result)
             except Exception as exc:
