@@ -167,6 +167,7 @@ class Run:
         self.on_event, self.on_commit, self.on_batch = on_event, on_commit, on_batch
         self.counter = 0
         self.stopping = False
+        self.stopped = asyncio.Event()
         self.error = None
         concurrency = max(1, self.settings["concurrency"])
         self.slots = concurrency * len(self.workers)
@@ -178,6 +179,29 @@ class Run:
 
     def stop(self):
         self.stopping = True
+        self.stopped.set()
+        self.pool.put_nowait(None)
+
+    async def pause(self, delay):
+        try:
+            await asyncio.wait_for(self.stopped.wait(), delay)
+        except TimeoutError:
+            pass
+
+    async def gather(self, *jobs):
+        """Stop queued work on failure, and settle in-flight replies before returning."""
+        async def guarded(job):
+            try:
+                await job
+            except BaseException:
+                self.stop()
+                raise
+
+        tasks = [asyncio.create_task(guarded(job)) for job in jobs]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def acquire(self) -> Worker | None:
         """A free slot of any working profile, or None once every profile has failed."""
@@ -200,8 +224,7 @@ class Run:
         worker.error = message
         if all(other.error for other in self.workers):
             self.error = message
-            self.stopping = True
-            self.pool.put_nowait(None)
+            self.stop()
         else:
             self.on_event("error", f"{worker.profile.name} left the run: {message}")
 
@@ -252,7 +275,7 @@ class Run:
         elif self.task == "review":
             batches = prompts.plan(self.rows, self.indices, lines=size, tokens=tokens)
             self.on_event("info", f"Reviewing {self.stats.total} units in {len(batches)} batches")
-            await asyncio.gather(*(self.side(batch, self.review) for batch in batches))
+            await self.gather(*(self.side(batch, self.review) for batch in batches))
         else:
             unique, seen = [], set()
             for index in self.indices:
@@ -263,7 +286,7 @@ class Run:
             self.stats.total = len(unique)
             batches = prompts.plan(self.rows, unique, lines=size * 5, tokens=tokens * 5)
             self.on_event("info", f"Scanning {len(unique)} unique lines in {len(batches)} batches")
-            await asyncio.gather(*(self.side(batch, self.discover) for batch in batches))
+            await self.gather(*(self.side(batch, self.discover) for batch in batches))
         found = dict(translate="", review=f", {self.found} suggestions", discover=f", {self.found} new terms")[self.task]
         if self.error:
             self.on_event("error", f"Stopped: {self.error}")
@@ -294,6 +317,8 @@ class Run:
             reply = None
             try:
                 reply = await self.request(worker, prompt, schema)
+                if reply is None:
+                    return
                 records = accept(batch, reply)
                 self.stats.done += len(batch)
                 self.report(worker, prompt, batch, records, reply=reply)
@@ -402,8 +427,8 @@ class Run:
         batches = prompts.plan(self.rows, lines, lines=size, tokens=self.settings["batch_tokens"])
         self.on_event("info", f"{self.stats.total} units in {len(name_batches) + len(batches)} batches"
                               + (f", {len(exact)} filled from glossary or identical lines" if exact else ""))
-        await asyncio.gather(*(self.handle(batch, context=False) for batch in name_batches),
-                             *(self.handle(batch) for batch in batches))
+        await self.gather(*(self.handle(batch, context=False) for batch in name_batches),
+                          *(self.handle(batch) for batch in batches))
 
     async def handle(self, batch, depth=0, context=True):
         batch = [index for index in batch if self.pending(index)]
@@ -424,6 +449,8 @@ class Run:
                                    formats=self.ws.formats)
             try:
                 reply = await self.request(worker, prompt, THINKING_SCHEMA if prompt.thinking else SCHEMA)
+                if reply is None:
+                    return
             except ProviderError as exc:
                 if exc.kind in ("auth", "request"):
                     self.disable(worker, str(exc))
@@ -460,7 +487,7 @@ class Run:
             self.give_up(failed)
             return
         self.on_event("retry", f"Retrying {len(rest)} unit(s): {failed[rest[0]]}")
-        await asyncio.gather(*(self.handle(batch, d, context) for batch, d, context in jobs))
+        await self.gather(*(self.handle(batch, d, context) for batch, d, context in jobs))
 
     def accept(self, batch, reply) -> tuple[dict[int, str], dict[int, str]]:
         """Commit valid candidates; returns (failure reason by index, candidate text by index)."""
@@ -495,7 +522,11 @@ class Run:
         profile = worker.profile
         for attempt in range(TRANSPORT_TRIES):
             key = await self.key(worker)
+            if key is None:
+                return
             await self.pace(worker)
+            if self.stopping or worker.error is not None:
+                return
             self.stats.requests += 1
             self.stats.active += 1
             started = time.monotonic()
@@ -515,7 +546,7 @@ class Run:
                 else:
                     self.stats.cooling += 1
                     try:
-                        await asyncio.sleep(delay)
+                        await self.pause(delay)
                     finally:
                         self.stats.cooling -= 1
                 continue
@@ -531,9 +562,9 @@ class Run:
                                    "ok", None, reply.tokens_in, reply.tokens_out)
             return reply
 
-    async def key(self, worker) -> str:
+    async def key(self, worker) -> str | None:
         """Round-robin over the worker's keys, skipping any cooling down after a rate limit."""
-        while True:
+        while not self.stopping and worker.error is None:
             now = time.monotonic()
             for _ in worker.keys:
                 key = worker.keys[worker.turn % len(worker.keys)]
@@ -542,7 +573,7 @@ class Run:
                     return key
             self.stats.cooling += 1
             try:
-                await asyncio.sleep(max(0.05, min(worker.cooldown.values()) - now))
+                await self.pause(max(0.05, min(worker.cooldown.values()) - now))
             finally:
                 self.stats.cooling -= 1
 
@@ -553,4 +584,4 @@ class Run:
             start = max(now, worker.next_start)
             worker.next_start = start + 60 / self.settings["rpm"]
             if start > now:
-                await asyncio.sleep(start - now)
+                await self.pause(start - now)

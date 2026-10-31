@@ -416,6 +416,105 @@ class RunnerTests(WorkspaceCase):
                        sections=[], terms=[], settings={})
 
 
+class RunLifecycleTests(WorkspaceCase):
+    script = "*one\nfirst\n*two\nsecond\n*three\nthird\n"
+
+    def make_run(self, fake, indices=None, **kwargs):
+        indices = list(range(len(self.rows))) if indices is None else indices
+        return runner.Run(self.ws, self.rows, indices,
+                          profile=Profile("p", model="m", keys=["k"]), provider=fake,
+                          sections=prompts.chain({}), terms=[], settings=dict(concurrency=2, batch_lines=1),
+                          **kwargs)
+
+    def test_failure_waits_for_inflight_work_and_stops_queued_batches(self):
+        async def check(task):
+            second_started, failed, finish_second = (asyncio.Event() for _ in range(3))
+            calls = []
+
+            async def complete(function, profile, key, system, user, schema):
+                source = records(user)[0]["text"] if task != "discover" else user.splitlines()[-1][2:]
+                calls.append(source)
+                if source == "first":
+                    await second_started.wait()
+                    failed.set()
+                    raise RuntimeError("bad response")
+                if source == "second":
+                    second_started.set()
+                    await finish_second.wait()
+                return Reply(json.dumps(dict(translations=[dict(i=1, t="saved")], terms=[])), "stop")
+
+            run = self.make_run(FakeProvider(), task=task)
+            with patch("vntrans.translation.runner.asyncio.to_thread", complete):
+                job = asyncio.create_task(run.run())
+                await failed.wait()
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                returned_early = job.done()
+                finish_second.set()
+                with self.assertRaisesRegex(RuntimeError, "bad response"):
+                    await asyncio.wait_for(job, 1)
+                await asyncio.sleep(0)
+            self.assertFalse(returned_early)
+            self.assertEqual(calls, ["first", "second"])
+            self.assertEqual(run.stats.requests, 2)
+            self.assertEqual((run.stats.active, run.stats.queued), (0, 0))
+            if task == "translate":
+                self.assertEqual(self.ws.rows()[1].translation, "saved")
+
+        for task in ("translate", "review", "discover"):
+            with self.subTest(task=task):
+                self.ws.save_many([(row, "old" if task == "review" else None) for row in self.rows])
+                asyncio.run(asyncio.wait_for(check(task), 2))
+
+    def test_stop_interrupts_rate_and_network_retry_waits(self):
+        async def check(kind, task):
+            fake = FakeProvider(errors=[ProviderError(kind, "waiting", retry_after=60)])
+            run = self.make_run(fake, indices=[0], task=task)
+            loop = asyncio.get_running_loop()
+            run.on_event = lambda kind, text: loop.call_soon(run.stop) if kind == "retry" else None
+            await asyncio.wait_for(run.run(), 1)
+            self.assertEqual(len(fake.calls), 1)
+            self.assertEqual((run.stats.active, run.stats.cooling), (0, 0))
+            self.assertIsNone(self.rows[0].translation)
+
+        for task in ("translate", "review", "discover"):
+            for kind in ("rate", "transient"):
+                with self.subTest(task=task, kind=kind):
+                    asyncio.run(check(kind, task))
+
+    def test_stop_interrupts_request_pacing(self):
+        async def check():
+            fake = FakeProvider()
+            run = self.make_run(fake, indices=[0])
+            run.settings["rpm"] = 1
+            worker = run.workers[0]
+            initial = worker.next_start = time.monotonic() + 60
+
+            async def stop():
+                while worker.next_start == initial:
+                    await asyncio.sleep(0)
+                run.stop()
+
+            await asyncio.wait_for(asyncio.gather(run.run(), stop()), 1)
+            self.assertEqual(fake.calls, [])
+            self.assertEqual(run.stats.requests, 0)
+
+        asyncio.run(check())
+
+    def test_stop_keeps_reply_already_inflight(self):
+        fake = FakeProvider()
+        run = self.make_run(fake)
+
+        async def complete(function, *args):
+            run.stop()
+            return function(*args)
+
+        with patch("vntrans.translation.runner.asyncio.to_thread", complete):
+            asyncio.run(run.run())
+        self.assertEqual(len(fake.calls), 1)
+        self.assertEqual((run.stats.done, self.ws.rows()[0].translation), (1, "T:first"))
+
+
 class DuplicateTests(WorkspaceCase):
     script = SCRIPT + "*third|Third\n[name name=Bob]Fine.\n"
     run_with = RunnerTests.run_with
