@@ -971,6 +971,7 @@ class Window(UI.AppWindow):
         finally:
             self.ui.pf_working = False
         self.ui.pf_models = slint.ListModel(models)
+        self.ui.pf_model_index = models.index(self.ui.pf_model) if self.ui.pf_model in models else -1
         self.profile_status(f"{len(models)} models")
 
     @slint.callback(global_name="App")

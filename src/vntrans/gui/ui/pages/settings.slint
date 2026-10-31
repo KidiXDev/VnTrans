@@ -139,10 +139,13 @@ export component SettingsPage inherits Rectangle {
                                 horizontal-stretch: 1;
                                 text <=> App.pf-model;
                                 placeholder-text: "Enter model identifier...";
+                                edited => { App.pf-model-index = -1; }
                             }
                             if App.pf-models.length > 0: ComboBox {
                                 width: 260px;
                                 model: App.pf-models;
+                                current-index <=> App.pf-model-index;
+                                placeholder: "Choose a model";
                                 selected(value) => { App.pf-model = value; }
                             }
                             AppButton {

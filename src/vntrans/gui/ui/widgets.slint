@@ -223,6 +223,7 @@ export component ComboBox inherits Rectangle {
     in property <[string]> model;
     in-out property <int> current-index: 0;
     out property <string> current-value: root.model[root.current-index];
+    in property <string> placeholder;
     in property <bool> enabled: true;
     callback selected(string);
     height: 36px;
@@ -242,9 +243,10 @@ export component ComboBox inherits Rectangle {
         padding-right: 10px;
         spacing: 6px;
         Text {
+            property <bool> chosen: root.current-index >= 0 && root.current-index < root.model.length;
             horizontal-stretch: 1;
-            text: root.current-value;
-            color: Theme.text;
+            text: self.chosen ? root.current-value : root.placeholder;
+            color: self.chosen ? Theme.text : Theme.faint;
             font-size: 13px;
             vertical-alignment: center;
             overflow: elide;
@@ -325,11 +327,11 @@ export component ComboBox inherits Rectangle {
                     item := TouchArea {
                         mouse-cursor: pointer;
                         clicked => {
-                            popup.close();
                             if (i != root.current-index) {
                                 root.current-index = i;
                                 root.selected(value);
                             }
+                            popup.close();
                         }
                     }
                 }
