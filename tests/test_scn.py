@@ -2,6 +2,8 @@ from pathlib import Path
 import struct
 import unittest
 import zlib
+import gc
+import weakref
 from unittest.mock import patch
 
 from fixtures import make_psb, scenario
@@ -20,6 +22,20 @@ def plain(node):
 
 
 class ScnTests(unittest.TestCase):
+    def test_serialization_does_not_retain_the_binary_model_in_a_cycle(self):
+        automatic = gc.isenabled()
+        gc.disable()
+        try:
+            psb = PSB(scenario())
+            reference = weakref.ref(psb)
+            result = psb.build()
+            del psb
+            self.assertIsNone(reference())
+            self.assertEqual(plain(PSB(result).root), plain(PSB(scenario()).root))
+        finally:
+            if automatic:
+                gc.enable()
+
     def test_noop_is_identical(self):
         data = scenario()
         script = ScnScript(data, 0)
