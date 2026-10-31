@@ -2,6 +2,7 @@ from pathlib import Path
 import struct
 import unittest
 import zlib
+from unittest.mock import patch
 
 from fixtures import make_psb, scenario
 from vntrans import VnTransError
@@ -24,6 +25,9 @@ class ScnTests(unittest.TestCase):
         script = ScnScript(data, 0)
         self.assertEqual(script.rebuild({}), data)
         self.assertEqual(script.rebuild({u.id: u.source for u in script.units}), data)
+        with patch("vntrans.engines.kirikiri.scn.PSB") as parse:
+            self.assertEqual(script.rebuild({}), data)
+            parse.assert_not_called()
 
     def test_occurrence_isolation_and_resource_preservation(self):
         original = scenario(many_strings=True)

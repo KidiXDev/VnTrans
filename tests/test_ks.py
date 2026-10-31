@@ -8,6 +8,18 @@ from vntrans.text import make_unit, render, width
 
 
 class KsTests(unittest.TestCase):
+    def test_many_replacements_preserve_spans_and_line_boundaries(self):
+        original = '; comment\r\n' + ('  Hello [[world[p]\rGood morning[l]\n' * 2000)
+        script = self.parse(original)
+        translations = {u.id: u.source.replace("Hello", "Hi").replace("morning", "evening")
+                        for u in script.units}
+        expected = original.replace("Hello", "Hi").replace("morning", "evening")
+        self.assertEqual(script.rebuild(translations), codecs.BOM_UTF8 + expected.encode())
+        self.assertEqual(script.rebuild({}), script.data)
+        for unit in (script.units[0], script.units[-1]):
+            with self.assertRaisesRegex(VnTransError, "line command"):
+                script.rebuild({unit.id: "@jump" + ''.join(f"⟦{i}⟧" for i in range(len(unit.context['controls'])))})
+
     def parse(self, text):
         return KsScript(codecs.BOM_UTF8 + text.encode())
 

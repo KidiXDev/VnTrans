@@ -105,14 +105,14 @@ class ScnScript:
     def rebuild(self, translations, *, wrap_columns=None, output_encoding=None):
         if output_encoding:
             raise VnTransError("output encoding overrides apply only to KS files; PSB uses UTF-8")
-        # Reparse for repeatable API calls; never mutate the source model.
-        psb = PSB(self.data)
         changes = {}
         for unit in self.units:
             if unit.id in translations and translations[unit.id] != unit.source:
                 changes[unit.id] = render(unit, translations[unit.id], self.format, wrap_columns)
         if not changes:
             return self.data
+        # Reparse for repeatable API calls; never mutate the source model.
+        psb = PSB(self.data)
         for id, text in changes.items():
             path = id.split("/")
             node = psb.root

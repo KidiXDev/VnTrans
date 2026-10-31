@@ -82,6 +82,7 @@ class KsScript:
         self.link = False
         offset = 0
         for number, full_line in enumerate(self.text.splitlines(keepends=True), 1):
+            self.line_start = offset
             line = full_line.rstrip("\r\n")
             self.scan_line(line, offset, number)
             offset += len(full_line)
@@ -100,7 +101,7 @@ class KsScript:
         if not re.sub(r"⟦\d+⟧", "", plain(unit.source, unit.context["controls"], self.format)).strip():
             return
         self.units.append(unit)
-        self.locations[unit.id] = (start, end, quote)
+        self.locations[unit.id] = (start, end, quote, self.line_start)
         if kind == "speaker":
             self.speaker = raw
         if any(c.startswith("[ruby") for c in unit.context["controls"]):
@@ -168,11 +169,11 @@ class KsScript:
         start = p
         kind = "choice" if self.link else "dialogue"
         while p < len(line):
+            p = line.find("[", p)
+            if p < 0:
+                break
             if line.startswith("[[", p):
                 p += 2
-                continue
-            if line[p] != "[":
-                p += 1
                 continue
             end = tag_end(line, p)
             body = line[p + 1:end - 1]
@@ -215,7 +216,7 @@ class KsScript:
             translated = translations.get(unit.id)
             if translated is None or translated == unit.source:
                 continue
-            start, end, quote = self.locations[unit.id]
+            start, end, quote, line_start = self.locations[unit.id]
             value = render(unit, translated, self.format, wrap_columns)
             if quote is not None:
                 if value.lstrip().startswith(("&", "%")):
@@ -224,16 +225,19 @@ class KsScript:
                 value = value.replace("\\", "\\\\").replace(delimiter, "\\" + delimiter)
                 if not quote:
                     value = '"' + value + '"'
-            line_start = max(self.text.rfind("\n", 0, start), self.text.rfind("\r", 0, start)) + 1
             if unit.kind in ("dialogue", "choice") and not self.text[line_start:start].strip(" \t"):
                 if value.lstrip().startswith(("@", ";", "*", "#")):
                     raise VnTransError(f"{unit.id}: translation would introduce a line command")
             changes.append((start, end, value))
         if not changes and output_encoding is None:
             return self.data
-        text = self.text
-        for start, end, value in sorted(changes, reverse=True):
-            text = text[:start] + value + text[end:]
+        parts = []
+        position = 0
+        for start, end, value in sorted(changes):
+            parts.extend((self.text[position:start], value))
+            position = end
+        parts.append(self.text[position:])
+        text = "".join(parts)
         try:
             encoding = codecs.lookup(output_encoding or self.encoding).name
             bom = self.bom
