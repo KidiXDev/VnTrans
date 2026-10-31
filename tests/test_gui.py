@@ -47,6 +47,8 @@ class FilterTests(unittest.TestCase):
     def test_file_and_kind(self):
         self.assertEqual(filter_rows(self.rows, file="b.ks")[0], [2, 3])
         self.assertEqual(filter_rows(self.rows, kind="dialogue", status="failed")[0], [2])
+        self.assertEqual(filter_rows(self.rows, kind="lines")[0], [0, 2, 3])
+        self.assertEqual(filter_rows(self.rows, kind="")[0], [0, 1, 2, 3])
 
 
 @unittest.skipIf(filter_rows is None, "gui extra not installed")

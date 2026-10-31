@@ -157,7 +157,7 @@ class Run:
         return (row.status, row.translation) == self.planned[index]
 
     def commit(self, pairs):
-        """Store (index, text) pairs; a speaker name's text also goes to its other pending occurrences."""
+        """Store (index, text) pairs; the text also goes to the unit's pending identical occurrences."""
         targets = [(target, text) for index, text in pairs
                    for target in (index, *(alias for alias in self.aliases.get(index, ()) if self.pending(alias)))]
         committed = {id(row) for row in self.ws.commit(
@@ -298,32 +298,43 @@ class Run:
         return records
 
     async def translate(self):
-        names, lines = [], []
-        for index in self.indices:
-            (names if self.rows[index].kind == "speaker" else lines).append(index)
-        known = {term.source: term.target for term in self.terms if term.approved and term.target}
+        """Identical units (same kind, format and source) are sent once; the rest follow as aliases.
+
+        New units reuse an identical translation from outside the run, preferring manual edits."""
+        glossary = {term.source: term.target for term in self.terms if term.approved and term.target}
+        earlier = {}
+        for index, row in enumerate(self.rows):
+            if index not in self.planned and row.translation is not None and row.status in ("edited", "machine"):
+                key = (row.kind, self.ws.formats[row.file], row.source)
+                if row.status == "edited" or key not in earlier:
+                    earlier[key] = row.translation
         exact, representatives = [], {}
-        for index in names:
-            source = self.rows[index].source
-            if source in known:
+        for index in self.indices:
+            row = self.rows[index]
+            key = (row.kind, self.ws.formats[row.file], row.source)
+            known = glossary.get(row.source) if row.kind == "speaker" else None
+            if known is None and row.status == "new":
+                known = earlier.get(key)
+            if known is not None:
                 try:
-                    exact.append((index, self.ws.check(self.rows[index], known[source])))
+                    exact.append((index, self.ws.check(row, known)))
                     continue
                 except VnTransError:
                     pass
-            if source in representatives:
-                self.aliases[representatives[source]].append(index)
+            if key in representatives:
+                self.aliases[representatives[key]].append(index)
             else:
-                representatives[source] = index
+                representatives[key] = index
                 self.aliases[index] = []
         if exact:
             self.commit(exact)
         size = self.settings["batch_lines"]
-        unique = list(representatives.values())
-        name_batches = [unique[i:i + size] for i in range(0, len(unique), size)]
+        names = [index for index in representatives.values() if self.rows[index].kind == "speaker"]
+        lines = [index for index in representatives.values() if self.rows[index].kind != "speaker"]
+        name_batches = [names[i:i + size] for i in range(0, len(names), size)]
         batches = prompts.plan(self.rows, lines, lines=size, tokens=self.settings["batch_tokens"])
         self.on_event("info", f"{self.stats.total} units in {len(name_batches) + len(batches)} batches"
-                              + (f", {len(exact)} names from glossary" if exact else ""))
+                              + (f", {len(exact)} filled from glossary or identical lines" if exact else ""))
         await asyncio.gather(*(self.handle(batch, context=False) for batch in name_batches),
                              *(self.handle(batch) for batch in batches))
 

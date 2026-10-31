@@ -541,7 +541,7 @@ export component TextsPage inherits Rectangle {
                     }
                     ComboBox {
                         width: 140px;
-                        model: ["All kinds", "Dialogue", "Speaker", "Choice", "Title"];
+                        model: ["All lines", "Dialogue", "Speaker names", "Choice", "Title"];
                         current-index <=> App.kind-index;
                         selected => { App.filter-changed(); }
                     }

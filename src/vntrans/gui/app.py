@@ -26,7 +26,7 @@ STATES = ("all", "new", "machine", "edited", "failed", "excluded", "issues", "re
 ISSUES = ("",) + tuple(quality.LABELS)
 TASKS = ("translate", "review", "discover")
 SCOPES = ("source", "translation", "both", "speaker", "id")
-KINDS = ("", "dialogue", "speaker", "choice", "title")
+KINDS = ("lines", "dialogue", "speaker", "choice", "title")
 FIELDS = {
     "source": lambda row: (row.source,),
     "translation": lambda row: (row.translation or "",),
@@ -57,6 +57,7 @@ def filter_rows(rows, *, file=None, query="", scope="both", regex=False, case=Fa
                 tags=None, issue=""):
     """Indices passing every filter, and per-state counts that ignore the state filter.
 
+    kind "lines" keeps every kind except speaker names; "" keeps everything.
     tags maps a row index to its issue codes and "review" (has a suggestion).
     Raises re.error for an invalid regular expression."""
     tags = tags or {}
@@ -65,7 +66,9 @@ def filter_rows(rows, *, file=None, query="", scope="both", regex=False, case=Fa
     counts = dict.fromkeys(STATES, 0)
     indices = []
     for index, row in enumerate(rows):
-        if (file is not None and row.file != file) or (kind and row.kind != kind):
+        if file is not None and row.file != file:
+            continue
+        if (row.kind == "speaker") if kind == "lines" else (kind and row.kind != kind):
             continue
         if search and not any(search(value) for value in fields(row)):
             continue
@@ -539,19 +542,40 @@ class Window(UI.AppWindow):
         row = self.current_row()
         if row is None:
             return
+        text = text or None
         try:
-            self.ws.save(row, text or None)
-            self.forget_undo()
+            if text is not None:
+                self.ws.check(row, text)
         except VnTransError as exc:
             self.ui.cur_error = str(exc).removeprefix(f"{row.id}: ")
             return
+        twins = [] if text is None else self.twins(row)
+        if twins:
+            self.remember_undo("edit", [row, *twins])
+        else:
+            self.forget_undo()
+        try:
+            self.ws.save_many([(other, text) for other in (row, *twins)])
         except OSError as exc:
             self.ui.cur_error = str(exc)
             return
         self.ui.cur_error = ""
-        self.row_changed(row)
+        if twins:
+            self.changed_rows([row, *twins])
+            self.say(f"Also applied to {len(twins):,} identical line{'s' * (len(twins) != 1)}")
+        else:
+            self.row_changed(row)
         if advance and self.ui.current + 1 < len(self.model.indices):
             self.select(self.ui.current + 1)
+
+    def twins(self, row) -> list:
+        """Other rows with the same kind, format and source whose translation follows `row`'s.
+
+        Manual edits that differ from `row`'s current translation and excluded rows are left alone."""
+        format = self.ws.formats[row.file]
+        return [other for other in self.rows if other.source == row.source and other is not row
+                and other.kind == row.kind and self.ws.formats[other.file] == format and other.status != "excluded"
+                and (other.translation is None or other.status == "machine" or other.translation == row.translation)]
 
     @slint.callback(global_name="App")
     def revert(self):
@@ -1041,6 +1065,8 @@ class Window(UI.AppWindow):
         ui = self.ui
         task = TASKS[ui.run_task]
         pool = range(len(self.rows)) if ui.run_scope == 0 else self.model.indices
+        if ui.run_scope != 0 and KINDS[ui.kind_index] == "lines" and not ui.regex_error:
+            pool = filter_rows(self.rows, **self.filters() | dict(kind=""))[0]
         if task == "translate":
             wanted = ("new",) if ui.run_scope == 0 else ("new", "machine")
             indices = [i for i in pool if self.rows[i].status in wanted]

@@ -73,12 +73,14 @@ class GlossaryPromptTests(unittest.TestCase):
 
 
 class WorkspaceCase(unittest.TestCase):
+    script = SCRIPT
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         (self.root / "game").mkdir()
-        (self.root / "game/a.ks").write_text(SCRIPT)
+        (self.root / "game/a.ks").write_text(self.script)
         workspace.create(self.root / "game", self.root / "work", name="T")
         self.ws = workspace.Workspace(self.root / "work")
         self.addCleanup(self.ws.close)
@@ -363,6 +365,29 @@ class RunnerTests(WorkspaceCase):
         with self.assertRaisesRegex(VnTransError, "no API key"):
             runner.Run(self.ws, self.rows, [], profile=Profile("p", model="m"), provider=FakeProvider(),
                        sections=[], terms=[], settings={})
+
+
+class DuplicateTests(WorkspaceCase):
+    script = SCRIPT + "*third|Third\n[name name=Bob]Fine.\n"
+    run_with = RunnerTests.run_with
+
+    def test_identical_lines_are_sent_once(self):
+        fake = FakeProvider()
+        run, _ = self.run_with(fake)
+        sent = [record["text"] for call in fake.calls for record in call]
+        self.assertEqual((sent.count("Fine."), sent.count("Bob")), (1, 1))
+        fines = [row for row in self.rows if row.source == "Fine."]
+        self.assertEqual([(row.status, row.translation) for row in fines], [("machine", "T:Fine.")] * 2)
+        self.assertEqual(run.stats.done, len(self.rows))
+
+    def test_new_units_reuse_identical_translations(self):
+        first, second = [i for i, row in enumerate(self.rows) if row.source == "Fine."]
+        self.ws.save(self.rows[first], "Mine")
+        fake = FakeProvider()
+        run, events = self.run_with(fake, indices=[second])
+        self.assertEqual(fake.calls, [])
+        self.assertEqual((self.rows[second].translation, self.rows[second].status, run.stats.done), ("Mine", "machine", 1))
+        self.assertIn("1 filled", events[0][1])
 
 
 if __name__ == "__main__":
