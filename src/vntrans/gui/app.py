@@ -631,12 +631,13 @@ class Window(UI.AppWindow):
             self.select(self.ui.current + 1)
 
     def twins(self, row) -> list:
-        """Other rows with the same kind, format and source whose translation follows `row`'s.
+        """Other rows with matching text and protected controls whose translation follows `row`'s.
 
         Manual edits that differ from `row`'s current translation and excluded rows are left alone."""
-        format = self.ws.formats[row.file]
+        key = row.translation_key(self.ws.formats[row.file])
         return [other for other in self.rows if other.source == row.source and other is not row
-                and other.kind == row.kind and self.ws.formats[other.file] == format and other.status != "excluded"
+                and other.status != "excluded"
+                and other.translation_key(self.ws.formats[other.file]) == key
                 and (other.translation is None or other.status == "machine" or other.translation == row.translation)]
 
     @slint.callback(global_name="App")

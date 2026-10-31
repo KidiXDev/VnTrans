@@ -79,6 +79,13 @@ class KsTests(unittest.TestCase):
         result = script.rebuild({unit.id: "Hi ⟦0⟧ friend"})
         self.assertIn(b'[emb exp="\'[r]\'"]', result)
 
+    def test_ruby_only_text_is_extracted(self):
+        script = self.parse('[ruby text=x char=2]東京[p]\n')
+        self.assertEqual(len(script.units), 1)
+        unit = script.units[0]
+        self.assertEqual(unit.source, "⟦0⟧⟦1⟧")
+        self.assertEqual(script.rebuild({unit.id: "Tokyo⟦1⟧"}).decode("utf-8-sig"), "Tokyo[p]\n")
+
     def test_no_attribute_expression_extraction(self):
         script = self.parse('[name name="&variable"]Hello\n@button text=%macro\n')
         self.assertEqual([u.kind for u in script.units], ["dialogue"])

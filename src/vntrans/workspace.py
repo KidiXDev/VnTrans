@@ -11,7 +11,7 @@ import sqlite3
 from . import pipeline
 from .engines import get_engine
 from .model import Unit, VnTransError
-from .text import render
+from .text import plain, render
 from .translation.glossary import Term
 from .translation.quality import translatable
 
@@ -53,6 +53,11 @@ class Row:
 
     def unit(self) -> Unit:
         return Unit(self.id, self.kind, self.source, json.loads(self.context))
+
+    def translation_key(self, format):
+        context = json.loads(self.context)
+        return (self.kind, format, self.source, context.get("literal", False),
+                tuple(context.get("controls", [])))
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -185,9 +190,10 @@ class Workspace:
         """Store machine translations in one transaction; a unit changed since planning keeps its value.
 
         entries: (row, text, planned status, planned translation)."""
+        checked = [(row, self.check(row, text), status, translation) for row, text, status, translation in entries]
         committed = []
         with self.db:
-            for row, text, status, translation in entries:
+            for row, text, status, translation in checked:
                 if self.db.execute(
                         "UPDATE units SET translation = ?, status = 'machine', error = NULL "
                         "WHERE file = ? AND id = ? AND status = ? AND translation IS ?",
@@ -245,7 +251,8 @@ class Workspace:
         """Untouched rows without letters of the source language; excluding them keeps their original text."""
         language = self.manifest["languages"]["source"]
         return [row for row in rows if row.status == "new" and row.translation is None and not row.error
-                and not translatable(row.source, language)]
+                and not translatable(plain(row.source, json.loads(row.context).get("controls", []),
+                                           self.formats[row.file]), language)]
 
     def export_messages(self, folder: Path, rows) -> int:
         """LinguaGacha MESSAGE JSON: one file per script with every non-speaker unit in order, speakers as `name`.

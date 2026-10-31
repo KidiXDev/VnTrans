@@ -439,6 +439,51 @@ class DuplicateTests(WorkspaceCase):
         self.assertIn("1 filled", events[0][1])
 
 
+class ProtectedDuplicateTests(WorkspaceCase):
+    script = ('Go [ruby text=x char=5]Tokyo\nGo [ruby text=y char=5]Osaka\n'
+              'Go [l]\nGo [ruby text=x char=5]Tokyo\n[ruby text=x char=5]Tokyo\n')
+    run_with = RunnerTests.run_with
+
+    def test_different_ruby_bases_and_controls_are_sent_separately(self):
+        fake = FakeProvider()
+        run, _ = self.run_with(fake)
+        sent = [record["text"] for call in fake.calls for record in call]
+        self.assertEqual(sent, ["Go Tokyo", "Go Osaka", "Go ⟦0⟧", "Tokyo"])
+        self.assertEqual([row.translation for row in self.ws.rows()],
+                         ["T:Go Tokyo", "T:Go Osaka", "T:Go ⟦0⟧", "T:Go Tokyo", "T:Tokyo"])
+        self.assertEqual(run.stats.done, 5)
+        self.ws.build()
+
+    def test_earlier_translation_is_not_reused_for_different_ruby_text(self):
+        self.ws.save(self.rows[0], "Tokyo translation")
+        fake = FakeProvider()
+        self.run_with(fake, indices=[1])
+        self.assertEqual(fake.calls[0][0]["text"], "Go Osaka")
+        self.assertEqual(self.rows[1].translation, "T:Go Osaka")
+
+    def test_ruby_only_line_rejects_empty_model_output(self):
+        run, _ = self.run_with(FakeProvider(lambda record, call: ""), indices=[4])
+        self.assertEqual(run.stats.failed, 1)
+        self.assertIsNone(self.rows[4].translation)
+        self.assertEqual(self.rows[4].error, "empty translation")
+
+    def test_discovery_sees_and_accepts_different_ruby_terms(self):
+        messages = []
+
+        def reply(records, user):
+            messages.append(user)
+            return dict(terms=[dict(source=name, target=name, kind="term", notes="") for name in ("Tokyo", "Osaka")])
+
+        run = runner.Run(self.ws, self.rows, list(range(len(self.rows))),
+                         profile=Profile("p", model="m", keys=["k"]), provider=FakeProvider(reply=reply),
+                         sections=prompts.chain({}), terms=[], settings={}, task="discover")
+        asyncio.run(run.run())
+        self.assertIn("Go Tokyo", messages[0])
+        self.assertIn("Go Osaka", messages[0])
+        self.assertEqual(messages[0].count("Go Tokyo"), 1)
+        self.assertEqual([term.source for term in self.ws.terms()], ["Tokyo", "Osaka"])
+
+
 class RubyTests(unittest.TestCase):
     def test_model_sees_plain_text_and_fix_drops_furigana(self):
         unit = make_unit("scenes/0/texts/0/2", "dialogue", "「本当の[ざ]座[す]主様」", "scn")

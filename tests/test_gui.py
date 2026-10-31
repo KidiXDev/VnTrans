@@ -1,11 +1,14 @@
+import json
 import re
+from types import SimpleNamespace
 import unittest
 
+from vntrans.text import make_unit
 from vntrans.gui.geometry import normalize, place
 from vntrans.workspace import Row
 
 try:
-    from vntrans.gui.app import bars, compact, duration, filter_rows
+    from vntrans.gui.app import Window, bars, compact, duration, filter_rows
 except ImportError:
     filter_rows = None
 
@@ -61,6 +64,22 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(bars(range(10), count=2), [8 / 9, 1.0])
         self.assertEqual((compact(999), compact(12_345), compact(2_500_000)), ("999", "12.3k", "2.5M"))
         self.assertEqual((duration(75), duration(3725)), ("1:15", "1:02:05"))
+
+
+@unittest.skipIf(filter_rows is None, "gui extra not installed")
+class EditingTests(unittest.TestCase):
+    def test_twins_require_matching_controls_and_literal_handling(self):
+        rows = []
+        for index, (text, context) in enumerate([
+                ('Go [ruby text=x char=5]Tokyo', {}), ('Go [ruby text=y char=5]Osaka', {}),
+                ('Go [l]', {}), ('Go [ruby text=x char=5]Tokyo', {"line": 4}),
+                ('Hello', {}), ('Hello', {"literal": True})]):
+            unit = make_unit(str(index), "dialogue", text, "ks", **context)
+            rows.append(Row("a.ks", unit.id, unit.kind, unit.source, "", "", json.dumps(unit.context),
+                            None, "new", None))
+        window = SimpleNamespace(rows=rows, ws=SimpleNamespace(formats={"a.ks": "ks"}))
+        self.assertEqual(Window.twins(window, rows[0]), [rows[3]])
+        self.assertEqual(Window.twins(window, rows[4]), [])
 
 
 class GeometryTests(unittest.TestCase):

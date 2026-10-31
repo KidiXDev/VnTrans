@@ -4,7 +4,7 @@ import codecs
 import re
 
 from ...model import VnTransError
-from ...text import make_unit, render
+from ...text import make_unit, plain, render
 
 # Game conventions belong here; never extract every attribute of a known tag.
 ATTRIBUTES = {
@@ -97,7 +97,7 @@ class KsScript:
         unit = make_unit(f"span/{start}:{end}/{kind}", kind, raw, self.format,
                          line=line, label=self.label, speaker=self.speaker,
                          literal=quote is not None or kind in ("speaker", "title"))
-        if not re.sub(r"⟦\d+⟧", "", unit.source).strip():
+        if not re.sub(r"⟦\d+⟧", "", plain(unit.source, unit.context["controls"], self.format)).strip():
             return
         self.units.append(unit)
         self.locations[unit.id] = (start, end, quote)

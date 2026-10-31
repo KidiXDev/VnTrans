@@ -81,7 +81,7 @@ The app is built with [Slint](https://slint.dev). Everything happens in a
   issues, review). Progress counts only units that are not excluded. Speaker-name units are listed only under the "Speaker names" kind;
   the default "All lines" shows them in the speaker column. Edits are checked
   with the same placeholder rules as rebuild before they are saved, and a saved
-  translation also fills identical units (same kind and source) that are
+  translation also fills identical units (same kind, source and protected controls) that are
   untranslated, machine-translated or still match the old text. Ctrl+Enter
   saves and moves to the next unit. Find & replace works on the translations
   currently shown. On first open, units without any letters of the source
@@ -106,7 +106,7 @@ The app is built with [Slint](https://slint.dev). Everything happens in a
   are retried with backoff, and bad keys stop the run. Stopping or closing loses
   nothing that was already accepted, and the next run continues with the rest.
   Manual edits are never overwritten. Speaker names are filled from the glossary,
-  and identical units (same kind and source, project-wide) are sent once; new
+  and identical units (same kind, source and protected controls, project-wide) are sent once; new
   units reuse an existing translation of the same text without a request.
   **Run in parallel with** adds more profiles (for example the same key with
   another model) that take batches from the same queue; each batch goes to one
@@ -269,6 +269,9 @@ the public translation document. No plugin loader or external service is needed.
   Game-specific attribute mappings are centralized in the Kirikiri KS module.
 - Ruby is preserved as protected spans, and a translation may leave it out.
   Unknown commands remain protected; they are never executed.
+- Older extractions that skipped KS lines made entirely of ruby need a fresh
+  extraction or workspace. Keep the old JSON/workspace so existing translations
+  can be carried across by unit ID.
 - Encrypted PSB, PSB versions other than 3, MDF wrappers, scrambled KS,
   multiline KS tags, TJS bytecode, and unsupported scenario layouts are rejected.
   Decode wrappers externally before using VnTrans.

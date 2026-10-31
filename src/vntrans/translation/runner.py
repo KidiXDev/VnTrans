@@ -256,8 +256,9 @@ class Run:
         else:
             unique, seen = [], set()
             for index in self.indices:
-                if self.rows[index].source not in seen:
-                    seen.add(self.rows[index].source)
+                source = prompts.shown(self.rows[index], self.ws.formats)
+                if source not in seen:
+                    seen.add(source)
                     unique.append(index)
             self.stats.total = len(unique)
             batches = prompts.plan(self.rows, unique, lines=size * 5, tokens=tokens * 5)
@@ -346,7 +347,8 @@ class Run:
             if not isinstance(source, str) or not isinstance(target, str):
                 continue
             source = source.strip()
-            examples = [row.source for row in self.rows if source and source in row.source][:3]
+            examples = [row.source for row in self.rows
+                        if source and source in prompts.shown(row, self.ws.formats)][:3]
             if not source or source in known or not examples:
                 if source:
                     records.append(("", source, target.strip(), "skipped",
@@ -363,20 +365,20 @@ class Run:
         return records
 
     async def translate(self):
-        """Identical units (same kind, format and source) are sent once; the rest follow as aliases.
+        """Units with matching text and protected controls are sent once; the rest follow as aliases.
 
         New units reuse an identical translation from outside the run, preferring manual edits."""
         glossary = {term.source: term.target for term in self.terms if term.approved and term.target}
         earlier = {}
         for index, row in enumerate(self.rows):
             if index not in self.planned and row.translation is not None and row.status in ("edited", "machine"):
-                key = (row.kind, self.ws.formats[row.file], row.source)
+                key = row.translation_key(self.ws.formats[row.file])
                 if row.status == "edited" or key not in earlier:
                     earlier[key] = row.translation
         exact, representatives = [], {}
         for index in self.indices:
             row = self.rows[index]
-            key = (row.kind, self.ws.formats[row.file], row.source)
+            key = row.translation_key(self.ws.formats[row.file])
             known = glossary.get(row.source) if row.kind == "speaker" else None
             if known is None and row.status == "new" and key in earlier:
                 known = quality.tidy(earlier[key], row, self.names, self.ws.formats)
@@ -478,7 +480,7 @@ class Run:
                 failed[index] = "duplicate entries in reply"
             elif text is None:
                 failed[index] = "missing from reply" + (" (cut off)" if reply.finish == "length" else "")
-            elif not text.strip() and MARKER.sub("", row.source).strip():
+            elif not text.strip() and MARKER.sub("", prompts.shown(row, self.ws.formats)).strip():
                 failed[index] = "empty translation"
             else:
                 try:

@@ -75,6 +75,10 @@ class WorkspaceTests(unittest.TestCase):
                          [("dialogue", '"Fwah"')] + [("speaker", "Riku")] * 3)
         self.assertEqual((skipped, ignored), (1, ["b/a.ks", "extra/missing.ks"]))
 
+    def test_ruby_base_letters_are_not_auto_excluded(self):
+        ws = self.japanese('[ruby text=x char=2]東京[p]\n……\n')
+        self.assertEqual([row.source for row in ws.untranslatable(ws.rows())], ["……"])
+
     def test_create_copies_extracts_and_indexes(self):
         before = digest(self.source)
         ws = self.create()
@@ -150,6 +154,16 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(ws.builds(), [target])
         second, _ = ws.build()
         self.assertNotEqual(second, target)
+
+    def test_machine_commit_checks_every_row_before_writing(self):
+        ws = self.create()
+        title = self.row(ws, "test.ks", "title")
+        dialogue = self.row(ws, "test.ks", "dialogue")
+        with self.assertRaisesRegex(VnTransError, "placeholders"):
+            ws.commit([(row, text, row.status, row.translation)
+                       for row, text in [(title, "Opening"), (dialogue, "broken")]])
+        self.assertIsNone(title.translation)
+        self.assertEqual(ws.translations(), {})
 
 
     def test_snapshot_restore_and_bulk_exclude(self):
