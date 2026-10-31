@@ -124,13 +124,24 @@ class UnitModel(slint.Model):
         return dict(n=position + 1, kind=row.kind, speaker=row.speaker, source=oneline(row.source),
                     translation=oneline(row.translation or ""), state=state(row), picked=position in self.picked)
 
+    def reset(self, rows, indices):
+        """Show other rows. Notifying the view is near-instant, while assigning a new model to the
+        property makes Slint read every row up front."""
+        removed = len(self.indices)
+        self.rows, self.indices = rows, indices
+        if removed:
+            self.notify_row_removed(0, removed)
+        if indices:
+            self.notify_row_added(0, len(indices))
+
 
 class Window(UI.AppWindow):
     def __init__(self):
         super().__init__()
         self.ws = None
         self.rows = []
-        self.model = UnitModel([], [])
+        self.picked = set()
+        self.model = UnitModel([], [], self.picked)
         self.file_names = []
         self.files = slint.ListModel([])
         self.terms = []
@@ -139,7 +150,6 @@ class Window(UI.AppWindow):
         self.sections = []
         self.build_reports = []
         self.positions = {}
-        self.picked = set()
         self.anchor = None
         self.undo_entry = None
         self.tags = {}
@@ -162,6 +172,7 @@ class Window(UI.AppWindow):
         self.geometry_timer = slint.Timer()
         self.ui.log = self.log
         self.ui.batches = self.batches
+        self.ui.units = self.model
         self.show_recent()
         self.show_profiles()
         self.profile_new()
@@ -398,6 +409,8 @@ class Window(UI.AppWindow):
         if self.ws:
             self.ws.close()
         self.ws, self.rows = None, []
+        self.picked.clear()
+        self.model.reset([], [])
         self.ui.has_project = False
         self.say("")
 
@@ -454,9 +467,8 @@ class Window(UI.AppWindow):
         selected = self.model.indices[ui.current] if 0 <= ui.current < len(self.model.indices) else None
         self.picked.clear()
         self.anchor = None
-        self.model = UnitModel(self.rows, indices, self.picked)
+        self.model.reset(self.rows, indices)
         self.positions = {index: position for position, index in enumerate(indices)}
-        ui.units = self.model
         self.show_counts(counts)
         try:
             self.select(indices.index(selected))
