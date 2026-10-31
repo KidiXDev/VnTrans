@@ -100,7 +100,7 @@ class ScnScript:
         unit = make_unit(id, kind, raw, self.format, **context)
         self.units.append(unit)
         if any(c.startswith("[") for c in unit.context["controls"]):
-            self.warnings.append(f"{id}: ruby/annotation spans are protected and remain untranslated")
+            self.warnings.append(f"{id}: ruby/annotation spans are protected; translations may leave them out")
 
     def rebuild(self, translations, *, wrap_columns=None, output_encoding=None):
         if output_encoding:

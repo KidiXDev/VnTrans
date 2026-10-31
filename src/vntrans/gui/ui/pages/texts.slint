@@ -608,7 +608,7 @@ export component TextsPage inherits Rectangle {
                     width: 190px;
                     height: 28px;
                     model: ["All issues", "Source script left", "Glossary term missing", "Same as source",
-                        "Line breaks differ", "Fails checks"];
+                        "Line breaks differ", "Fails checks", "Speaker name added", "Furigana kept"];
                     current-index <=> App.issue-index;
                     selected => { App.filter-changed(); }
                 }
@@ -738,6 +738,12 @@ export component TextsPage inherits Rectangle {
                                         text: "Use suggestion";
                                         enabled: App.sel-has-suggestion;
                                         activated => { context.close(); App.menu-action("suggest"); }
+                                    }
+                                    MenuItem {
+                                        icon: @image-url("../icons/x.svg");
+                                        text: "Remove speaker names & furigana";
+                                        enabled: App.sel-fixable;
+                                        activated => { context.close(); App.menu-action("tidy"); }
                                     }
                                     MenuSeparator { }
                                     MenuItem {

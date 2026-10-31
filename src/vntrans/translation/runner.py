@@ -13,7 +13,7 @@ import time
 
 from ..model import VnTransError
 from ..text import MARKER
-from . import prompts
+from . import prompts, quality
 from .glossary import Rules, Term
 from .providers import REVIEW_SCHEMA, SCHEMA, TERMS_SCHEMA, THINKING_SCHEMA, ProviderError
 
@@ -135,6 +135,7 @@ class Run:
         self.found = 0
         self.profile, self.provider = profile, provider
         self.sections, self.terms = sections, terms
+        self.names = quality.speaker_names(rows, terms)
         self.settings = SETTINGS | settings
         self.languages = dict(ws.manifest["languages"])
         self.planned = {index: (rows[index].status, rows[index].translation) for index in indices}
@@ -162,9 +163,11 @@ class Run:
                    for target in (index, *(alias for alias in self.aliases.get(index, ()) if self.pending(alias)))]
         committed = {id(row) for row in self.ws.commit(
             [(self.rows[target], text, *self.planned[target]) for target, text in targets])}
-        for target, _ in targets:
+        for target, text in targets:
             if id(self.rows[target]) in committed:
                 self.stats.done += 1
+                if self.rows[target].kind == "speaker" and text.strip():
+                    self.names.add(text.strip().casefold())
                 self.on_commit(target)
 
     def report(self, prompt, batch, records, *, reply=None, depth=0, error=""):
@@ -227,10 +230,10 @@ class Run:
                 return
             if self.task == "review":
                 prompt = prompts.build(self.sections, self.languages, self.rows, batch, terms=self.terms,
-                                       before=0, after=0, task="review", pre=self.rules.pre)
+                                       before=0, after=0, task="review", pre=self.rules.pre, formats=self.ws.formats)
                 schema = REVIEW_SCHEMA
             else:
-                prompt, schema = prompts.discovery(self.languages, self.rows, batch), TERMS_SCHEMA
+                prompt, schema = prompts.discovery(self.languages, self.rows, batch, self.ws.formats), TERMS_SCHEMA
             reply = None
             try:
                 reply = await self.request(prompt, schema)
@@ -260,7 +263,8 @@ class Run:
                 continue
             row = self.rows[batch[number - 1]]
             try:
-                text = self.ws.check(row, Rules.apply(self.rules.post, text))
+                text = self.ws.check(row, quality.tidy(Rules.apply(self.rules.post, text), row, self.names,
+                                                       self.ws.formats))
             except VnTransError:
                 continue
             if row.translation is not None and text != row.translation:
@@ -313,8 +317,8 @@ class Run:
             row = self.rows[index]
             key = (row.kind, self.ws.formats[row.file], row.source)
             known = glossary.get(row.source) if row.kind == "speaker" else None
-            if known is None and row.status == "new":
-                known = earlier.get(key)
+            if known is None and row.status == "new" and key in earlier:
+                known = quality.tidy(earlier[key], row, self.names, self.ws.formats)
             if known is not None:
                 try:
                     exact.append((index, self.ws.check(row, known)))
@@ -349,7 +353,8 @@ class Run:
                 return
             prompt = prompts.build(self.sections, self.languages, self.rows, batch, terms=self.terms,
                                    before=self.settings["context_before"] if context else 0,
-                                   after=self.settings["context_after"] if context else 0, pre=self.rules.pre)
+                                   after=self.settings["context_after"] if context else 0, pre=self.rules.pre,
+                                   formats=self.ws.formats)
             try:
                 reply = await self.request(prompt, THINKING_SCHEMA if prompt.thinking else SCHEMA)
             except ProviderError as exc:
@@ -398,7 +403,8 @@ class Run:
             row = self.rows[index]
             text = found.get(number)
             if text is not None:
-                outputs[index] = Rules.apply(self.rules.post, text)
+                text = outputs[index] = quality.tidy(Rules.apply(self.rules.post, text), row, self.names,
+                                                     self.ws.formats)
             if number in duplicates:
                 failed[index] = "duplicate entries in reply"
             elif text is None:
@@ -407,7 +413,7 @@ class Run:
                 failed[index] = "empty translation"
             else:
                 try:
-                    accepted.append((index, self.ws.check(row, Rules.apply(self.rules.post, text))))
+                    accepted.append((index, self.ws.check(row, text)))
                 except VnTransError as exc:
                     failed[index] = str(exc).removeprefix(f"{row.id}: ")
         if accepted:

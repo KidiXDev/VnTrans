@@ -104,7 +104,7 @@ class KsScript:
         if kind == "speaker":
             self.speaker = raw
         if any(c.startswith("[ruby") for c in unit.context["controls"]):
-            self.warnings.append(f"{unit.id}: ruby spans are protected and remain untranslated")
+            self.warnings.append(f"{unit.id}: ruby spans are protected; translations may leave them out")
 
     def attributes(self, body, base, line):
         name, end = command(body)

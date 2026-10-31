@@ -12,6 +12,7 @@ SCN_CONTROL = re.compile(
     r"%[pdwD]\d*;|%D\$[^;]*;|\#[^;\r\n]*;|\$[^;\r\n]*;|&[^;\r\n]*;"
 )
 KS_CONTROL = re.compile(r'''\[\[|\[(?:[^\]"']|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')*\]''')
+KS_RUBY = re.compile(r"\[ruby(?:\s|\])", re.I)
 
 
 def make_unit(id: str, kind: str, raw: str, format: str, **context) -> Unit:
@@ -43,7 +44,7 @@ def make_unit(id: str, kind: str, raw: str, format: str, **context) -> Unit:
                 parts.append(normalized[pos:match.start()] + "\n")
                 pos = end
                 continue
-            if re.match(r"\[ruby(?:\s|\])", match[0], re.I):
+            if KS_RUBY.match(match[0]):
                 count = re.search(r"\bchar\s*=\s*['\"]?(\d+)", match[0], re.I)
                 size = int(count[1]) if count else 1
                 if end + size > len(normalized):
@@ -61,6 +62,25 @@ def make_unit(id: str, kind: str, raw: str, format: str, **context) -> Unit:
     return Unit(id, kind, source, context)
 
 
+def ruby(control: str, format: str) -> str | None:
+    """The visible base text a ruby control covers, or None for any other control.
+
+    SCN ruby is only the reading ([よみ]) placed before visible text, so its base is empty; a KS ruby span
+    includes its base characters. Translations may leave ruby out: the reading is a Japanese aid."""
+    if format == "ks":
+        return control[control.index("]") + 1:] if KS_RUBY.match(control) else None
+    return "" if format == "scn" and control.startswith("[") else None
+
+
+def plain(text: str, controls: list[str], format: str) -> str:
+    """`text` with ruby markers replaced by their base text; other markers stay."""
+    def show(match):
+        index = int(match[1])
+        base = ruby(controls[index], format) if index < len(controls) else None
+        return match[0] if base is None else base
+    return MARKER.sub(show, text)
+
+
 def width(text: str) -> int:
     return sum(0 if unicodedata.combining(c) else
                2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
@@ -74,7 +94,7 @@ def wrap(text: str, columns: int, controls: list[str], format: str = "scn") -> s
             if format == "ks":
                 if control == "[[":
                     return "["
-                if re.match(r"\[ruby(?:\s|\])", control, re.I):
+                if KS_RUBY.match(control):
                     return control[control.index("]") + 1:]
                 return ""
             if control.startswith("\\"):
@@ -111,8 +131,9 @@ def render(unit: Unit, translated: str, format: str, columns: int | None = None)
     except UnicodeError as exc:
         raise VnTransError(f"{unit.id}: invalid Unicode translation") from exc
     controls = unit.context["controls"]
-    expected = [str(i) for i in range(len(controls))]
-    if MARKER.findall(translated) != expected:
+    found = MARKER.findall(translated)
+    kept = [str(i) for i, control in enumerate(controls) if str(i) in found or ruby(control, format) is None]
+    if found != kept:
         raise VnTransError(f"{unit.id}: protected placeholders must appear once, in original order")
     plain = MARKER.sub("", translated)
     if "⟦" in plain or "⟧" in plain or "\x00" in plain or "\r" in plain:

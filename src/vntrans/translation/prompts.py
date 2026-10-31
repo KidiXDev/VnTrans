@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 
+from ..text import plain
 from . import glossary
 
 
@@ -60,6 +61,8 @@ CONTRACT = (
     '- Reply with only this JSON object: {"translations": [{"i": <number>, "t": "<translation>"}]}, '
     'with one entry per input record, reusing its "i".\n'
     '- Translate only each record\'s "text". Context, glossary and character notes are reference material.\n'
+    '- Each translation is only the line itself. Never add the speaker\'s name, a label or a "Name:" prefix; '
+    '"speaker" only tells you who is talking.\n'
     "- Keep every placeholder such as ⟦0⟧ exactly once and in the same order. Placeholders stand for game "
     "commands: never translate, remove or add them.\n"
     "- Use \\n for a line break inside a translation. Speaker names, titles and choices stay on one line.\n"
@@ -78,7 +81,9 @@ REVIEW = (
     "term, a voice that doesn't fit the speaker, or clearly unnatural {target}. Leave acceptable ones out.\n"
     '- Reply with only this JSON object: {"translations": [{"i": <number>, "t": "<corrected translation>", '
     '"r": "<short reason>"}]}. Use an empty list when nothing needs fixing.\n'
-    "- Keep every placeholder such as ⟦0⟧ exactly once and in the same order. Use \\n for line breaks.")
+    "- Keep every placeholder such as ⟦0⟧ exactly once and in the same order. Use \\n for line breaks.\n"
+    '- A translation that starts with the speaker\'s name or a "Name:" label is a problem; correct it to the line '
+    "itself, and never add one yourself.")
 
 DISCOVER = (
     "You prepare a translation glossary for a {source} visual novel that will be translated into {target}.\n"
@@ -142,10 +147,18 @@ def neighbours(rows, batch, before, after):
     return collect(batch[0] - 1, -1, before)[::-1], collect(batch[-1] + 1, 1, after)
 
 
-def line(row, translated: bool) -> str:
-    text = row.source.replace("\n", "\\n")
+def shown(row, formats) -> str:
+    """The source a model sees: ruby readings left out (KS ruby keeps its base text), other markers kept."""
+    if "⟦" not in row.source:
+        return row.source
+    return plain(row.source, json.loads(row.context).get("controls", []), formats.get(row.file, ""))
+
+
+def line(row, translated: bool, formats=None) -> str:
+    """A context line. The speaker is bracketed, never written as "Name: text", which models copy into replies."""
+    text = shown(row, formats or {}).replace("\n", "\\n")
     if row.speaker and row.kind != "speaker":
-        text = f"{row.speaker}: {text}"
+        text = f"[{row.speaker}] {text}"
     if translated and row.translation and row.status != "excluded":
         text += "\n  → " + row.translation.replace("\n", "\\n")
     return "- " + text
@@ -170,10 +183,15 @@ def fill(text, languages):
     return text.replace("{source}", languages["source"]).replace("{target}", languages["target"])
 
 
-def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task="translate", pre=()) -> Prompt:
-    """task: "translate" or "review"; `pre` replacement rules rewrite the source text the model sees."""
+def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task="translate", pre=(),
+          formats=None) -> Prompt:
+    """task: "translate" or "review"; `pre` replacement rules rewrite the source text the model sees.
+
+    formats maps each file to its script format, which tells which markers are ruby."""
+    formats = formats or {}
     records = [rows[index] for index in batch]
-    matched = glossary.match(terms, [row.source for row in records] + [row.speaker for row in records if row.speaker])
+    texts = {id(row): shown(row, formats) for row in records}
+    matched = glossary.match(terms, list(texts.values()) + [row.speaker for row in records if row.speaker])
     earlier, later = neighbours(rows, batch, before, after)
 
     def entry(term):
@@ -200,9 +218,9 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
         else:
             parts = []
             if earlier:
-                parts.append("Earlier lines (reference only):\n" + "\n".join(line(row, True) for row in earlier))
+                parts.append("Earlier lines (reference only):\n" + "\n".join(line(row, True, formats) for row in earlier))
             if later:
-                parts.append("Later lines (reference only):\n" + "\n".join(line(row, False) for row in later))
+                parts.append("Later lines (reference only):\n" + "\n".join(line(row, False, formats) for row in later))
             text = "\n\n".join(parts)
         if text:
             (system if section.role == "system" else user).append(text)
@@ -211,7 +229,7 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
         value = dict(i=number, kind=row.kind)
         if row.speaker and row.kind != "speaker":
             value["speaker"] = row.speaker
-        value["text"] = glossary.Rules.apply(pre, row.source)
+        value["text"] = glossary.Rules.apply(pre, texts[id(row)])
         if task == "review":
             value["translation"] = row.translation
         return json.dumps(value, ensure_ascii=False)
@@ -224,8 +242,8 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
                   hashlib.sha256(system_text.encode()).hexdigest()[:12], len(earlier) + len(later), thinking)
 
 
-def discovery(languages, rows, batch) -> Prompt:
+def discovery(languages, rows, batch, formats=None) -> Prompt:
     records = [rows[index] for index in batch]
     system = fill(DISCOVER, languages)
-    user = "Text:\n" + "\n".join(line(row, False) for row in records)
+    user = "Text:\n" + "\n".join(line(row, False, formats) for row in records)
     return Prompt(system, user, records, [], hashlib.sha256(system.encode()).hexdigest()[:12])

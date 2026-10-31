@@ -107,7 +107,10 @@ The app is built with [Slint](https://slint.dev). Everything happens in a
   nothing that was already accepted, and the next run continues with the rest.
   Manual edits are never overwritten. Speaker names are filled from the glossary,
   and identical units (same kind and source, project-wide) are sent once; new
-  units reuse an existing translation of the same text without a request. The same page runs **Review translations**
+  units reuse an existing translation of the same text without a request.
+  The model sees lines without ruby (furigana) readings, and any speaker name it
+  puts in front of a line is removed. In Texts, **Remove speaker names &
+  furigana** fixes lines translated before. The same page runs **Review translations**
   (suggestions you accept or dismiss in Texts) and **Discover terms** (draft
   glossary entries with example lines, for you to approve).
 - **Build**: exports the JSON and rebuilds a patch with optional wrapping and
@@ -159,8 +162,10 @@ Each document includes `schema_version`, `engine`, `format`, `source`, `sha256`,
 - `""` clears a unit without protected controls. To clear visible text around
   controls, retain its placeholders.
 - Keep every `⟦0⟧`, `⟦1⟧`, etc. exactly once and in its original order. They
-  represent protected tags, controls, or ruby spans. Delimiters `⟦` and `⟧` are
-  reserved. See `context.original` and `context.controls` for their contents.
+  represent protected tags, controls, or ruby spans. Ruby placeholders are the
+  exception: leave one out to drop that reading (in KS, together with the
+  characters it covers). Delimiters `⟦` and `⟧` are reserved. See
+  `context.original` and `context.controls` for their contents.
 - JSON `\n` inside a translation means an explicit line break. VnTrans writes
   the format's native break (`[r]` for dialogue in KS, `\n` in SCN).
 - Units may be reordered. IDs, source text, context, and document metadata must
@@ -257,8 +262,8 @@ the public translation document. No plugin loader or external service is needed.
   `link` choice captions, and recognized speaker/choice attributes. It skips
   comments, script blocks, macro definitions, expressions, and unknown attributes.
   Game-specific attribute mappings are centralized in the Kirikiri KS module.
-- Ruby is preserved as protected spans and reported as untranslated. Unknown
-  commands remain protected; they are never executed.
+- Ruby is preserved as protected spans, and a translation may leave it out.
+  Unknown commands remain protected; they are never executed.
 - Encrypted PSB, PSB versions other than 3, MDF wrappers, scrambled KS,
   multiline KS tags, TJS bytecode, and unsupported scenario layouts are rejected.
   Decode wrappers externally before using VnTrans.

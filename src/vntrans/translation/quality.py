@@ -1,9 +1,10 @@
 """Review signals: they flag translations for a human and never block a build."""
 
+import json
 import re
 
 from ..model import VnTransError
-from ..text import MARKER
+from ..text import MARKER, plain
 
 LABELS = {
     "residue": "Source script left",
@@ -11,7 +12,11 @@ LABELS = {
     "same": "Same as source",
     "lines": "Line breaks differ",
     "invalid": "Fails checks",
+    "speaker": "Speaker name added",
+    "ruby": "Furigana kept",
 }
+LABEL = re.compile(r"\s*([^\s:：⟦]+(?: [^\s:：⟦]+){0,2})\s*[:：]\s*")
+QUOTE = re.compile(r"[「『“\"'‘（(]")
 KANA = re.compile(r"[぀-ヿｦ-ﾟ]")
 KANJI = re.compile(r"[㐀-䶿一-鿿]")
 HANGUL = re.compile(r"[가-힯]")
@@ -29,6 +34,43 @@ def translatable(source: str, language: str) -> bool:
     return bool(letters.search(text)) if letters else any(c.isalpha() for c in text)
 
 
+def speaker_names(rows, terms=()) -> set[str]:
+    """Casefolded character names a model might put before a line: speakers as written and translated,
+    and glossary characters."""
+    names = {name for row in rows if row.kind == "speaker" for name in (row.source, row.translation) if name}
+    names |= {row.speaker for row in rows if row.speaker}
+    names |= {name for term in terms if term.kind == "character" for name in (term.source, term.target) if name}
+    return {name.strip().casefold() for name in names if name.strip()}
+
+
+def unprefix(text: str, source: str, names) -> str:
+    """`text` without a "Name:" label the model put in front, when the source has none.
+
+    The label goes when it is a known character name, or when both the source and the rest of the
+    translation open with a quote, which only a prepended speaker produces."""
+    match = LABEL.match(text)
+    if not match or LABEL.match(source):
+        return text
+    rest = text[match.end():]
+    if match[1].casefold() in names or (QUOTE.match(source.lstrip()) and QUOTE.match(rest)):
+        return rest
+    return text
+
+
+def unruby(text: str, row, formats) -> str:
+    """`text` without the ruby markers of `row`'s source: furigana is a Japanese reading aid."""
+    if "⟦" not in text:
+        return text
+    return plain(text, json.loads(row.context).get("controls", []), formats.get(row.file, ""))
+
+
+def tidy(text: str, row, names, formats) -> str:
+    """The automatic fixes for a translation of `row`: no added speaker label, no furigana."""
+    if row.kind != "speaker":
+        text = unprefix(text, row.source, names)
+    return unruby(text, row, formats)
+
+
 def residue(target: str):
     """Source scripts that shouldn't survive translation into `target`."""
     if target.startswith("Japanese"):
@@ -41,8 +83,10 @@ def residue(target: str):
 
 
 class Checker:
-    def __init__(self, check, target: str, terms):
+    def __init__(self, check, target: str, terms, names=frozenset(), formats=None):
         self.check = check
+        self.names = names
+        self.formats = formats or {}
         self.residue = residue(target)
         self.terms = [(term.source if term.case_sensitive else term.source.casefold(), term.case_sensitive,
                        term.target.casefold()) for term in terms
@@ -66,4 +110,8 @@ class Checker:
         if any((needle in row.source if case else needle in source) and target not in folded
                for needle, case, target in self.terms):
             found.append("glossary")
+        if row.kind != "speaker" and unprefix(row.translation, row.source, self.names) != row.translation:
+            found.append("speaker")
+        if unruby(row.translation, row, self.formats) != row.translation:
+            found.append("ruby")
         return found

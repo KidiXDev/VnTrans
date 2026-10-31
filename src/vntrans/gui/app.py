@@ -519,7 +519,8 @@ class Window(UI.AppWindow):
 
     def recheck(self):
         """Recompute issue tags for every row off the event loop, then refresh the view."""
-        self.checker = quality.Checker(self.ws.check, self.ws.manifest["languages"]["target"], self.terms)
+        self.checker = quality.Checker(self.ws.check, self.ws.manifest["languages"]["target"], self.terms,
+                                       quality.speaker_names(self.rows, self.terms), self.ws.formats)
         checker, rows, suggestions = self.checker, list(self.rows), dict(self.suggestions)
 
         def scan():
@@ -885,7 +886,8 @@ class Window(UI.AppWindow):
             return
         batch = prompts.plan(self.rows, candidates, lines=settings["batch_lines"], tokens=settings["batch_tokens"])[0]
         prompt = prompts.build(self.sections, self.ws.manifest["languages"], self.rows, batch, terms=self.terms,
-                               before=settings["context_before"], after=settings["context_after"])
+                               before=settings["context_before"], after=settings["context_after"],
+                               formats=self.ws.formats)
         ui.preview_system, ui.preview_user = prompt.system, prompt.user
         ui.preview_stats = (f"~{prompt.tokens:,} tokens (estimate) · {len(prompt.rows)} records from "
                             f"{prompt.rows[0].file} · {len(prompt.terms)} glossary hits · prompt {prompt.version}")
@@ -1265,6 +1267,7 @@ class Window(UI.AppWindow):
         ui.sel_has_translation = any(row.translation is not None for row in rows)
         ui.sel_has_suggestion = any((row.file, row.id) in self.suggestions for row in rows)
         ui.sel_all_excluded = bool(rows) and all(row.status == "excluded" for row in rows)
+        ui.sel_fixable = any(self.tags.get(index, set()) & {"speaker", "ruby"} for index in self.targets())
 
     @slint.callback(global_name="App")
     def row_pressed(self, position, toggle, extend):
@@ -1370,6 +1373,20 @@ class Window(UI.AppWindow):
             self.ws.exclude_many(rows, excluded)
             self.changed_rows(rows)
             self.say(f"{'Excluded' if excluded else 'Included'} {count}")
+        elif action == "tidy":
+            names = self.checker.names if self.checker else quality.speaker_names(self.rows, self.terms)
+            pairs = [(row, quality.tidy(row.translation, row, names, self.ws.formats)) for row in rows
+                     if row.translation is not None]
+            pairs = [(row, text) for row, text in pairs if text != row.translation]
+            self.remember_undo("fixes", [row for row, _ in pairs])
+            try:
+                for status in {row.status for row, _ in pairs}:
+                    self.ws.save_many([(row, text) for row, text in pairs if row.status == status], status)
+            except VnTransError as exc:
+                self.fail(exc)
+                return
+            self.changed_rows([row for row, _ in pairs])
+            self.say(f"Fixed {len(pairs):,} translation{'s' * (len(pairs) != 1)}")
         elif action == "suggest":
             pairs = [(row, self.suggestions[(row.file, row.id)][0]) for row in rows if (row.file, row.id) in self.suggestions]
             self.remember_undo("suggestions", [row for row, _ in pairs])

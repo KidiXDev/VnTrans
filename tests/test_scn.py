@@ -7,6 +7,7 @@ from fixtures import make_psb, scenario
 from vntrans import VnTransError
 from vntrans.engines.kirikiri.psb import PSB
 from vntrans.engines.kirikiri.scn import ScnScript
+from vntrans import text
 
 
 def plain(node):
@@ -77,6 +78,17 @@ class ScnTests(unittest.TestCase):
         for value in ("Missing", "⟦1⟧⟦0⟧", "⟦0⟧%Bnew⟦1⟧"):
             with self.subTest(value=value), self.assertRaises(VnTransError):
                 script.rebuild({unit.id: value})
+
+    def test_ruby_readings_may_be_left_out(self):
+        unit = text.make_unit("u", "dialogue", "%D$vl1;「本当の[ざ]座[す]主様」", "scn")
+        self.assertEqual(unit.source, "⟦0⟧「本当の⟦1⟧座⟦2⟧主様」")
+        self.assertEqual(text.plain(unit.source, unit.context["controls"], "scn"), "⟦0⟧「本当の座主様」")
+        self.assertEqual(text.render(unit, "⟦0⟧\"Zasu-sama\"", "scn"), "%D$vl1;\"Zasu-sama\"")
+        self.assertEqual(text.render(unit, "⟦0⟧⟦1⟧Za⟦2⟧su", "scn"), "%D$vl1;[ざ]Za[す]su")
+        self.assertEqual(text.render(unit, "⟦0⟧Za⟦2⟧su", "scn"), "%D$vl1;Za[す]su")
+        for broken in ("\"Zasu-sama\"", "⟦0⟧⟦2⟧Za⟦1⟧su", "⟦0⟧⟦1⟧⟦1⟧Zasu"):
+            with self.assertRaisesRegex(VnTransError, "placeholders"):
+                text.render(unit, broken, "scn")
 
     def test_invalid_binaries_and_layouts(self):
         data = scenario()

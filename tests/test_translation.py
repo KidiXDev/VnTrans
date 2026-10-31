@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from vntrans import VnTransError, validate, workspace
+from vntrans.text import make_unit
 from vntrans.translation import glossary, prompts, providers, quality, runner
 from vntrans.translation.glossary import Rules, Term
 from vntrans.translation.providers import Gemini, OpenRouter, Profile, ProviderError, Reply
@@ -98,7 +99,7 @@ class PromptBuildTests(WorkspaceCase):
         first = prompts.build(*args, terms=[Term("Bob", "Bobu", "character")], before=5, after=5)
         self.assertEqual(first, prompts.build(*args, terms=[Term("Bob", "Bobu", "character")], before=5, after=5))
         self.assertIn("Characters:\n- Bob → Bobu", first.user)
-        self.assertIn("- Alice: Hello⟦0⟧world", first.user)
+        self.assertIn("- [Alice] Hello⟦0⟧world", first.user)
         self.assertNotIn("Bye.", first.user)
         self.assertEqual(records(first.user), [dict(i=1, kind="dialogue", speaker="Bob", text="How are you?")])
         self.assertTrue(first.system.endswith(prompts.CONTRACT))
@@ -349,6 +350,18 @@ class RunnerTests(WorkspaceCase):
         self.assertEqual(run.stats.replies, len(fake.calls))
         self.assertGreater(run.stats.rate(), 0)
 
+    def test_speaker_labels_are_stripped_and_flagged(self):
+        how = self.find("How are you?")
+        fake = FakeProvider(lambda record, call: f"{record['speaker']}: Apa kabar?" if record["text"] == "How are you?" else None)
+        self.run_with(fake, indices=[how])
+        self.assertEqual(self.rows[how].translation, "Apa kabar?")
+        self.assertIn("never add the speaker's name".lower(), prompts.CONTRACT.lower())
+        fine = self.rows[self.find("Fine.")]
+        self.ws.save(fine, "Alice: Baik.")
+        checker = quality.Checker(self.ws.check, "Indonesian", [], quality.speaker_names(self.rows))
+        self.assertEqual(checker.issues(fine), ["speaker"])
+        self.assertEqual(checker.issues(self.rows[how]), [])
+
     def test_prompt_enhancement_asks_for_reasoning_first(self):
         def reply(recs, user):
             return dict(why="Context: Bob asks Alice", translations=[dict(i=r["i"], t=f"T:{r['text']}") for r in recs])
@@ -388,6 +401,39 @@ class DuplicateTests(WorkspaceCase):
         self.assertEqual(fake.calls, [])
         self.assertEqual((self.rows[second].translation, self.rows[second].status, run.stats.done), ("Mine", "machine", 1))
         self.assertIn("1 filled", events[0][1])
+
+
+class RubyTests(unittest.TestCase):
+    def test_model_sees_plain_text_and_fix_drops_furigana(self):
+        unit = make_unit("scenes/0/texts/0/2", "dialogue", "「本当の[ざ]座[す]主様」", "scn")
+        row = workspace.Row("a.scn", unit.id, "dialogue", unit.source, "加弥", "0",
+                            json.dumps(unit.context, ensure_ascii=False), '"Benar ⟦0⟧Za⟦1⟧su-sama"', "machine", None)
+        formats = {"a.scn": "scn"}
+        self.assertEqual(prompts.shown(row, formats), "「本当の座主様」")
+        self.assertEqual(prompts.shown(row, {}), unit.source)
+        prompt = prompts.build(prompts.chain({}), dict(source="Japanese", target="Indonesian"), [row], [0],
+                               formats=formats)
+        self.assertEqual(records(prompt.user)[0]["text"], "「本当の座主様」")
+        checker = quality.Checker(lambda row, text: text, "Indonesian", [], set(), formats)
+        self.assertEqual(checker.issues(row), ["ruby"])
+        self.assertEqual(quality.tidy(row.translation, row, set(), formats), '"Benar Zasu-sama"')
+
+
+class SpeakerLabelTests(unittest.TestCase):
+    def test_unprefix_removes_only_added_labels(self):
+        names = {"riku", "kaya & akiho", "里久"}
+        cases = [
+            ('Riku: "Ya."', "「おう」", '"Ya."'),
+            ('Akiho: "Begitu ya."', "「そっか」", '"Begitu ya."'),
+            ("Kaya & Akiho: Halo semua", "やあ、みんな", "Halo semua"),
+            ("Riku: halo", "里久：やあ", "Riku: halo"),
+            ("Dia berkata: ayo pergi", "彼は言った、行こう", "Dia berkata: ayo pergi"),
+            ("Jam 10:30 nanti", "「十時半ね」", "Jam 10:30 nanti"),
+            ('⟦0⟧Riku: "Ya."', "⟦0⟧「おう」", '⟦0⟧Riku: "Ya."'),
+            ('"Riku: tunggu!"', "「里久、待って！」", '"Riku: tunggu!"'),
+        ]
+        for text, source, expected in cases:
+            self.assertEqual(quality.unprefix(text, source, names), expected, text)
 
 
 class PrefilterTests(unittest.TestCase):

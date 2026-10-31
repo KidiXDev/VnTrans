@@ -68,6 +68,10 @@ class KsTests(unittest.TestCase):
         changed = script.rebuild({unit.id: "An ⟦0⟧ example⟦1⟧"})
         self.assertIn('[ruby text="kanji" char=2]漢字'.encode(), changed)
         self.assertTrue(script.warnings)
+        dropped = script.rebuild({unit.id: "A Chinese character example⟦1⟧"})
+        self.assertEqual(dropped.decode("utf-8-sig"), "A Chinese character example[p]\n")
+        with self.assertRaises(VnTransError):
+            script.rebuild({unit.id: "An example"})
 
     def test_break_text_inside_tag_attribute_stays_untouched(self):
         script = self.parse('Hello [emb exp="\'[r]\'"] friend\n')
