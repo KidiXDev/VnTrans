@@ -98,6 +98,7 @@ export global App {
     callback navigate(string);
 
     in property <[RecentRow]> recent;
+    in-out property <string> missing-workspace;
     in-out property <bool> creating;
     in-out property <string> new-name;
     in-out property <string> new-original;
@@ -108,6 +109,7 @@ export global App {
     in-out property <int> new-language-index: 0;
     callback browse(string);
     callback open-workspace(string);
+    callback remove-recent(string);
     callback create-project();
 
     in property <[FileRow]> files;

@@ -1,10 +1,11 @@
+import asyncio
 import json
 from pathlib import Path
 import re
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from vntrans import config
 from vntrans.text import make_unit
@@ -100,6 +101,89 @@ class EditingTests(unittest.TestCase):
         Window.update_preview(window)
         self.assertEqual(ui.preview_user, "")
         self.assertIn("Replacement rules:", ui.preview_stats)
+
+
+@unittest.skipIf(filter_rows is None, "gui extra not installed")
+class RecentWorkspaceTests(unittest.TestCase):
+    def window(self, recent):
+        window = SimpleNamespace(settings={"recent": recent, "other": "keep"},
+                                 ui=SimpleNamespace(missing_workspace=""), open=AsyncMock(),
+                                 say=Mock(), fail=Mock())
+        window.show_recent = Mock(side_effect=lambda: Window.show_recent(window))
+        return window
+
+    def open_recent(self, window, path):
+        async def click():
+            pending = asyncio.all_tasks()
+            Window.open_workspace(window, path)
+            await asyncio.gather(*(asyncio.all_tasks() - pending))
+        asyncio.run(click())
+
+    def test_removal_persists_history_and_keeps_workspace_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            marker = workspace / "keep.txt"
+            marker.write_text("Keep this workspace", encoding="utf-8")
+            recent = [dict(name="Remove me", path=str(workspace)), dict(name="Keep me", path="other")]
+            window = self.window(recent)
+            with patch("vntrans.config.config_dir", return_value=root / "config"):
+                Window.remove_recent(window, str(workspace))
+                self.assertEqual(config.load(), {"recent": recent[1:], "other": "keep"})
+            self.assertEqual(window.settings["recent"], recent[1:])
+            self.assertEqual(list(window.ui.recent), recent[1:])
+            self.assertEqual(marker.read_text(encoding="utf-8"), "Keep this workspace")
+            window.open.assert_not_awaited()
+            window.fail.assert_not_called()
+
+    def test_missing_workspace_offers_removal_without_changing_history(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / "deleted")
+            recent = [dict(name="Missing", path=path)]
+            window = self.window(recent)
+            with patch("vntrans.gui.app.config.save") as save:
+                self.open_recent(window, path)
+                self.assertEqual(window.ui.missing_workspace, path)
+                self.assertEqual(window.settings["recent"], recent)
+                save.assert_not_called()
+                window.open.assert_not_awaited()
+                Window.remove_recent(window, path)
+                save.assert_called_once_with({"recent": [], "other": "keep"})
+            self.assertEqual(window.settings["recent"], [])
+            self.assertEqual(window.ui.missing_workspace, "")
+            self.assertEqual(list(window.ui.recent), [])
+
+    def test_existing_workspace_opens_normally(self):
+        with tempfile.TemporaryDirectory() as folder:
+            window = self.window([dict(name="Existing", path=folder)])
+            self.open_recent(window, folder)
+            window.open.assert_awaited_once_with(folder)
+            self.assertEqual(window.ui.missing_workspace, "")
+            window.fail.assert_not_called()
+
+    def test_access_error_does_not_claim_workspace_was_deleted(self):
+        window = self.window([dict(name="Private", path="private")])
+        error = PermissionError("Access denied")
+        with patch("vntrans.gui.app.Path.exists", side_effect=error):
+            self.open_recent(window, "private")
+        window.fail.assert_called_once_with(error)
+        window.open.assert_not_awaited()
+        self.assertEqual(window.ui.missing_workspace, "")
+        self.assertEqual(len(window.settings["recent"]), 1)
+
+    def test_save_failure_keeps_recent_entry_and_missing_dialog(self):
+        window = self.window([dict(name="Missing", path="missing")])
+        window.ui.missing_workspace = "missing"
+        settings = window.settings
+        error = OSError("Could not save settings")
+        with patch("vntrans.gui.app.config.save", side_effect=error):
+            Window.remove_recent(window, "missing")
+        self.assertIs(window.settings, settings)
+        self.assertEqual(window.ui.missing_workspace, "missing")
+        window.fail.assert_called_once_with(error)
+        window.show_recent.assert_not_called()
+        window.say.assert_not_called()
 
 
 class ConfigTests(unittest.TestCase):

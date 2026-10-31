@@ -568,7 +568,9 @@ export component AppWindow inherits Window {
     FocusScope {
         capture-key-pressed(event) => {
             if (event.text == Key.Escape) {
-                if (App.editor-open) {
+                if (App.missing-workspace != "") {
+                    App.missing-workspace = "";
+                } else if (App.editor-open) {
                     App.editor-open = false;
                 } else {
                     App.clear-selection();

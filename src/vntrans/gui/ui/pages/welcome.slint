@@ -77,12 +77,17 @@ component RecentItem inherits Rectangle {
     in property <string> name;
     in property <string> path;
     callback clicked;
+    callback removed;
     height: 52px;
     border-radius: 7px;
     background: touch.has-hover ? Theme.raised : Theme.field;
     border-width: 1px;
     border-color: touch.has-hover ? Theme.border-strong : Theme.border;
     animate background, border-color { duration: 140ms; }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
     HorizontalLayout {
         padding-left: 14px;
         padding-right: 14px;
@@ -122,18 +127,13 @@ component RecentItem inherits Rectangle {
         }
         VerticalLayout {
             alignment: center;
-            Image {
-                source: @image-url("../icons/chevron-right.svg");
-                width: 14px;
-                height: 14px;
-                colorize: touch.has-hover ? Theme.text : Theme.faint;
-                animate colorize { duration: 120ms; }
+            AppButton {
+                text: "Remove";
+                icon: @image-url("../icons/trash-2.svg");
+                ghost: true;
+                clicked => { root.removed(); }
             }
         }
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
     }
 }
 
@@ -245,6 +245,7 @@ export component WelcomePage inherits Rectangle {
                                 name: item.name;
                                 path: item.path;
                                 clicked => { App.open-workspace(item.path); }
+                                removed => { App.remove-recent(item.path); }
                             }
                         }
                     }
@@ -354,6 +355,72 @@ export component WelcomePage inherits Rectangle {
                                 color: App.message-error ? Theme.danger : Theme.accent-light;
                                 wrap: word-wrap;
                                 font-size: 12px;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if App.missing-workspace != "": FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if (event.text == Key.Return) {
+                App.remove-recent(App.missing-workspace);
+            }
+            accept
+        }
+        Rectangle {
+            background: #04070FB8;
+            TouchArea { }
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    Card {
+                        width: 520px;
+                        border-color: Theme.border-strong;
+                        TouchArea { }
+                        VerticalLayout {
+                            padding: 24px;
+                            spacing: 16px;
+                            Text {
+                                text: "Workspace not found";
+                                color: Theme.text;
+                                font-size: 18px;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: "This project workspace may have been moved or deleted. Would you like to remove it from recent history?";
+                                color: Theme.dim;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+                            Text {
+                                text: App.missing-workspace;
+                                color: Theme.faint;
+                                font-size: 12px;
+                                wrap: char-wrap;
+                            }
+                            if App.message-error: Text {
+                                text: App.message;
+                                color: Theme.danger;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                alignment: end;
+                                spacing: 10px;
+                                AppButton {
+                                    text: "Keep in recent";
+                                    clicked => { App.missing-workspace = ""; }
+                                }
+                                AppButton {
+                                    text: "Remove from recent";
+                                    icon: @image-url("../icons/trash-2.svg");
+                                    primary: true;
+                                    clicked => { App.remove-recent(App.missing-workspace); }
+                                }
                             }
                         }
                     }

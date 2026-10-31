@@ -61,6 +61,10 @@ uv sync --extra gui
 uv run vntrans-gui                 # or: uv run vntrans-gui path/to/workspace
 ```
 
+The welcome page lists recent workspaces. **Remove** clears an entry from that
+history and keeps its folder and files. Opening a workspace that was moved or
+deleted offers to remove its missing entry; **Keep in recent** leaves it listed.
+
 The app is built with [Slint](https://slint.dev). Everything happens in a
 **workspace folder** that you choose when creating a project:
 

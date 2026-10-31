@@ -257,6 +257,20 @@ class Window(UI.AppWindow):
         self.ui.recent = slint.ListModel(
             dict(name=item.get("name", ""), path=item["path"]) for item in self.settings.get("recent", []))
 
+    @slint.callback(global_name="App")
+    def remove_recent(self, path):
+        settings = self.settings | {"recent": [item for item in self.settings.get("recent", [])
+                                               if item.get("path") != path]}
+        try:
+            config.save(settings)
+        except OSError as exc:
+            self.fail(exc)
+            return
+        self.settings = settings
+        self.ui.missing_workspace = ""
+        self.show_recent()
+        self.say("Removed from recent history")
+
     def say(self, message, error=False):
         self.ui.message = message
         self.ui.message_error = error
@@ -311,6 +325,15 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     async def open_workspace(self, path):
+        self.say("")
+        try:
+            exists = Path(path).expanduser().exists()
+        except OSError as exc:
+            self.fail(exc)
+            return
+        if not exists:
+            self.ui.missing_workspace = path
+            return
         await self.open(path)
 
     @slint.callback(global_name="App")
