@@ -18,6 +18,12 @@ SCHEMA = {
         "required": ["i", "t"], "additionalProperties": False}}},
     "required": ["translations"], "additionalProperties": False,
 }
+# Prompt enhancement: "why" comes first so the model reasons before it translates.
+THINKING_SCHEMA = {
+    "type": "object",
+    "properties": {"why": {"type": "string"}, **SCHEMA["properties"]},
+    "required": ["why", "translations"], "additionalProperties": False,
+}
 REVIEW_SCHEMA = {
     "type": "object",
     "properties": {"translations": {"type": "array", "items": {
@@ -130,10 +136,14 @@ class Provider(Protocol):
 
 
 def upper_types(schema):
-    """Gemini's responseSchema uses OpenAPI enum names and has no additionalProperties."""
+    """Gemini's responseSchema uses OpenAPI enum names, has no additionalProperties, and needs
+    propertyOrdering for older models to keep the schema's key order."""
     if isinstance(schema, dict):
-        return {key: (value.upper() if key == "type" else upper_types(value))
-                for key, value in schema.items() if key != "additionalProperties"}
+        converted = {key: (value.upper() if key == "type" else upper_types(value))
+                     for key, value in schema.items() if key != "additionalProperties"}
+        if isinstance(schema.get("properties"), dict):
+            converted["propertyOrdering"] = list(schema["properties"])
+        return converted
     return schema
 
 

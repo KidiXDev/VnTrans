@@ -23,12 +23,14 @@ class FakeProvider:
 
     def __init__(self, rules=None, errors=(), reply=None):
         self.calls = []
+        self.schemas = []
         self.rules = rules or (lambda record, call: None)
         self.errors = list(errors)
         self.reply = reply
 
     def complete(self, profile, key, system, user, schema=providers.SCHEMA):
         self.calls.append(records(user))
+        self.schemas.append(schema)
         if self.errors:
             raise self.errors.pop(0)
         if self.reply:
@@ -66,7 +68,7 @@ class GlossaryPromptTests(unittest.TestCase):
         chain = prompts.chain({"sections": [{"key": "context", "enabled": False}, {"key": "contract"},
                                             {"key": "role", "text": "Mine {target}"}, {"key": "bogus"}]})
         self.assertEqual([s["key"] for s in chain],
-                         ["context", "role", "style", "instructions", "characters", "glossary", "contract"])
+                         ["context", "role", "style", "instructions", "characters", "glossary", "thinking", "contract"])
         self.assertFalse(chain[0]["enabled"])
 
 
@@ -102,6 +104,17 @@ class PromptBuildTests(WorkspaceCase):
         quiet = prompts.build(*args, before=0, after=0)
         self.assertNotIn("reference only", quiet.user)
         self.assertEqual(quiet.version, first.version)
+
+    def test_prompt_enhancement_section(self):
+        chain = prompts.chain({})
+        args = (self.ws.manifest["languages"], self.rows, [self.find("How are you?")])
+        enhanced = prompts.build(chain, *args)
+        self.assertTrue(enhanced.thinking)
+        self.assertIn(prompts.THINKING, enhanced.system)
+        self.assertFalse(prompts.build(chain, *args, task="review").thinking)
+        plain = prompts.build([dict(item, enabled=item["key"] != "thinking") for item in chain], *args)
+        self.assertFalse(plain.thinking)
+        self.assertNotIn(prompts.THINKING, plain.system)
 
     def test_plan_splits_on_scene_and_size(self):
         lines = [i for i, row in enumerate(self.rows) if row.kind != "speaker"]
@@ -141,6 +154,8 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("thinkingConfig", body["generationConfig"])
         self.assertEqual(body["generationConfig"]["responseSchema"]["type"], "OBJECT")
         self.assertNotIn("additionalProperties", json.dumps(body))
+        ordered = gemini.payload(Profile("p", model="gemini-2.0-flash"), "S", "U", providers.THINKING_SCHEMA)
+        self.assertEqual(ordered["generationConfig"]["responseSchema"]["propertyOrdering"], ["why", "translations"])
         body = gemini.payload(Profile("p", model="gemini-3-flash", reasoning="low", show_thinking=False), "S", "U")
         self.assertEqual(body["generationConfig"]["thinkingConfig"], {"thinkingLevel": "LOW"})
         reply = gemini.parse({"candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": [
@@ -331,6 +346,18 @@ class RunnerTests(WorkspaceCase):
         self.assertEqual((run.stats.active, run.stats.queued, run.stats.cooling), (0, 0, 0))
         self.assertEqual(run.stats.replies, len(fake.calls))
         self.assertGreater(run.stats.rate(), 0)
+
+    def test_prompt_enhancement_asks_for_reasoning_first(self):
+        def reply(recs, user):
+            return dict(why="Context: Bob asks Alice", translations=[dict(i=r["i"], t=f"T:{r['text']}") for r in recs])
+
+        fake, batches = FakeProvider(reply=reply), []
+        run = runner.Run(self.ws, self.rows, [self.find("How are you?")], profile=Profile("p", model="m", keys=["k"]),
+                         provider=fake, sections=prompts.chain({}), terms=[], settings={}, on_batch=batches.append)
+        asyncio.run(run.run())
+        self.assertEqual(fake.schemas, [providers.THINKING_SCHEMA])
+        self.assertEqual(batches[0].thinking, "Context: Bob asks Alice")
+        self.assertEqual(self.rows[self.find("How are you?")].translation, "T:How are you?")
 
     def test_missing_key_is_rejected(self):
         with self.assertRaisesRegex(VnTransError, "no API key"):

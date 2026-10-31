@@ -38,6 +38,9 @@ ABOUT = {
     "characters": "Approved character entries whose names appear in the batch.",
     "glossary": "Approved terms that appear in the batch.",
     "context": "Nearby lines from the same scene, with existing translations, as read-only reference.",
+    "thinking": "Strengthens instruction following by having the model write brief structured reasoning (context, "
+                "then decisions) before its translations. Turning it off saves a few output tokens per batch but "
+                "noticeably lowers quality. On by default.",
     "contract": "Fixed. VnTrans relies on this format to read and check replies.",
 }
 

@@ -22,6 +22,7 @@ SECTIONS = (
     Section("characters", "Characters", "user", False),
     Section("glossary", "Glossary", "user", False),
     Section("context", "Context", "user", False),
+    Section("thinking", "Prompt enhancement", "system", False),
     Section("contract", "Output rules", "system", False),
 )
 BY_KEY = {section.key: section for section in SECTIONS}
@@ -46,7 +47,10 @@ DEFAULTS = {
     "role": (
         "You translate {source} visual novel scripts into natural, fluent {target}.\n"
         "Preserve each line's meaning, tone and the speaker's personality. Translate faithfully, "
-        "without adding, omitting or softening content."),
+        "without adding, omitting or softening content.\n"
+        "Lines must fit the game's text box. When a faithful translation would run noticeably longer than the "
+        "source, say the same thing more concisely: tighter phrasing, shorter words, no filler. Never drop "
+        "meaning, nuance, names or emotion to save space."),
     "style": STYLE_PRESETS["Keep honorifics"],
     "instructions": "",
 }
@@ -60,6 +64,12 @@ CONTRACT = (
     "commands: never translate, remove or add them.\n"
     "- Use \\n for a line break inside a translation. Speaker names, titles and choices stay on one line.\n"
     "- Use the glossary and character translations whenever those names or terms appear.")
+
+THINKING = (
+    'Before translating, think in the reply\'s "why" field, which comes before "translations" in the JSON '
+    "object. Keep it extremely concise and structured:\n"
+    "- Context: context, references, tone and who is speaking to whom that affect the meaning\n"
+    "- Decisions: how these instructions apply to the key constraints, ambiguities or difficult lines")
 
 REVIEW = (
     "Review task:\n"
@@ -149,6 +159,7 @@ class Prompt:
     terms: list
     version: str
     context: int = 0
+    thinking: bool = False
 
     @property
     def tokens(self) -> int:
@@ -168,7 +179,7 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
     def entry(term):
         return f"- {term.source} → {term.target}" + (f" ({term.notes.strip()})" if term.notes.strip() else "")
 
-    system, user = [], []
+    system, user, thinking = [], [], False
     for item in sections:
         section = BY_KEY[item["key"]]
         if not item["enabled"]:
@@ -177,6 +188,9 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
             text = fill(item["text"] if item["text"] is not None else DEFAULTS[section.key], languages).strip()
         elif section.key == "contract":
             text = CONTRACT if task == "translate" else fill(REVIEW, languages)
+        elif section.key == "thinking":
+            thinking = task == "translate"
+            text = THINKING if thinking else ""
         elif section.key == "characters":
             found = [entry(term) for term in matched if term.kind == "character"]
             text = "Characters:\n" + "\n".join(found) if found else ""
@@ -207,7 +221,7 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
     user.append(heading + "\n" + "\n".join(record(number, row) for number, row in enumerate(records, 1)))
     system_text = "\n\n".join(system)
     return Prompt(system_text, "\n\n".join(user), records, matched,
-                  hashlib.sha256(system_text.encode()).hexdigest()[:12], len(earlier) + len(later))
+                  hashlib.sha256(system_text.encode()).hexdigest()[:12], len(earlier) + len(later), thinking)
 
 
 def discovery(languages, rows, batch) -> Prompt:

@@ -15,7 +15,7 @@ from ..model import VnTransError
 from ..text import MARKER
 from . import prompts
 from .glossary import Rules, Term
-from .providers import REVIEW_SCHEMA, SCHEMA, TERMS_SCHEMA, ProviderError
+from .providers import REVIEW_SCHEMA, SCHEMA, TERMS_SCHEMA, THINKING_SCHEMA, ProviderError
 
 SETTINGS = prompts.BATCH | dict(concurrency=4, rpm=0)
 TRANSPORT_TRIES = 5
@@ -42,6 +42,16 @@ def listed(text: str, key: str) -> list[dict]:
     if not isinstance(value, list):
         raise ValueError(f"reply has no {key}")
     return [item for item in value if isinstance(item, dict)]
+
+
+def why(text: str) -> str:
+    """A reply's prompt-enhancement notes, or "" when it has none."""
+    try:
+        value = parse(text)
+    except ValueError:
+        return ""
+    notes = value.get("why") if isinstance(value, dict) else None
+    return notes.strip() if isinstance(notes, str) else ""
 
 
 def decode(text: str) -> tuple[dict[int, str], set[int]]:
@@ -330,7 +340,7 @@ class Run:
                                    before=self.settings["context_before"] if context else 0,
                                    after=self.settings["context_after"] if context else 0, pre=self.rules.pre)
             try:
-                reply = await self.request(prompt)
+                reply = await self.request(prompt, THINKING_SCHEMA if prompt.thinking else SCHEMA)
             except ProviderError as exc:
                 if exc.kind in ("auth", "request"):
                     self.error = str(exc)
@@ -342,6 +352,8 @@ class Run:
                     self.give_up(failed)
                     return
             else:
+                if prompt.thinking:
+                    reply.thinking = "\n\n".join(part for part in (reply.thinking, why(reply.text)) if part)
                 failed, outputs = self.accept(batch, reply)
                 self.report(prompt, batch, self.outcomes(batch, outputs, failed), reply=reply, depth=depth)
         if failed and not self.stopping:
