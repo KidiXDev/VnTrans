@@ -310,6 +310,34 @@ Use `--case gui-filter`, `gui-duplicates`, `gui-stats`, or `gui-quality` to meas
 the text-state operations without a window. `--encoder stdlib` compares the
 standard-library output encoder with the default accelerated encoder.
 
+Windows / Python 3.13.12 synthetic measurements (five-run medians, November 1, 2026):
+
+| Workload | Time |
+| --- | ---: |
+| KS parse / changed rebuild, 16,000 lines | 0.122 s / 0.039 s |
+| Unchanged SCN rebuild, 12,000 dialogue lines | 0.00035 s |
+| Mixed KS/SCN extraction, 1,000 files / 100,000 lines | 2.79 s |
+| Workspace creation / validation, same batch | 4.25 s / 4.00 s |
+| Full workspace build, same batch | about 8–10 s |
+| Duplicate lookup, 100,000 matching rows | 0.005 s |
+| KS extraction, 16,000 lines, stdlib / accelerated JSON output | 0.210 s / 0.152 s |
+
+The original 16,000-line KS rebuild took 17.93 s in the audit. With fresh inputs
+per sample, overlapping file opens reduced a full 1,000-file build from 42.63 s
+to 11.57 s; the current harness reuses input fixtures and removes each build
+after measuring it. Peak Python allocations during full builds were 1.47 MiB
+for 100 files and 7.78 MiB for 1,000 files (100 lines per file), including the
+path inventory. Decoded documents and binary payloads are processed per file;
+the GUI deliberately retains the project's rows and indexes.
+
+Live Slint callback checks exercised opening 1,000 mixed files / 100,000 rows,
+search, saving identical lines, undo, building, and cancellation. Most p95
+heartbeat gaps were below 33 ms, but isolated opening and bulk-edit peaks still
+exceeded the 100 ms target. Manual mouse/keyboard rendering checks and real-game
+compatibility remain separate from these synthetic checks. Measurements vary
+with storage, system load, and renderer; Python allocation figures exclude
+native allocations and GPU memory.
+
 Tests include independent synthetic binary fixtures, multilingual dialogue and
 choices, shared strings, resources, long translations, encoding conversions,
 control protection, wrapping, JSON validation, and safe batch output. These
