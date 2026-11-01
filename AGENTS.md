@@ -42,6 +42,9 @@ include `--extra gui` for desktop work and tests that import the GUI.
 | --- | --- |
 | Launch desktop app | `uv run --extra gui vntrans-gui` |
 | CLI usage | `uv run vntrans --help` |
+| Lint | `uv run ruff check .` |
+| Format | `uv run ruff format .` |
+| Check formatting | `uv run ruff format --check .` |
 | Full test suite | `uv run --extra gui python -m unittest discover -s tests` |
 | Focused suite (example) | `uv run --extra gui python -m unittest discover -s tests -p test_workspace.py` |
 | Build distributions | `uv build` |
@@ -68,6 +71,10 @@ See `README.md` for extraction, validation, and rebuild command examples;
 
 ## Validation
 
+- After every code change, run `uv run ruff format .`, `uv run ruff check .`,
+  and `uv run ruff format --check .` from the repository root. Fix all lint
+  findings and formatting failures before completing the work; rerun these
+  checks after any further code edits. Use the rules in `pyproject.toml`.
 - Run affected `test_*.py` suites after behavioral changes. Run the full suite for
   shared text/model, pipeline, or cross-layer changes when practical.
 - Engine changes need preservation/round-trip checks in `test_ks.py` or
