@@ -361,6 +361,22 @@ export component Meter inherits Rectangle {
     }
 }
 
+export component Spark inherits Rectangle {
+    in property <[float]> levels;
+    in property <bool> live;
+    property <length> step: root.levels.length == 0 ? 0px : root.width / root.levels.length;
+    for level[i] in root.levels: Rectangle {
+        x: i * root.step;
+        y: root.height - self.height;
+        width: max(1px, root.step - 1px);
+        height: max(2px, level * root.height);
+        border-radius: 1px;
+        background: i == root.levels.length - 1 && root.live ? Theme.accent-light
+            : Theme.accent-light.transparentize(level > 0 ? 0.5 : 0.85);
+        animate height { duration: 300ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+    }
+}
+
 export component Field inherits VerticalLayout {
     in property <string> label;
     spacing: 6px;

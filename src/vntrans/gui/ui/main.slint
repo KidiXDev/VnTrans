@@ -7,6 +7,7 @@ import { GlossaryPage } from "pages/glossary.slint";
 import { PromptPage } from "pages/prompt.slint";
 import { TranslatePage } from "pages/translate.slint";
 import { ReviewPage } from "pages/review.slint";
+import { ProgressPopover } from "progress.slint";
 import { SettingsPage, Providers } from "pages/settings.slint";
 
 export { App, Languages, Encodings, Providers }
@@ -152,6 +153,31 @@ component Sidebar inherits Rectangle {
             }
         }
         Rectangle { vertical-stretch: 1; }
+        Rectangle {
+            height: 38px;
+            Rectangle {
+                border-radius: 8px;
+                background: Theme.accent-soft;
+                border-width: 1px;
+                border-color: Theme.accent.transparentize(0.65);
+                opacity: App.progress-open ? 1 : 0;
+                animate opacity { duration: 180ms; }
+                Rectangle {
+                    x: 0;
+                    y: 9px;
+                    width: 3px;
+                    height: 20px;
+                    border-radius: 1.5px;
+                    background: Theme.accent-light;
+                }
+            }
+            NavItem {
+                icon: @image-url("icons/activity.svg");
+                text: App.running ? "Progress · " + App.m-percent : "Progress";
+                active: App.progress-open;
+                clicked => { App.progress-open = !App.progress-open; }
+            }
+        }
         Rectangle {
             height: 38px;
             Rectangle {
@@ -580,6 +606,8 @@ export component AppWindow inherits Window {
                     App.missing-workspace = "";
                 } else if (App.editor-open) {
                     App.editor-open = false;
+                } else if (App.progress-open) {
+                    App.progress-open = false;
                 } else {
                     App.clear-selection();
                 }
@@ -633,6 +661,11 @@ export component AppWindow inherits Window {
             width: parent.width;
             height: parent.height;
             open: App.editor-open && App.current >= 0;
+        }
+        if App.has-project: ProgressPopover {
+            width: parent.width;
+            height: parent.height;
+            open: App.progress-open;
         }
         LoadingOverlay {
             width: parent.width;

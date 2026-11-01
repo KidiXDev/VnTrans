@@ -1,0 +1,270 @@
+import { ListView } from "widgets.slint";
+import { Theme, Card, AppButton, Chip, Label, Meter, EmptyState, Spark } from "theme.slint";
+import { App, BatchRow } from "app.slint";
+
+component Tile inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> unit;
+    in property <string> detail;
+    in property <color> tint: Theme.text;
+    horizontal-stretch: 1;
+    min-width: 0;
+    preferred-width: 0;
+    border-radius: 8px;
+    background: Theme.field;
+    border-width: 1px;
+    border-color: Theme.border;
+    clip: true;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 5px;
+        Label { text: root.label; }
+        HorizontalLayout {
+            spacing: 5px;
+            alignment: start;
+            Text {
+                text: root.value;
+                color: root.tint;
+                font-size: 18px;
+                font-weight: 800;
+                animate color { duration: 200ms; }
+            }
+            VerticalLayout {
+                alignment: end;
+                padding-bottom: 3px;
+                Text {
+                    text: root.unit;
+                    color: Theme.faint;
+                    font-size: 11px;
+                }
+            }
+        }
+        @children
+        Rectangle { vertical-stretch: 1; }
+        Text {
+            text: root.detail;
+            color: Theme.faint;
+            font-size: 11px;
+            overflow: elide;
+        }
+    }
+}
+
+component BatchLine inherits Rectangle {
+    in property <BatchRow> item;
+    callback clicked;
+    height: 44px;
+    border-radius: 7px;
+    background: touch.has-hover ? Theme.raised : transparent;
+    animate background { duration: 120ms; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                background: root.item.outcome == "failed" ? Theme.danger : root.item.outcome == "partial" ? Theme.warning
+                    : Theme.success;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0;
+            alignment: center;
+            spacing: 1px;
+            Text {
+                text: root.item.title;
+                color: Theme.text;
+                font-size: 12px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.item.detail;
+                color: Theme.faint;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component ProgressPopover inherits Rectangle {
+    in property <bool> open;
+    in property <length> anchor-bottom: 54px;
+    in property <length> header: 64px;
+    property <int> tab;
+    property <float> shown: root.open ? 1 : 0;
+    animate shown {
+        duration: root.open ? 260ms : 150ms;
+        easing: cubic-bezier(0.2, 0, 0, 1);
+    }
+    visible: root.shown > 0.01;
+    TouchArea {
+        clicked => { App.progress-open = false; }
+    }
+    Card {
+        width: min(root.width - 232px, 600px);
+        height: min(480px, root.height - root.anchor-bottom - root.header - 8px);
+        x: 210px - (1 - root.shown) * 12px;
+        y: root.height - root.anchor-bottom - self.height;
+        opacity: root.shown;
+        transform-origin: { x: 0, y: self.height };
+        transform-scale: 0.94 + 0.06 * root.shown;
+        border-radius: 12px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000090;
+        TouchArea { }
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+            HorizontalLayout {
+                spacing: 8px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    min-width: 0;
+                    spacing: 2px;
+                    Text {
+                        text: !App.running ? (App.run-kind == "" ? "No run yet" : "Last run")
+                            : App.run-kind == "review" ? "Reviewing…"
+                            : App.run-kind == "discover" ? "Discovering terms…" : "Translating…";
+                        color: Theme.text;
+                        font-size: 15px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: App.run-meta;
+                        color: Theme.faint;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+                }
+                if App.running: VerticalLayout {
+                    alignment: center;
+                    AppButton {
+                        danger: true;
+                        height: 28px;
+                        icon: @image-url("icons/square.svg");
+                        text: App.stopping ? "Stopping…" : "Stop";
+                        loading: App.stopping;
+                        clicked => { App.run-stop(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    AppButton {
+                        ghost: true;
+                        height: 28px;
+                        icon: @image-url("icons/x.svg");
+                        clicked => { App.progress-open = false; }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                Chip {
+                    text: "Statistics";
+                    checked: root.tab == 0;
+                    clicked => { root.tab = 0; }
+                }
+                Chip {
+                    text: "Log";
+                    count: App.log.length > 0 ? App.log.length : "";
+                    checked: root.tab == 1;
+                    clicked => { root.tab = 1; }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if root.tab == 0: VerticalLayout {
+                spacing: 10px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    vertical-stretch: 0;
+                    Tile {
+                        label: "PROGRESS";
+                        value: App.m-percent;
+                        detail: App.m-eta == "" ? App.m-progress-detail : App.m-progress-detail + " · " + App.m-eta;
+                        Meter {
+                            height: 5px;
+                            value: App.m-progress;
+                            fill: App.run-failed > 0 ? Theme.warning : Theme.accent;
+                        }
+                    }
+                    Tile {
+                        label: "THROUGHPUT";
+                        value: App.m-rate;
+                        unit: "tok/s";
+                        tint: App.running ? Theme.accent-light : Theme.text;
+                        detail: App.m-rate-detail;
+                        Spark {
+                            height: 16px;
+                            levels: App.m-spark;
+                            live: App.running;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    vertical-stretch: 0;
+                    Tile {
+                        label: "ACTIVE REQUESTS";
+                        value: App.m-active + " / " + App.m-slots;
+                        tint: App.m-active > 0 ? Theme.success : Theme.text;
+                        detail: App.m-active-detail;
+                    }
+                    Tile {
+                        label: "TOKENS";
+                        value: App.m-usage;
+                        unit: "in / out";
+                        detail: App.m-usage-detail;
+                    }
+                }
+                Label { text: "RECENT BATCHES · CLICK FOR DETAILS"; }
+                if App.batches.length == 0: EmptyState { text: "No batches yet"; }
+                if App.batches.length > 0: ListView {
+                    for item[i] in App.batches: BatchLine {
+                        item: item;
+                        clicked => {
+                            App.batch-follow = i == 0;
+                            App.batch-select(i);
+                            App.progress-open = false;
+                            App.navigate("translate");
+                        }
+                    }
+                }
+            }
+            if root.tab == 1 && App.log.length == 0: EmptyState { text: "No activity yet"; }
+            if root.tab == 1 && App.log.length > 0: ListView {
+                for entry in App.log: HorizontalLayout {
+                    spacing: 10px;
+                    padding-top: 5px;
+                    padding-bottom: 5px;
+                    Text {
+                        width: 58px;
+                        text: entry.time;
+                        color: Theme.faint;
+                        font-size: 11px;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: entry.text;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        color: entry.kind == "error" ? Theme.danger : entry.kind == "retry" ? Theme.warning
+                            : entry.kind == "done" ? Theme.success : Theme.text;
+                    }
+                }
+            }
+        }
+    }
+}

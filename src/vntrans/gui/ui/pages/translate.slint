@@ -1,5 +1,5 @@
 import { ComboBox, SpinBox, ListView, ScrollView } from "../widgets.slint";
-import { Theme, Card, AppButton, Field, Label, Meter, Divider, EmptyState, Chip, Badge } from "../theme.slint";
+import { Theme, Card, AppButton, Field, Label, Meter, Divider, EmptyState, Chip, Badge, Spark } from "../theme.slint";
 import { App, BatchRow, RecordRow } from "../app.slint";
 
 component Number inherits SpinBox {
@@ -382,19 +382,10 @@ export component TranslatePage inherits Rectangle {
                 unit: "tok/s";
                 tint: App.running ? Theme.accent-light : Theme.text;
                 detail: App.m-rate-detail;
-                HorizontalLayout {
+                Spark {
                     height: 26px;
-                    spacing: 1px;
-                    for level[i] in App.m-spark: VerticalLayout {
-                        alignment: end;
-                        Rectangle {
-                            height: max(2px, level * 26px);
-                            border-radius: 1px;
-                            background: i == App.m-spark.length - 1 && App.running ? Theme.accent-light
-                                : Theme.accent-light.transparentize(level > 0 ? 0.5 : 0.85);
-                            animate height { duration: 300ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-                        }
-                    }
+                    levels: App.m-spark;
+                    live: App.running;
                 }
             }
             MetricCard {
