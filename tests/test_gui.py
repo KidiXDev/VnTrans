@@ -16,7 +16,7 @@ from vntrans import config, workspace
 from vntrans.gui import jobs
 from vntrans.gui.geometry import normalize, place
 from vntrans.gui.jobs import Cancelled, Latest, Progress, build, run
-from vntrans.gui.texts import TextState
+from vntrans.gui.texts import TextState, diff_markdown
 from vntrans.text import make_unit
 from vntrans.translation import prompts
 from vntrans.workspace import Row
@@ -290,6 +290,28 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(
                 (directory / "config.json.bad").read_text(encoding="utf-8"), original
             )
+
+
+class DiffTests(unittest.TestCase):
+    def test_diff_strikes_removed_words_and_bolds_added_ones(self):
+        markdown = diff_markdown("Wait, Brother! *grin*", "Wait, Onii-chan! *grin*")
+        self.assertEqual(
+            markdown,
+            "Wait, <font color='#e5484d'>~~Brother~~</font> "
+            "<font color='#30a46c'>**Onii\\-chan**</font>\\! \\*grin\\*",
+        )
+        self.assertEqual(
+            diff_markdown("I like it", "I really like it"),
+            "I <font color='#30a46c'>**really**</font> like it",
+        )
+        self.assertEqual(
+            diff_markdown("I really like it", "I like it"),
+            "I <font color='#e5484d'>~~really~~</font> like it",
+        )
+        if filter_rows is not None:
+            import slint
+
+            slint.StyledText.from_markdown(markdown)
 
 
 class TextStateTests(unittest.TestCase):
@@ -683,6 +705,21 @@ class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
             thread.assert_not_awaited()
         self.assertEqual(self.ws.rows(), self.original)
         self.assertEqual(len(self.ws.suggestions()), 2)
+
+    def test_handling_a_suggestion_moves_to_the_next_one(self):
+        window = self.window
+        window.model.indices = [0, 1, 2]
+        window.row_changed = Mock()
+        for name in ("current_row", "drop_suggestion", "next_suggestion"):
+            setattr(window, name, getattr(Window, name).__get__(window))
+        Window.accept_suggestion(window)
+        self.assertEqual(self.ws.rows()[0].translation, "Halo⟦0⟧dunia")
+        window.select.assert_called_with(2)
+        window.ui.current = 2
+        Window.dismiss_suggestion(window)
+        self.assertEqual(self.ws.suggestions(), {})
+        self.assertEqual(self.ws.rows()[2].translation, "Old goodbye")
+        window.select.assert_called_with(2)
 
     async def test_old_rejection_cannot_clear_a_new_workspaces_suggestions(self):
         newer = {("new.ks", "line/0"): ("New suggestion", "New reason")}

@@ -330,20 +330,28 @@ export component UnitEditor inherits VerticalLayout {
                 spacing: 12px;
                 VerticalLayout {
                     horizontal-stretch: 1;
+                    min-width: 0;
                     alignment: center;
-                    spacing: 4px;
-                    Text {
-                        text: App.cur-suggestion;
-                        color: Theme.text;
-                        font-size: 13px;
-                        font-weight: 600;
-                        wrap: word-wrap;
+                    spacing: 6px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Label {
+                            text: "SUGGESTED FIX";
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: App.cur-reason;
+                            color: Theme.violet;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                            vertical-alignment: center;
+                        }
                     }
-                    Text {
-                        text: App.cur-reason;
-                        color: Theme.violet;
-                        font-size: 11px;
-                        wrap: word-wrap;
+                    StyledText {
+                        text: App.cur-diff;
+                        default-color: Theme.text;
+                        default-font-size: 13px;
                     }
                 }
                 VerticalLayout {
@@ -351,12 +359,20 @@ export component UnitEditor inherits VerticalLayout {
                     HorizontalLayout {
                         spacing: 8px;
                         AppButton {
-                            text: "Dismiss";
+                            text: "Keep current";
                             clicked => { App.dismiss-suggestion(); }
                         }
                         AppButton {
+                            text: "Edit";
+                            clicked => {
+                                App.cur-translation = App.cur-suggestion;
+                                root.focus-translation();
+                            }
+                        }
+                        AppButton {
                             primary: true;
-                            text: "Use suggestion";
+                            icon: @image-url("../icons/check.svg");
+                            text: "Accept";
                             clicked => { App.accept-suggestion(); }
                         }
                     }
@@ -609,7 +625,8 @@ export component TextsPage inherits Rectangle {
                     width: 190px;
                     height: 28px;
                     model: ["All issues", "Source script left", "Glossary term missing", "Same as source",
-                        "Line breaks differ", "Fails checks", "Speaker name added", "Furigana kept", "Quote marks wrong"];
+                        "Line breaks differ", "Fails checks", "Speaker name added", "Furigana kept", "Quote marks wrong",
+                        "Honorific missing"];
                     current-index <=> App.issue-index;
                     selected => { App.filter-changed(); }
                 }
@@ -631,6 +648,17 @@ export component TextsPage inherits Rectangle {
                         font-size: 12px;
                         vertical-alignment: center;
                         overflow: elide;
+                    }
+                    if App.status-filter != "review": VerticalLayout {
+                        alignment: center;
+                        AppButton {
+                            text: "Review one by one";
+                            icon: @image-url("../icons/eye.svg");
+                            clicked => {
+                                App.status-filter = "review";
+                                App.filter-changed();
+                            }
+                        }
                     }
                     VerticalLayout {
                         alignment: center;

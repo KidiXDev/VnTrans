@@ -30,6 +30,7 @@ from .texts import (
     STATES,
     TextState,
     check_rows,
+    diff_markdown,
     filter_rows,
     filter_snapshot,
     load,
@@ -670,9 +671,15 @@ class Window(UI.AppWindow):
         ui.cur_issues = " · ".join(
             quality.LABELS[mark] for mark in marks if mark != "review"
         )
-        ui.cur_suggestion, ui.cur_reason = self.suggestions.get(
-            (row.file, row.id), ("", "")
-        )
+        suggestion, ui.cur_reason = self.suggestions.get((row.file, row.id), ("", ""))
+        if suggestion:
+            try:
+                ui.cur_diff = slint.StyledText.from_markdown(
+                    diff_markdown(row.translation or "", suggestion)
+                )
+            except ValueError:
+                ui.cur_diff = slint.StyledText.from_plain_text(suggestion)
+        ui.cur_suggestion = suggestion
 
     def retag(self, index):
         row = self.rows[index]
@@ -691,10 +698,16 @@ class Window(UI.AppWindow):
         rows, suggestions = texts.snapshot(), dict(self.suggestions)
         terms = [replace(term) for term in self.terms]
         target = ws.manifest["languages"]["target"]
+        honorifics = prompts.keeps_honorifics(self.sections, ws.manifest["languages"])
 
         def scan():
             checker = quality.Checker(
-                ws.check, target, terms, quality.speaker_names(rows, terms), ws.formats
+                ws.check,
+                target,
+                terms,
+                quality.speaker_names(rows, terms),
+                ws.formats,
+                honorifics,
             )
             return checker, check_rows(checker, rows, suggestions)
 
@@ -749,6 +762,7 @@ class Window(UI.AppWindow):
                 )
                 for other in (row, *twins)
             ],
+            dismiss=True,
         )
         if entries is None:
             return
@@ -1139,6 +1153,10 @@ class Window(UI.AppWindow):
         self.store_prompt()
         self.show_sections()
         self.update_preview()
+        if self.checker and self.checker.honorifics != prompts.keeps_honorifics(
+            self.sections, self.ws.manifest["languages"]
+        ):
+            self.recheck()
 
     @slint.callback(global_name="App")
     def languages_changed(self):
@@ -1695,15 +1713,30 @@ class Window(UI.AppWindow):
         except VnTransError as exc:
             self.ui.cur_error = str(exc).removeprefix(f"{row.id}: ")
             return
-        self.dismiss_suggestion()
-        self.ui.cur_translation = text
+        self.drop_suggestion(row)
 
     @slint.callback(global_name="App")
     def dismiss_suggestion(self):
         row = self.current_row()
-        if row is not None and self.suggestions.pop((row.file, row.id), None):
-            self.ws.dismiss(row)
-            self.row_changed(row)
+        if row is not None and (row.file, row.id) in self.suggestions:
+            self.drop_suggestion(row)
+
+    def drop_suggestion(self, row):
+        del self.suggestions[(row.file, row.id)]
+        self.ws.dismiss(row)
+        self.row_changed(row)
+        self.next_suggestion()
+
+    def next_suggestion(self):
+        """Select the next listed row with a suggestion, wrapping around; stay on the current row when none is left."""
+        indices = self.model.indices
+        for step in range(1, len(indices) + 1):
+            position = (self.ui.current + step) % len(indices)
+            row = self.rows[indices[position]]
+            if (row.file, row.id) in self.suggestions:
+                self.select(position)
+                return
+        self.select(self.ui.current)
 
     @slint.callback(global_name="App")
     async def suggestions_action(self, accept):

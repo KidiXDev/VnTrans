@@ -31,7 +31,10 @@ BATCH = dict(batch_lines=20, batch_tokens=1200, context_before=5, context_after=
 
 STYLE_PRESETS = {
     "Keep honorifics": (
-        "- Keep Japanese honorifics (-san, -kun, -chan, -sama, -senpai) attached to names, romanized.\n"
+        "- Keep Japanese honorifics attached to names, romanized: Sayu-chan, Saigawa-san, Taro-kun, "
+        "Hana-sama, Kei-senpai.\n"
+        "- Keep how characters address each other, romanized: お兄ちゃん → Onii-chan, 兄さん → Nii-san, "
+        "お姉ちゃん → Onee-chan, 先輩 → Senpai. Never turn them into Brother, Sister or a bare name.\n"
         "- Keep name order as written in the source.\n"
         "- Use “ (opening) and ” (closing) for source 「…」 and 『…』; keep unquoted narration unquoted.\n"
         "- Keep ellipses, dashes and stammering where they show hesitation or emotion.\n"
@@ -53,7 +56,7 @@ DEFAULTS = {
         "without adding, omitting or softening content.\n"
         "Lines must fit the game's text box. When a faithful translation would run noticeably longer than the "
         "source, say the same thing more concisely: tighter phrasing, shorter words, no filler. Never drop "
-        "meaning, nuance, names or emotion to save space."
+        "meaning, nuance, names, honorifics or emotion to save space."
     ),
     "style": STYLE_PRESETS["Keep honorifics"],
     "instructions": "",
@@ -86,34 +89,58 @@ REVIEW_ROLE = (
     "Preserve fluent wording and make only the smallest correction supported by the source and context."
 )
 
+REVIEW_ERRORS = {
+    "meaning": "Mistranslation",
+    "omission": "Missing content",
+    "addition": "Added content",
+    "name": "Name or term",
+    "honorific": "Honorific",
+    "grammar": "Grammar",
+    "quotes": "Quotes",
+}
+
 REVIEW = (
     "Review task:\n"
-    "- Keep acceptable translations exactly as written. Review the existing translation rather than "
-    "translating the source again. When unsure, leave the record out.\n"
-    "- Report only records with a clear problem: wrong meaning, omitted or invented content, a wrong name or "
-    "term, or clearly broken {target}. An alternative phrasing is not a correction. Natural paraphrases, "
-    "conversational wording and implicit subjects are acceptable when faithful to the source.\n"
-    "- Make the smallest necessary edit. Preserve the existing register, rhythm, point of view and sentence "
-    "structure wherever possible. Style guidance does not require rewriting an already natural line. "
-    "Do not invent a subject, pronoun, relationship or emotion that the source and context do not establish.\n"
+    "- Most translations are already acceptable: keep them exactly as written and leave them out of the "
+    "reply. Review the existing translation rather than translating the source again. When unsure, leave "
+    "the record out.\n"
+    '- Report a record only for one of these errors, given as "c": meaning (the translation says something '
+    "the source does not), omission (source content is missing), addition (content absent from the source), "
+    "name (a wrong name or glossary term), honorific (an honorific or form of address translated, dropped or "
+    "changed), grammar (clearly broken {target}), quotes (quotation marks contradict the source). Style, tone, "
+    "flow, naturalness, brevity and word choice are never errors, and an alternative phrasing is not a "
+    "correction.\n"
+    "- Fix only the wrong words and copy the rest of the line unchanged. Never shorten, compress, formalize "
+    "or tidy a line: casual register, contractions, slang, fillers, interjections, stammering, repetition, "
+    "sentence fragments and implicit subjects are deliberate. Preserve the existing register, rhythm, point "
+    "of view and sentence structure. Do not invent a subject, pronoun, relationship or emotion that the "
+    "source and context do not establish.\n"
     "- The kind 'dialogue' can include narration and internal monologue. It and the speaker metadata never "
     "require quotation marks. Use “ (opening) and ” (closing) for source quotations. "
     "Preserve the source's quotation structure: 「うん」 needs quotes around the "
     "translated speech; うん and unquoted narration do not. Keep quotations within narration in their place; "
     "do not wrap the whole narration in quotes.\n"
-    '- Reply with only this JSON object: {"translations": [{"i": <number>, "t": "<corrected translation>", '
-    '"r": "<short reason>"}]}. Use an empty list when nothing needs fixing.\n'
-    "- Give a specific reason identifying the source meaning or concrete error being corrected. Generic "
-    "claims such as 'more natural', 'better nuance' or 'matches dialogue format' are not sufficient.\n"
+    '- Reply with only this JSON object: {"translations": [{"i": <number>, "c": "<error>", '
+    '"t": "<corrected translation>", "r": "<short reason>"}]}. Use an empty list when nothing needs fixing.\n'
+    "- The reason names the source words and the concrete error, e.g. 'the source 晶穂 names Akiho, not "
+    "Akio'. Generic claims such as 'more natural', 'better nuance', 'smoother' or 'matches dialogue format' "
+    "are not reasons.\n"
     "- Keep every placeholder such as ⟦0⟧ exactly once and in the same order. Use \\n for line breaks.\n"
     '- Remove an added "Name:" speaker label absent from the source. Keep character names used as part of '
     "the sentence when the source mentions them; a sentence beginning with a name is not itself an error."
 )
 
+REVIEW_HONORIFICS = (
+    "- Keep honorifics and forms of address exactly as the translation has them (Onii-chan, Nii-san, "
+    "Sayu-chan, Saigawa-san); never replace them with Brother, Sister or a bare name. When the source has "
+    "one that the translation translated or dropped, restore it romanized as an honorific error."
+)
+
 DISCOVER = (
     "You prepare a translation glossary for a {source} visual novel that will be translated into {target}.\n"
     "From the text below, list character names, nicknames, places, organizations, invented terms and other "
-    "expressions that must be translated the same way every time. Skip ordinary words.\n"
+    "expressions that must be translated the same way every time. Skip ordinary words. List names "
+    "without honorific suffixes (紗有, not 紗有ちゃん).\n"
     'Reply with only this JSON object: {"terms": [{"source": "<exact text as written>", '
     '"target": "<{target} translation>", "kind": "character" or "term", "notes": "<gender, role or meaning>"}]}. '
     "Use an empty list when there is nothing to add."
@@ -143,6 +170,20 @@ def chain(config: dict) -> list[dict]:
         if s.key not in seen and s.key != "contract"
     ]
     return result + [dict(key="contract", enabled=True, text=None)]
+
+
+def keeps_honorifics(sections, languages) -> bool:
+    """Japanese honorifics stay romanized in Latin-script targets unless an enabled style section drops
+    them, as the Localize preset does."""
+    if not languages["source"].startswith("Japanese") or languages["target"].startswith(
+        ("Chinese", "Japanese", "Korean")
+    ):
+        return False
+    style = next((item for item in sections if item["key"] == "style"), None)
+    if style is None or not style["enabled"]:
+        return True
+    text = style["text"] if style["text"] is not None else DEFAULTS["style"]
+    return "drop honorifics" not in text.casefold()
 
 
 def estimate(text: str) -> int:
@@ -253,9 +294,16 @@ def build(
     formats = formats or {}
     records = [rows[index] for index in batch]
     texts = {id(row): shown(row, formats) for row in records}
-    matched = glossary.match(
-        terms, list(texts.values()) + [row.speaker for row in records if row.speaker]
-    )
+    searched = list(texts.values()) + [row.speaker for row in records if row.speaker]
+    matched = glossary.match(terms, searched)
+    honorifics = keeps_honorifics(sections, languages)
+    if honorifics:
+        matched += [
+            glossary.Term(source, target, "character", "keep this form of address")
+            for source, target in glossary.Address(terms)
+            .found("\n".join(searched))
+            .items()
+        ]
     earlier, later = neighbours(rows, batch, before, after)
 
     def entry(term):
@@ -278,7 +326,14 @@ def build(
                 item["text"] if item["text"] is not None else default, languages
             ).strip()
         elif section.key == "contract":
-            text = CONTRACT if task == "translate" else fill(REVIEW, languages)
+            text = (
+                CONTRACT
+                if task == "translate"
+                else fill(
+                    REVIEW + ("\n" + REVIEW_HONORIFICS if honorifics else ""),
+                    languages,
+                )
+            )
         elif section.key == "thinking":
             thinking = task == "translate"
             text = THINKING if thinking else ""
@@ -298,7 +353,7 @@ def build(
             if later:
                 parts.append(
                     "Later lines (reference only):\n"
-                    + "\n".join(line(row, False, formats) for row in later)
+                    + "\n".join(line(row, task == "review", formats) for row in later)
                 )
             text = "\n\n".join(parts)
         if text:

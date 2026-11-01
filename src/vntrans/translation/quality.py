@@ -5,6 +5,7 @@ import re
 
 from ..model import VnTransError
 from ..text import MARKER, plain
+from .glossary import Address
 
 LABELS = {
     "residue": "Source script left",
@@ -15,7 +16,12 @@ LABELS = {
     "speaker": "Speaker name added",
     "ruby": "Furigana kept",
     "quote": "Quote marks wrong",
+    "honorific": "Honorific missing",
 }
+HONORIFIC = re.compile(
+    r"\b[^\W\d_]+-(?:san|chan|kun|sama|senpai|sensei|dono|tan)\b|\b(?:aniki|aneki|senpai|sensei)\b",
+    re.IGNORECASE,
+)
 LABEL = re.compile(r"\s*([^\s:：⟦]+(?: [^\s:：⟦]+){0,2})\s*[:：]\s*")
 QUOTE = re.compile(r"[「『“\"'‘（(]")
 SPEECH = re.compile(r"(?:\s|⟦\d+⟧)*(?:「[^「」]*」|『[^『』]*』)(?:\s|⟦\d+⟧)*")
@@ -133,6 +139,18 @@ def review_text(text: str, row, names, formats) -> str:
     return text
 
 
+def oversteps(current: str, revision: str, error: str, honorifics: bool) -> bool:
+    """A revision that trims the line by over a fifth without a meaning or added-content error, or that
+    loses a romanized honorific the current translation has."""
+    if len(revision) < 0.8 * len(current) and error not in ("meaning", "addition"):
+        return True
+    return (
+        honorifics
+        and error != "addition"
+        and len(HONORIFIC.findall(revision)) < len(HONORIFIC.findall(current))
+    )
+
+
 def residue(target: str):
     """Source scripts that shouldn't survive translation into `target`."""
     if target.startswith("Japanese"):
@@ -145,11 +163,21 @@ def residue(target: str):
 
 
 class Checker:
-    def __init__(self, check, target: str, terms, names=frozenset(), formats=None):
+    def __init__(
+        self,
+        check,
+        target: str,
+        terms,
+        names=frozenset(),
+        formats=None,
+        honorifics=False,
+    ):
         self.check = check
         self.names = names
         self.formats = formats or {}
         self.residue = residue(target)
+        self.honorifics = honorifics
+        self.address = Address(terms) if honorifics else None
         self.terms = [
             (
                 term.source if term.case_sensitive else term.source.casefold(),
@@ -194,4 +222,9 @@ class Checker:
             found.append("ruby")
         if requote(row.translation, row.source) != row.translation:
             found.append("quote")
+        if self.address and any(
+            target.casefold() not in folded
+            for target in self.address.found(row.source).values()
+        ):
+            found.append("honorific")
         return found

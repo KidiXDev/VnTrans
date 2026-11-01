@@ -8,6 +8,8 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from typing import Protocol
 
+from .prompts import REVIEW_ERRORS
+
 REASONING = ("default", "minimal", "low", "high")
 # Root object: strict JSON-schema modes reject a top-level array.
 SCHEMA = {
@@ -42,10 +44,11 @@ REVIEW_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "i": {"type": "integer"},
+                    "c": {"type": "string", "enum": list(REVIEW_ERRORS)},
                     "t": {"type": "string"},
                     "r": {"type": "string"},
                 },
-                "required": ["i", "t", "r"],
+                "required": ["i", "c", "t", "r"],
                 "additionalProperties": False,
             },
         }

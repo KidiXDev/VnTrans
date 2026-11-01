@@ -189,7 +189,9 @@ class PromptBuildTests(WorkspaceCase):
         self.assertIn("You proofread existing Indonesian translations", prompt.system)
         self.assertNotIn("Lines must fit the game's text box", prompt.system)
         self.assertIn("Use conversational Indonesian.", prompt.system)
-        self.assertIn("Keep acceptable translations exactly as written", prompt.system)
+        self.assertIn("keep them exactly as written", prompt.system)
+        self.assertIn("Never shorten, compress, formalize", prompt.system)
+        self.assertIn(prompts.REVIEW_HONORIFICS, prompt.system)
         self.assertIn("do not wrap the whole narration in quotes", prompt.system)
         self.assertIn(
             "a sentence beginning with a name is not itself an error", prompt.system
@@ -554,11 +556,12 @@ class RunnerTests(WorkspaceCase):
                     if r["text"] == "Hello⟦0⟧world"
                     else "no placeholder",
                     r="tone",
+                    c="meaning",
                 )
                 for r in recs
                 if r["text"] in ("Hello⟦0⟧world", "Fine.")
             ]
-            return dict(translations=out + [dict(i=99, t="x", r="bogus")])
+            return dict(translations=out + [dict(i=99, t="x", r="bogus", c="meaning")])
 
         fake = FakeProvider(reply=reply)
         run = runner.Run(
@@ -581,8 +584,11 @@ class RunnerTests(WorkspaceCase):
         self.assertEqual(
             suggestions,
             {
-                ("a.ks", self.rows[hello].id): ("Better⟦0⟧one", "tone"),
-                ("a.ks", self.rows[self.find("Fine.")].id): ("no placeholder", "tone"),
+                ("a.ks", self.rows[hello].id): ("Better⟦0⟧one", "Mistranslation: tone"),
+                ("a.ks", self.rows[self.find("Fine.")].id): (
+                    "no placeholder",
+                    "Mistranslation: tone",
+                ),
             },
         )
         self.assertEqual(self.rows[hello].translation, "T:Hello⟦0⟧world")
@@ -946,6 +952,114 @@ class DuplicateTests(WorkspaceCase):
         self.assertIn("1 filled", events[0][1])
 
 
+class HonorificTests(WorkspaceCase):
+    script = "お兄ちゃん、待って！\n紗有ちゃんはどこ？\n"
+    terms = [Term("紗有", "Sayu", "character")]
+    languages = dict(source="Japanese", target="English")
+    localized = prompts.chain(
+        {"sections": [{"key": "style", "text": prompts.STYLE_PRESETS["Localize"]}]}
+    )
+
+    def build(self, sections=None, languages=None, **options):
+        return prompts.build(
+            sections or prompts.chain({}),
+            languages or self.languages,
+            self.rows,
+            [0, 1],
+            terms=self.terms,
+            **options,
+        )
+
+    def test_forms_of_address_are_injected_only_when_honorifics_are_kept(self):
+        user = self.build().user
+        self.assertIn("- お兄ちゃん → Onii-chan (keep this form of address)", user)
+        self.assertIn("- 紗有ちゃん → Sayu-chan (keep this form of address)", user)
+        self.assertNotIn("兄ちゃん → Nii-chan", user)
+        chinese = dict(source="Japanese", target="Chinese (Simplified)")
+        for prompt in (self.build(self.localized), self.build(languages=chinese)):
+            self.assertNotIn("Onii-chan", prompt.user)
+
+    def test_glossary_entries_override_built_in_forms(self):
+        self.terms = [*self.terms, Term("お兄ちゃん", "Big Bro", "character")]
+        user = self.build().user
+        self.assertIn("- お兄ちゃん → Big Bro", user)
+        self.assertNotIn("Onii-chan", user)
+
+    def test_review_prompt_keeps_honorifics_and_shows_later_translations(self):
+        self.ws.save_many(
+            [(self.rows[0], "Onii-chan, wait!"), (self.rows[1], "Where's Sayu-chan?")]
+        )
+        review = prompts.build(
+            prompts.chain({}),
+            self.languages,
+            self.rows,
+            [0],
+            terms=self.terms,
+            task="review",
+        )
+        self.assertIn(prompts.REVIEW_HONORIFICS, review.system)
+        self.assertIn("→ Where's Sayu-chan?", review.user)
+        localized = prompts.build(
+            self.localized, self.languages, self.rows, [0], task="review"
+        )
+        self.assertNotIn(prompts.REVIEW_HONORIFICS, localized.system)
+
+    def test_checker_flags_dropped_honorifics(self):
+        self.ws.save_many(
+            [(self.rows[0], "Brother, wait!"), (self.rows[1], "Where's Sayu-chan?")]
+        )
+        kept = quality.Checker(self.ws.check, "English", self.terms, honorifics=True)
+        self.assertEqual(kept.issues(self.rows[0]), ["honorific"])
+        self.assertEqual(kept.issues(self.rows[1]), [])
+        dropped = quality.Checker(self.ws.check, "English", self.terms)
+        self.assertEqual(dropped.issues(self.rows[0]), [])
+
+    def test_review_never_drops_an_honorific_unless_localized(self):
+        self.ws.save(self.rows[0], "Onii-chan, wait for me!")
+        reply = dict(
+            translations=[
+                dict(
+                    i=1,
+                    c="honorific",
+                    t="Brother, wait for me!",
+                    r="お兄ちゃん: brother",
+                )
+            ]
+        )
+        for sections, kept in ((prompts.chain({}), False), (self.localized, True)):
+            with self.subTest(kept=kept):
+                self.ws.dismiss()
+                run = runner.Run(
+                    self.ws,
+                    self.rows,
+                    [0],
+                    profile=Profile("p", model="m", keys=["k"]),
+                    provider=FakeProvider(reply=lambda recs, user: reply),
+                    sections=sections,
+                    terms=self.terms,
+                    settings={},
+                    task="review",
+                )
+                asyncio.run(run.run())
+                self.assertEqual(bool(self.ws.suggestions()), kept)
+
+    def test_oversteps(self):
+        current = "Onii-chan, wait for me!"
+        self.assertTrue(
+            quality.oversteps(current, "Brother, wait for me!", "honorific", True)
+        )
+        self.assertFalse(
+            quality.oversteps(current, "Nii-san, wait for me!", "honorific", True)
+        )
+        self.assertFalse(
+            quality.oversteps(current, "Brother, wait for me!", "honorific", False)
+        )
+        self.assertTrue(quality.oversteps(current, "Onii-chan, wait!", "grammar", True))
+        self.assertFalse(
+            quality.oversteps(current, "Onii-chan, wait!", "addition", True)
+        )
+
+
 class ReviewTests(WorkspaceCase):
     first = "いつもと同じなんだけど、とてもいいなって感じる。"
     second = "いつも自分にとっての節目を見ていてくれたのは晶穂だった。"
@@ -986,6 +1100,7 @@ class ReviewTests(WorkspaceCase):
                 translations=[
                     dict(
                         i=r["i"],
+                        c="quotes",
                         t="“" + r["translation"] + "”",
                         r="Added quotes to match dialogue format.",
                     )
@@ -1011,7 +1126,10 @@ class ReviewTests(WorkspaceCase):
             lambda recs, user: dict(
                 translations=[
                     dict(
-                        i=1, t="Ya", r="Source 「うん」 encloses the speech in quotes."
+                        i=1,
+                        c="quotes",
+                        t="Ya",
+                        r="Source 「うん」 encloses the speech in quotes.",
                     )
                 ]
             ),
@@ -1035,6 +1153,7 @@ class ReviewTests(WorkspaceCase):
                 translations=[
                     dict(
                         i=1,
+                        c="name",
                         t="“" + self.natural[1] + "”",
                         r="The source 晶穂 names Akiho, not Akio.",
                     )
@@ -1047,7 +1166,8 @@ class ReviewTests(WorkspaceCase):
         self.assertIn("「うん」", messages[0])
         self.assertIn("Earlier lines (reference only)", messages[0])
         self.assertEqual(
-            self.ws.suggestions()[("a.ks", self.rows[1].id)][0], self.natural[1]
+            self.ws.suggestions()[("a.ks", self.rows[1].id)],
+            (self.natural[1], "Name or term: The source 晶穂 names Akiho, not Akio."),
         )
 
     def test_empty_or_unexplained_rewrites_are_not_suggestions(self):
@@ -1059,13 +1179,35 @@ class ReviewTests(WorkspaceCase):
             with self.subTest(text=text, reason=reason):
                 run = self.review_run(
                     lambda recs, user, text=text, reason=reason: dict(
-                        translations=[dict(i=1, t=text, r=reason)]
+                        translations=[dict(i=1, c="meaning", t=text, r=reason)]
                     ),
                     indices=[0],
                 )
                 asyncio.run(run.run())
                 self.assertEqual(self.ws.suggestions(), {})
                 self.assertEqual(self.rows[0].translation, self.natural[0])
+
+    def test_review_needs_a_listed_error_and_never_just_trims(self):
+        longer = self.natural[0] + " Banget."
+        trimmed = "Rasanya sama, tapi menyenangkan."
+        for error, text, kept in (
+            (None, longer, False),
+            ("style", longer, False),
+            (["meaning"], longer, False),
+            ("grammar", trimmed, False),
+            ("meaning", trimmed, True),
+        ):
+            with self.subTest(error=error, text=text):
+                self.ws.dismiss()
+                item = dict(i=1, t=text, r="The source says it feels very nice.")
+                if error is not None:
+                    item["c"] = error
+                run = self.review_run(
+                    lambda recs, user, item=item: dict(translations=[item]),
+                    indices=[0],
+                )
+                asyncio.run(run.run())
+                self.assertEqual(bool(self.ws.suggestions()), kept)
 
     def test_failed_review_preserves_previous_suggestions(self):
         self.ws.suggest(self.rows[0], "Previous suggestion", "Previous reason")
@@ -1085,7 +1227,11 @@ class ReviewTests(WorkspaceCase):
             [0],
             Reply(
                 json.dumps(
-                    dict(translations=[dict(i=1, t="Old rewrite", r="old reason")])
+                    dict(
+                        translations=[
+                            dict(i=1, c="meaning", t="Old rewrite", r="old reason")
+                        ]
+                    )
                 ),
                 "stop",
             ),

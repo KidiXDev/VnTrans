@@ -190,6 +190,7 @@ class Run:
         self.names = quality.speaker_names(rows, terms)
         self.settings = SETTINGS | settings
         self.languages = dict(ws.manifest["languages"])
+        self.honorifics = prompts.keeps_honorifics(sections, self.languages)
         self.planned = {
             index: (rows[index].status, rows[index].translation) for index in indices
         }
@@ -454,6 +455,7 @@ class Run:
         suggested = {}
         for item in listed(reply.text, "translations"):
             number, text, reason = item.get("i"), item.get("t"), item.get("r", "")
+            error = item.get("c")
             if (
                 isinstance(number, bool)
                 or not isinstance(number, int)
@@ -461,6 +463,8 @@ class Run:
                 or not isinstance(text, str)
                 or not isinstance(reason, str)
                 or not reason.strip()
+                or not isinstance(error, str)
+                or error not in prompts.REVIEW_ERRORS
             ):
                 continue
             index = batch[number - 1]
@@ -479,8 +483,15 @@ class Run:
                 text = self.ws.check(row, text)
             except VnTransError:
                 continue
-            if row.translation is not None and text != row.translation:
-                suggested[index] = (text, reason.strip())
+            if (
+                row.translation is not None
+                and text != row.translation
+                and not quality.oversteps(row.translation, text, error, self.honorifics)
+            ):
+                suggested[index] = (
+                    text,
+                    f"{prompts.REVIEW_ERRORS[error]}: {reason.strip()}",
+                )
         reviewed = [index for index in batch if self.pending(index)]
         self.ws.replace_suggestions(
             [self.rows[index] for index in reviewed],

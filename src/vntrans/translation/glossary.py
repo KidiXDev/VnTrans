@@ -41,6 +41,66 @@ def match(terms, texts) -> list[Term]:
     return sorted(hits, key=lambda term: (-len(term.source), term.source, term.kind))
 
 
+# Built-in Japanese forms of address
+ADDRESS = {
+    **dict.fromkeys(
+        ("お兄ちゃん", "おにいちゃん", "おにーちゃん", "おにぃちゃん"), "Onii-chan"
+    ),
+    **dict.fromkeys(("お兄さん", "おにいさん", "おにーさん"), "Onii-san"),
+    **dict.fromkeys(("お兄様", "お兄さま", "おにいさま"), "Onii-sama"),
+    **dict.fromkeys(("兄ちゃん", "にいちゃん", "にーちゃん"), "Nii-chan"),
+    **dict.fromkeys(("兄さん", "にいさん", "にーさん"), "Nii-san"),
+    **dict.fromkeys(("兄様", "兄さま", "にいさま"), "Nii-sama"),
+    **dict.fromkeys(("兄貴", "アニキ", "あにき"), "Aniki"),
+    **dict.fromkeys(
+        ("お姉ちゃん", "おねえちゃん", "おねーちゃん", "おねぇちゃん"), "Onee-chan"
+    ),
+    **dict.fromkeys(("お姉さん", "おねえさん", "おねーさん"), "Onee-san"),
+    **dict.fromkeys(("お姉様", "お姉さま", "おねえさま"), "Onee-sama"),
+    **dict.fromkeys(("姉ちゃん", "ねえちゃん", "ねーちゃん"), "Nee-chan"),
+    **dict.fromkeys(("姉さん", "ねえさん", "ねーさん"), "Nee-san"),
+    **dict.fromkeys(("姉様", "姉さま", "ねえさま"), "Nee-sama"),
+    **dict.fromkeys(("姉貴", "アネキ", "あねき"), "Aneki"),
+    **dict.fromkeys(("先輩", "せんぱい", "センパイ"), "Senpai"),
+}
+SUFFIXES = {
+    "さん": "san",
+    "ちゃん": "chan",
+    "くん": "kun",
+    "君": "kun",
+    "様": "sama",
+    "さま": "sama",
+    "先輩": "senpai",
+    "先生": "sensei",
+    "殿": "dono",
+    "たん": "tan",
+}
+
+
+class Address:
+    """Forms of address and character name + honorific pairs, romanized, that the glossary doesn't cover."""
+
+    def __init__(self, terms):
+        known = {term.source.casefold() for term in terms if term.target.strip()}
+        table = dict(ADDRESS)
+        for term in terms:
+            if term.kind == "character" and term.approved and term.target.strip():
+                for suffix, romaji in SUFFIXES.items():
+                    table[term.source + suffix] = f"{term.target.strip()}-{romaji}"
+        self.table = {
+            source: target
+            for source, target in table.items()
+            if source.casefold() not in known
+        }
+        self.pattern = re.compile(
+            "|".join(map(re.escape, sorted(self.table, key=len, reverse=True)))
+            or "(?!)"
+        )
+
+    def found(self, text: str) -> dict[str, str]:
+        return {match[0]: self.table[match[0]] for match in self.pattern.finditer(text)}
+
+
 def loads(data: str) -> list[Term]:
     """Read VnTrans glossary JSON; `src`/`dst`/`info` keys from other tools are accepted too."""
     try:

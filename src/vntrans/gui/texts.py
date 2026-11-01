@@ -3,8 +3,14 @@
 import re
 import time
 from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 
 from .. import workspace
+
+TOKENS = re.compile(r"\s+|\w+|[^\w\s]")
+MARKDOWN = re.compile(r"([\\`*_{}\[\]()#+\-.!|~<>&])")
+EDGE_SPACE = re.compile(r"(\s*)(.*?)(\s*)", re.S)
+REMOVED, ADDED = "#e5484d", "#30a46c"
 
 STATES = (
     "all",
@@ -28,6 +34,36 @@ FIELDS = {
 
 def state(row):
     return "failed" if row.error and row.status == "new" else row.status
+
+
+def escape_markdown(text):
+    return MARKDOWN.sub(r"\\\1", text).replace("\n", "\\\n")
+
+
+def _marked(chunk, color, delimiter):
+    lead, core, trail = EDGE_SPACE.fullmatch(chunk).groups()
+    if not core:
+        return chunk
+    return f"{lead}<font color='{color}'>{delimiter}{escape_markdown(core)}{delimiter}</font>{trail}"
+
+
+def diff_markdown(old: str, new: str) -> str:
+    """`new` as markdown, with words removed from `old` struck through in red and added words in bold green."""
+    before, after = TOKENS.findall(old), TOKENS.findall(new)
+    parts = []
+    for op, i1, i2, j1, j2 in SequenceMatcher(
+        None, before, after, autojunk=False
+    ).get_opcodes():
+        removed, added = "".join(before[i1:i2]), "".join(after[j1:j2])
+        if op == "equal":
+            parts.append(escape_markdown(added))
+        elif op == "replace":
+            parts.append(
+                _marked(removed, REMOVED, "~~") + " " + _marked(added, ADDED, "**")
+            )
+        else:
+            parts.append(_marked(removed, REMOVED, "~~") + _marked(added, ADDED, "**"))
+    return "".join(parts)
 
 
 def cooperative(rows, batch=250):
