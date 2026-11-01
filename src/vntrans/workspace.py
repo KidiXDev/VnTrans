@@ -62,8 +62,12 @@ class Row:
 
 def connect(path: Path) -> sqlite3.Connection:
     db = sqlite3.connect(path)
-    db.execute("PRAGMA journal_mode=WAL")
-    db.executescript(SCHEMA)
+    try:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.executescript(SCHEMA)
+    except BaseException:
+        db.close()
+        raise
     return db
 
 

@@ -54,6 +54,9 @@ class PipelineTests(unittest.TestCase):
                  "context": {"controls": ["[l]"], "literal": False, "scene": 1, "speaker": None}}]}
         expected = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         self.assertEqual(encode_document(value), expected)
+        value["units"][0]["context"]["large_integer"] = 2**100
+        expected = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        self.assertEqual(encode_document(value), expected)
 
     def test_reordered_units_and_cli_api_parity(self):
         self.export()
@@ -248,6 +251,28 @@ class PipelineTests(unittest.TestCase):
             iterator.close()
         self.assertTrue(opened)
         self.assertTrue(all(stream.closed for stream in opened))
+
+    def test_rebuild_retains_only_a_bounded_number_of_documents(self):
+        for index in range(10):
+            (self.source / f"extra-{index}.ks").write_bytes(b"Another line\n")
+        self.export()
+        from vntrans import pipeline
+        live = peak = 0
+        class Document(dict):
+            def __init__(self, value):
+                nonlocal live, peak
+                super().__init__(value)
+                live += 1
+                peak = max(peak, live)
+
+            def __del__(self):
+                nonlocal live
+                live -= 1
+        read = pipeline.read_document
+        with patch("vntrans.pipeline.read_document", side_effect=lambda *args: Document(read(*args))):
+            rebuild(self.source, translations=self.json_dir, output=self.output)
+        self.assertLessEqual(peak, 3)
+        self.assertEqual(live, 0)
 
     def test_single_file_and_invalid_options(self):
         report = extract(self.source / "test.ks", output=self.json_dir)

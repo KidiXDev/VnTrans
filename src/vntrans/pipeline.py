@@ -207,7 +207,11 @@ def write_file(folder, relative, data):
 
 
 def encode_document(doc):
-    return orjson.dumps(doc, option=orjson.OPT_INDENT_2 | orjson.OPT_APPEND_NEWLINE)
+    try:
+        return orjson.dumps(doc, option=orjson.OPT_INDENT_2 | orjson.OPT_APPEND_NEWLINE)
+    except orjson.JSONEncodeError:
+        # Engine extensions can still use JSON integers larger than 64 bits.
+        return (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
 
 def publish(output: Path, files, progress=_no_progress):

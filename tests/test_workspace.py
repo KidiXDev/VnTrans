@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import sqlite3
 import unittest
 from unittest.mock import patch
 from dataclasses import replace
@@ -214,6 +215,13 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(list(self.ws_root.iterdir()), [])
         self.assertFalse(list(self.root.glob(".vntrans-*")))
         self.create()
+
+    def test_database_initialization_failure_closes_before_staging_cleanup(self):
+        with patch("vntrans.workspace.SCHEMA", "invalid SQL"):
+            with self.assertRaises(sqlite3.DatabaseError):
+                workspace.create(self.source, self.ws_root, name="Test")
+        self.assertFalse(self.ws_root.exists())
+        self.assertFalse(list(self.root.glob(".vntrans-*")))
 
     def test_create_does_not_replace_a_destination_created_during_processing(self):
         def collide(phase, completed, total, filename):
