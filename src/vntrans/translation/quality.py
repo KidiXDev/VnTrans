@@ -3,7 +3,6 @@
 import json
 import re
 import unicodedata
-from difflib import SequenceMatcher
 
 from ..model import VnTransError
 from ..text import MARKER, plain
@@ -209,18 +208,21 @@ def _letters(text: str) -> str:
 
 
 def romanized(source: str, text: str) -> bool:
-    """True when `text` spells most of the source's hiragana out in Latin letters instead of translating it.
+    """True when `text` spells the source's hiragana phrases out in Latin letters instead of translating it.
 
-    Honorifics and forms of address are left out: keeping them romanized is intended."""
+    At least two phrases must appear and cover most of the source's hiragana, so a kept laugh or a chance
+    overlap with a short line is not flagged. Honorifics and forms of address are left out: keeping them
+    romanized is intended."""
     for kana in KEPT_KANA:
         source = source.replace(kana, " ")
-    spelled = _letters("".join(map(romaji, HIRAGANA.findall(source))))
-    if len(spelled) < 6:
-        return False
-    blocks = SequenceMatcher(
-        None, spelled, _letters(text), autojunk=False
-    ).get_matching_blocks()
-    return 2 * sum(block.size for block in blocks if block.size >= 3) >= len(spelled)
+    phrases = [
+        spelled
+        for spelled in (_letters(romaji(run)) for run in HIRAGANA.findall(source))
+        if len(spelled) >= 3
+    ]
+    letters = _letters(text)
+    found = [phrase for phrase in phrases if phrase in letters]
+    return len(found) >= 2 and 5 * len("".join(found)) >= 3 * len("".join(phrases))
 
 
 def unfit(revision: str, current: str, source: str, script) -> str:

@@ -982,6 +982,19 @@ class ReviewGuardTests(unittest.TestCase):
             quality.romanized("お兄ちゃん、待って！", "Onii-chan, tunggu!")
         )
 
+    def test_short_lines_and_kept_laughs_are_not_romanized(self):
+        for source, text in (
+            ("あはは、そっか", "Ahaha, gitu ya."),
+            ("えへへ、そうなんだ", "Ehehe, begitu ya."),
+            ("そうなんだ", "Kenapa kamu mendadak begitu?"),
+            ("そうなんだ", "Sou nanda."),
+            ("うふふふふふ", "Ufufufufu~"),
+        ):
+            with self.subTest(source=source, text=text):
+                self.assertFalse(quality.romanized(source, text))
+        self.assertTrue(quality.romanized("あはは、そっか", "Ahaha, sokka."))
+        self.assertTrue(quality.romanized("えへへ、そうなんだ", "Ehehe, sou nanda."))
+
     def test_unfit_only_flags_regressions_from_the_current_translation(self):
         current = "Rasanya sama seperti biasanya, tapi terasa menyenangkan."
         cases = {
