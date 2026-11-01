@@ -16,8 +16,13 @@ class Unit:
     context: dict[str, Any] = field(default_factory=dict)
 
     def document(self) -> dict[str, Any]:
-        return dict(id=self.id, kind=self.kind, source=self.source,
-                    translation=None, context=self.context)
+        return dict(
+            id=self.id,
+            kind=self.kind,
+            source=self.source,
+            translation=None,
+            context=self.context,
+        )
 
 
 class Script(Protocol):
@@ -26,12 +31,18 @@ class Script(Protocol):
     units: list[Unit]
     warnings: list[str]
 
-    def rebuild(self, translations: dict[str, str], *, wrap_columns: int | None,
-                output_encoding: str | None) -> bytes: ...
+    def rebuild(
+        self,
+        translations: dict[str, str],
+        *,
+        wrap_columns: int | None,
+        output_encoding: str | None,
+    ) -> bytes: ...
 
 
 class Engine(Protocol):
     def probe(self, name: str, data: bytes) -> bool: ...
 
-    def extract(self, name: str, data: bytes, *, encoding: str | None,
-                language_index: int) -> Script: ...
+    def extract(
+        self, name: str, data: bytes, *, encoding: str | None, language_index: int
+    ) -> Script: ...

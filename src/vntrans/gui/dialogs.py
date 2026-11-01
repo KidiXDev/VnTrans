@@ -29,21 +29,40 @@ def portal_pick(title, folder):
     with open_dbus_connection(bus="SESSION") as connection:
         token = "vntrans_" + secrets.token_hex(6)
         sender = connection.unique_name.removeprefix(":").replace(".", "_")
-        rule = MatchRule(type="signal", interface="org.freedesktop.portal.Request", member="Response",
-                         path=f"/org/freedesktop/portal/desktop/request/{sender}/{token}")
+        rule = MatchRule(
+            type="signal",
+            interface="org.freedesktop.portal.Request",
+            member="Response",
+            path=f"/org/freedesktop/portal/desktop/request/{sender}/{token}",
+        )
         connection.send_and_get_reply(message_bus.AddMatch(rule))
         with connection.filter(rule) as responses:
-            chooser = DBusAddress("/org/freedesktop/portal/desktop", bus_name=PORTAL,
-                                  interface="org.freedesktop.portal.FileChooser")
-            connection.send_and_get_reply(new_method_call(chooser, "OpenFile", "ssa{sv}", (
-                "", title, {"handle_token": ("s", token), "directory": ("b", folder)})))
+            chooser = DBusAddress(
+                "/org/freedesktop/portal/desktop",
+                bus_name=PORTAL,
+                interface="org.freedesktop.portal.FileChooser",
+            )
+            connection.send_and_get_reply(
+                new_method_call(
+                    chooser,
+                    "OpenFile",
+                    "ssa{sv}",
+                    (
+                        "",
+                        title,
+                        {"handle_token": ("s", token), "directory": ("b", folder)},
+                    ),
+                )
+            )
             code, results = connection.recv_until_filtered(responses).body
     uris = results.get("uris", ("as", []))[1]
     return unquote(urlparse(uris[0]).path) if code == 0 and uris else None
 
 
 def osascript_pick(title, folder):
-    script = f'POSIX path of (choose {"folder" if folder else "file"} with prompt "{title}")'
+    script = (
+        f'POSIX path of (choose {"folder" if folder else "file"} with prompt "{title}")'
+    )
     result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     return result.stdout.strip() or None if result.returncode == 0 else None
 
@@ -51,6 +70,7 @@ def osascript_pick(title, folder):
 def tk_pick(title, folder):
     import tkinter
     from tkinter import filedialog
+
     root = tkinter.Tk()
     root.withdraw()
     root.attributes("-topmost", True)

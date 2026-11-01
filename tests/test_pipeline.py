@@ -1,12 +1,13 @@
-from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from fixtures import scenario
+
 from vntrans import VnTransError, extract, rebuild, validate
 from vntrans.cli import main
 from vntrans.engines.kirikiri.scn import ScnScript
@@ -44,47 +45,104 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(validate(self.source, translations=self.json_dir).files, 2)
         self.assertFalse(self.output.exists())
         rebuild(self.source, translations=self.json_dir, output=self.output)
-        self.assertEqual((self.output / "nested/test.ks.scn").read_bytes(), self.original)
-        self.assertEqual((self.output / "test.ks").read_bytes(), b"; comment\r\nHello\n")
-        self.assertEqual(before, {p: p.read_bytes() for p in self.json_dir.rglob("*.json")})
+        self.assertEqual(
+            (self.output / "nested/test.ks.scn").read_bytes(), self.original
+        )
+        self.assertEqual(
+            (self.output / "test.ks").read_bytes(), b"; comment\r\nHello\n"
+        )
+        self.assertEqual(
+            before, {p: p.read_bytes() for p in self.json_dir.rglob("*.json")}
+        )
 
     def test_accelerated_document_output_matches_utf8_json(self):
         from vntrans.pipeline import encode_document
-        value = {"source": "こんにちは\u2028世界", "units": [{"id": "span/1", "translation": "⟦0⟧\nHi",
-                 "context": {"controls": ["[l]"], "literal": False, "scene": 1, "speaker": None}}]}
-        expected = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+        value = {
+            "source": "こんにちは\u2028世界",
+            "units": [
+                {
+                    "id": "span/1",
+                    "translation": "⟦0⟧\nHi",
+                    "context": {
+                        "controls": ["[l]"],
+                        "literal": False,
+                        "scene": 1,
+                        "speaker": None,
+                    },
+                }
+            ],
+        }
+        expected = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode(
+            "utf-8"
+        )
         self.assertEqual(encode_document(value), expected)
         value["units"][0]["context"]["large_integer"] = 2**100
-        expected = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        expected = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode(
+            "utf-8"
+        )
         self.assertEqual(encode_document(value), expected)
 
     def test_reordered_units_and_cli_api_parity(self):
         self.export()
+
         def edit(doc):
             doc["units"].reverse()
             for unit in doc["units"]:
                 if unit["kind"] == "dialogue":
                     unit["translation"] = "Translated line"
+
         self.edit("nested/test.ks.scn.json", edit)
         rebuild(self.source, translations=self.json_dir, output=self.output)
         cli_output = self.root / "cli-patch"
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            self.assertEqual(main(["rebuild", str(self.source), "--translations", str(self.json_dir),
-                                   "--output", str(cli_output)]), 0)
-        self.assertEqual((cli_output / "nested/test.ks.scn").read_bytes(),
-                         (self.output / "nested/test.ks.scn").read_bytes())
+            self.assertEqual(
+                main(
+                    [
+                        "rebuild",
+                        str(self.source),
+                        "--translations",
+                        str(self.json_dir),
+                        "--output",
+                        str(cli_output),
+                    ]
+                ),
+                0,
+            )
+        self.assertEqual(
+            (cli_output / "nested/test.ks.scn").read_bytes(),
+            (self.output / "nested/test.ks.scn").read_bytes(),
+        )
         script = ScnScript((cli_output / "nested/test.ks.scn").read_bytes(), 0)
-        self.assertTrue(all(u.source == "Translated line" for u in script.units if u.kind == "dialogue"))
+        self.assertTrue(
+            all(
+                u.source == "Translated line"
+                for u in script.units
+                if u.kind == "dialogue"
+            )
+        )
 
     def test_output_encoding_override_applies_only_to_text_scripts(self):
         self.export()
-        rebuild(self.source, translations=self.json_dir, output=self.output, output_encoding="utf-8-sig")
-        self.assertTrue((self.output / "test.ks").read_bytes().startswith(b"\xef\xbb\xbf"))
-        self.assertEqual((self.output / "nested/test.ks.scn").read_bytes(), self.original)
+        rebuild(
+            self.source,
+            translations=self.json_dir,
+            output=self.output,
+            output_encoding="utf-8-sig",
+        )
+        self.assertTrue(
+            (self.output / "test.ks").read_bytes().startswith(b"\xef\xbb\xbf")
+        )
+        self.assertEqual(
+            (self.output / "nested/test.ks.scn").read_bytes(), self.original
+        )
 
     def test_wrap_warnings_are_reported(self):
         self.export()
-        self.edit("test.ks.json", lambda doc: doc["units"][0].update(translation="unbreakable"))
+        self.edit(
+            "test.ks.json",
+            lambda doc: doc["units"][0].update(translation="unbreakable"),
+        )
         report = validate(self.source, translations=self.json_dir, wrap_columns=3)
         self.assertTrue(any("test.ks: unbreakable word" in w for w in report.warnings))
 
@@ -113,13 +171,20 @@ class PipelineTests(unittest.TestCase):
                     rebuild(self.source, translations=self.json_dir, output=self.output)
                 self.assertFalse(self.output.exists())
         path.write_text(original)
-        self.assertEqual((self.source / "nested/test.ks.scn").read_bytes(), self.original)
+        self.assertEqual(
+            (self.source / "nested/test.ks.scn").read_bytes(), self.original
+        )
 
     def test_bad_json_extra_files_and_stale_source(self):
         self.export()
         path = self.json_dir / "test.ks.json"
         original = path.read_bytes()
-        for bad in (b"{", b'{"engine":"kirikiri","engine":"other"}', b"[]", b'{"units": NaN}'):
+        for bad in (
+            b"{",
+            b'{"engine":"kirikiri","engine":"other"}',
+            b"[]",
+            b'{"units": NaN}',
+        ):
             path.write_bytes(bad)
             with self.subTest(bad=bad), self.assertRaises(VnTransError):
                 validate(self.source, translations=self.json_dir)
@@ -137,7 +202,12 @@ class PipelineTests(unittest.TestCase):
         self.export()
         with self.assertRaises(VnTransError):
             self.export()
-        for output in (self.source, self.source / "patch", self.json_dir / "patch", self.root):
+        for output in (
+            self.source,
+            self.source / "patch",
+            self.json_dir / "patch",
+            self.root,
+        ):
             with self.subTest(output=output), self.assertRaises(VnTransError):
                 rebuild(self.source, translations=self.json_dir, output=output)
         self.output.mkdir()
@@ -153,7 +223,10 @@ class PipelineTests(unittest.TestCase):
                 self.export()
             sources.assert_not_called()
         self.output.mkdir()
-        with patch("vntrans.pipeline.source_files") as sources, patch("vntrans.pipeline.read_document") as read:
+        with (
+            patch("vntrans.pipeline.source_files") as sources,
+            patch("vntrans.pipeline.read_document") as read,
+        ):
             with self.assertRaisesRegex(VnTransError, "destination already exists"):
                 rebuild(self.source, translations=self.json_dir, output=self.output)
             sources.assert_not_called()
@@ -167,16 +240,26 @@ class PipelineTests(unittest.TestCase):
 
     def test_progress_callback_covers_each_operation(self):
         events = []
-        callback = lambda *args: events.append(args)
+
+        def callback(*args):
+            events.append(args)
+
         extract(self.source, output=self.json_dir, progress=callback)
         self.assertIn(("Extracting", 3, 3, "test.ks"), events)
         self.assertEqual(events[-1], ("Writing output", 2, 2, ""))
         events.clear()
         validate(self.source, translations=self.json_dir, progress=callback)
-        self.assertEqual({phase for phase, *_ in events}, {"Scanning translations", "Validating"})
+        self.assertEqual(
+            {phase for phase, *_ in events}, {"Scanning translations", "Validating"}
+        )
         self.assertEqual(events[-1], ("Validating", 2, 2, "test.ks"))
         events.clear()
-        rebuild(self.source, translations=self.json_dir, output=self.output, progress=callback)
+        rebuild(
+            self.source,
+            translations=self.json_dir,
+            output=self.output,
+            progress=callback,
+        )
         self.assertIn(("Rebuilding", 2, 2, "test.ks"), events)
         self.assertEqual(events[-1], ("Writing output", 2, 2, ""))
 
@@ -186,23 +269,42 @@ class PipelineTests(unittest.TestCase):
         (self.source / "readme.txt").write_bytes(b"not a script")
         (self.source / "empty").mkdir()
         for operation, options, phase in (
-                (extract, dict(output=self.json_dir), "Extracting"),
-                (validate, dict(translations=self.json_dir), "Validating"),
-                (rebuild, dict(translations=self.json_dir, output=self.output), "Rebuilding")):
+            (extract, dict(output=self.json_dir), "Extracting"),
+            (validate, dict(translations=self.json_dir), "Validating"),
+            (
+                rebuild,
+                dict(translations=self.json_dir, output=self.output),
+                "Rebuilding",
+            ),
+        ):
             with self.subTest(operation=operation.__name__):
                 events = []
-                operation(self.source, **options, progress=lambda *args: events.append(args))
+                operation(
+                    self.source,
+                    **options,
+                    progress=lambda *args, events=events: events.append(args),
+                )
                 active = [event for event in events if event[0] == phase]
                 totals = {total for _, _, total, _ in active}
                 self.assertEqual(len(totals), 1)
                 self.assertNotIn(0, totals)
                 self.assertEqual(active[0][1], 0)
                 self.assertEqual(active[-1][1], active[-1][2])
-                ratios = [completed / total if total else 0 for _, completed, total, _ in events]
+                ratios = [
+                    completed / total if total else 0
+                    for _, completed, total, _ in events
+                ]
                 self.assertEqual(ratios, sorted(ratios))
-                self.assertEqual({name for name, *_ in events},
-                                 {"Scanning scripts" if phase == "Extracting" else "Scanning translations", phase}
-                                 | ({"Writing output"} if operation != validate else set()))
+                self.assertEqual(
+                    {name for name, *_ in events},
+                    {
+                        "Scanning scripts"
+                        if phase == "Extracting"
+                        else "Scanning translations",
+                        phase,
+                    }
+                    | ({"Writing output"} if operation != validate else set()),
+                )
 
     def test_symlinks_and_traversal(self):
         link = self.root / "link"
@@ -236,16 +338,24 @@ class PipelineTests(unittest.TestCase):
             if phase == "Writing output" and completed == total:
                 self.output.mkdir()
                 (self.output / "keep").write_text("unrelated", encoding="utf-8")
+
         with self.assertRaisesRegex(VnTransError, "destination appeared"):
-            rebuild(self.source, translations=self.json_dir, output=self.output, progress=collide)
+            rebuild(
+                self.source,
+                translations=self.json_dir,
+                output=self.output,
+                progress=collide,
+            )
         self.assertEqual((self.output / "keep").read_text(), "unrelated")
         self.assertFalse(list(self.root.glob(".vntrans-*")))
 
     def test_streamed_write_failure_publishes_nothing(self):
         self.export()
-        with patch("vntrans.pipeline.write_file", side_effect=OSError("disk full")):
-            with self.assertRaisesRegex(OSError, "disk full"):
-                rebuild(self.source, translations=self.json_dir, output=self.output)
+        with (
+            patch("vntrans.pipeline.write_file", side_effect=OSError("disk full")),
+            self.assertRaisesRegex(OSError, "disk full"),
+        ):
+            rebuild(self.source, translations=self.json_dir, output=self.output)
         self.assertFalse(self.output.exists())
         self.assertFalse(list(self.root.glob(".vntrans-*")))
 
@@ -254,7 +364,9 @@ class PipelineTests(unittest.TestCase):
         self.export()
         report = rebuild(self.source, translations=self.json_dir, output=self.output)
         self.assertEqual(report.files, 3)
-        self.assertEqual((self.output / "test.ks.extra.ks").read_bytes(), b"Another line\n")
+        self.assertEqual(
+            (self.output / "test.ks.extra.ks").read_bytes(), b"Another line\n"
+        )
 
     def test_read_ahead_closes_unused_file_handles(self):
         paths = []
@@ -263,12 +375,15 @@ class PipelineTests(unittest.TestCase):
             path.write_bytes(b"Hello\n")
             paths.append(path)
         from vntrans import pipeline
+
         opened = []
         original_open = pipeline._open
+
         def remember(path):
             stream = original_open(path)
             opened.append(stream)
             return stream
+
         with patch("vntrans.pipeline._open", side_effect=remember):
             iterator = pipeline.opened_files(paths)
             next(iterator)
@@ -281,7 +396,9 @@ class PipelineTests(unittest.TestCase):
             (self.source / f"extra-{index}.ks").write_bytes(b"Another line\n")
         self.export()
         from vntrans import pipeline
+
         live = peak = 0
+
         class Document(dict):
             def __init__(self, value):
                 nonlocal live, peak
@@ -292,8 +409,12 @@ class PipelineTests(unittest.TestCase):
             def __del__(self):
                 nonlocal live
                 live -= 1
+
         read = pipeline.read_document
-        with patch("vntrans.pipeline.read_document", side_effect=lambda *args: Document(read(*args))):
+        with patch(
+            "vntrans.pipeline.read_document",
+            side_effect=lambda *args: Document(read(*args)),
+        ):
             rebuild(self.source, translations=self.json_dir, output=self.output)
         self.assertLessEqual(peak, 3)
         self.assertEqual(live, 0)
@@ -302,11 +423,23 @@ class PipelineTests(unittest.TestCase):
         report = extract(self.source / "test.ks", output=self.json_dir)
         self.assertEqual(report.files, 1)
         with self.assertRaises(VnTransError):
-            validate(self.source / "test.ks", translations=self.json_dir, wrap_columns=0)
+            validate(
+                self.source / "test.ks", translations=self.json_dir, wrap_columns=0
+            )
         for engine in ("missing",):
             with self.assertRaises(VnTransError):
                 extract(self.source, output=self.output, engine=engine)
         err = io.StringIO()
         with redirect_stderr(err):
-            self.assertEqual(main(["extract", str(self.root / "missing"), "--output", str(self.output)]), 1)
+            self.assertEqual(
+                main(
+                    [
+                        "extract",
+                        str(self.root / "missing"),
+                        "--output",
+                        str(self.output),
+                    ]
+                ),
+                1,
+            )
         self.assertIn("does not exist", err.getvalue())

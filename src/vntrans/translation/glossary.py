@@ -1,8 +1,8 @@
 """Project terminology: approved entries are injected only where their source text occurs."""
 
-from dataclasses import asdict, dataclass, field
 import json
 import re
+from dataclasses import asdict, dataclass, field
 
 from ..model import VnTransError
 
@@ -57,17 +57,39 @@ def loads(data: str) -> list[Term]:
         target = value.get("target", value.get("dst", ""))
         notes = value.get("notes", value.get("info", ""))
         kind = value.get("kind", "term")
-        if not isinstance(source, str) or not source.strip() or not isinstance(target, str) \
-                or not isinstance(notes, str) or kind not in KINDS:
+        if (
+            not isinstance(source, str)
+            or not source.strip()
+            or not isinstance(target, str)
+            or not isinstance(notes, str)
+            or kind not in KINDS
+        ):
             raise VnTransError(f"invalid glossary entry: {value!r}")
-        terms.append(Term(source.strip(), target.strip(), kind, notes, bool(value.get("case_sensitive", False)),
-                          bool(value.get("approved", True))))
+        terms.append(
+            Term(
+                source.strip(),
+                target.strip(),
+                kind,
+                notes,
+                bool(value.get("case_sensitive", False)),
+                bool(value.get("approved", True)),
+            )
+        )
     return terms
 
 
 def dumps(terms) -> str:
-    return json.dumps([{k: v for k, v in asdict(term).items() if k not in ("id", "evidence")} for term in terms],
-                      ensure_ascii=False, indent=2) + "\n"
+    return (
+        json.dumps(
+            [
+                {k: v for k, v in asdict(term).items() if k not in ("id", "evidence")}
+                for term in terms
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 RULE = re.compile(r"^(pre|post)\s+(.+?)\s+=>(?:\s(.*))?$")
@@ -79,6 +101,7 @@ class Rules:
 
     `pre` rewrites source text sent to the model, `post` rewrites model output. Both touch
     only visible text, never ⟦n⟧ placeholders."""
+
     pre: list = field(default_factory=list)
     post: list = field(default_factory=list)
 
@@ -91,7 +114,9 @@ class Rules:
                 continue
             found = RULE.match(line)
             if not found:
-                raise VnTransError(f"line {number}: expected `pre|post FIND => REPLACE`")
+                raise VnTransError(
+                    f"line {number}: expected `pre|post FIND => REPLACE`"
+                )
             stage, find, replace = found[1], found[2], found[3] or ""
             if len(find) > 2 and find.startswith("/") and find.endswith("/"):
                 try:
@@ -101,7 +126,9 @@ class Rules:
                     raise VnTransError(f"line {number}: {exc}") from None
                 getattr(rules, stage).append((pattern, replace))
             else:
-                getattr(rules, stage).append((re.compile(re.escape(find)), lambda match, value=replace: value))
+                getattr(rules, stage).append(
+                    (re.compile(re.escape(find)), lambda match, value=replace: value)
+                )
         return rules
 
     @staticmethod

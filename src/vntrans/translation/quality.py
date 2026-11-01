@@ -20,7 +20,7 @@ LABEL = re.compile(r"\s*([^\s:：⟦]+(?: [^\s:：⟦]+){0,2})\s*[:：]\s*")
 QUOTE = re.compile(r"[「『“\"'‘（(]")
 SPEECH = re.compile(r"(?:\s|⟦\d+⟧)*(?:「[^「」]*」|『[^『』]*』)(?:\s|⟦\d+⟧)*")
 EDGES = re.compile(r"((?:\s|⟦\d+⟧)*)(.*?)((?:\s|⟦\d+⟧)*)", re.S)
-MARKS = "\"“”„«»「」『』"
+MARKS = '"“”„«»「」『』'
 KANA = re.compile(r"[぀-ヿｦ-ﾟ]")
 KANJI = re.compile(r"[㐀-䶿一-鿿]")
 HANGUL = re.compile(r"[가-힯]")
@@ -41,9 +41,21 @@ def translatable(source: str, language: str) -> bool:
 def speaker_names(rows, terms=()) -> set[str]:
     """Casefolded character names a model might put before a line: speakers as written and translated,
     and glossary characters."""
-    names = {name for row in rows if row.kind == "speaker" for name in (row.source, row.translation) if name}
+    names = {
+        name
+        for row in rows
+        if row.kind == "speaker"
+        for name in (row.source, row.translation)
+        if name
+    }
     names |= {row.speaker for row in rows if row.speaker}
-    names |= {name for term in terms if term.kind == "character" for name in (term.source, term.target) if name}
+    names |= {
+        name
+        for term in terms
+        if term.kind == "character"
+        for name in (term.source, term.target)
+        if name
+    }
     return {name.strip().casefold() for name in names if name.strip()}
 
 
@@ -55,8 +67,10 @@ def unprefix(text: str, source: str, names) -> str:
     match = LABEL.match(text)
     if not match or LABEL.match(source):
         return text
-    rest = text[match.end():]
-    if match[1].casefold() in names or (QUOTE.match(source.lstrip()) and QUOTE.match(rest)):
+    rest = text[match.end() :]
+    if match[1].casefold() in names or (
+        QUOTE.match(source.lstrip()) and QUOTE.match(rest)
+    ):
         return rest
     return text
 
@@ -65,7 +79,9 @@ def unruby(text: str, row, formats) -> str:
     """`text` without the ruby markers of `row`'s source: furigana is a Japanese reading aid."""
     if "⟦" not in text:
         return text
-    return plain(text, json.loads(row.context).get("controls", []), formats.get(row.file, ""))
+    return plain(
+        text, json.loads(row.context).get("controls", []), formats.get(row.file, "")
+    )
 
 
 def requote(text: str, source: str) -> str:
@@ -95,7 +111,15 @@ def tidy(text: str, row, names, formats) -> str:
 
 def _unquote(text: str) -> str:
     head, core, tail = EDGES.fullmatch(text).groups()
-    if len(core) >= 2 and core[0] + core[-1] in ('""', "“”", "„“", "„”", "«»", "「」", "『』"):
+    if len(core) >= 2 and core[0] + core[-1] in (
+        '""',
+        "“”",
+        "„“",
+        "„”",
+        "«»",
+        "「」",
+        "『』",
+    ):
         return head + core[1:-1] + tail
     return text
 
@@ -126,9 +150,15 @@ class Checker:
         self.names = names
         self.formats = formats or {}
         self.residue = residue(target)
-        self.terms = [(term.source if term.case_sensitive else term.source.casefold(), term.case_sensitive,
-                       term.target.casefold()) for term in terms
-                      if term.approved and term.source and term.target.strip()]
+        self.terms = [
+            (
+                term.source if term.case_sensitive else term.source.casefold(),
+                term.case_sensitive,
+                term.target.casefold(),
+            )
+            for term in terms
+            if term.approved and term.source and term.target.strip()
+        ]
 
     def issues(self, row) -> list[str]:
         if row.translation is None or row.status == "excluded":
@@ -140,15 +170,25 @@ class Checker:
             found.append("invalid")
         if self.residue.search(MARKER.sub("", row.translation)):
             found.append("residue")
-        if row.translation == row.source and (KANA.search(row.source) or KANJI.search(row.source)):
+        if row.translation == row.source and (
+            KANA.search(row.source) or KANJI.search(row.source)
+        ):
             found.append("same")
-        if row.kind == "dialogue" and row.translation.count("\n") != row.source.count("\n"):
+        if row.kind == "dialogue" and row.translation.count("\n") != row.source.count(
+            "\n"
+        ):
             found.append("lines")
         source, folded = row.source.casefold(), row.translation.casefold()
-        if any((needle in row.source if case else needle in source) and target not in folded
-               for needle, case, target in self.terms):
+        if any(
+            (needle in row.source if case else needle in source)
+            and target not in folded
+            for needle, case, target in self.terms
+        ):
             found.append("glossary")
-        if row.kind != "speaker" and unprefix(row.translation, row.source, self.names) != row.translation:
+        if (
+            row.kind != "speaker"
+            and unprefix(row.translation, row.source, self.names) != row.translation
+        ):
             found.append("speaker")
         if unruby(row.translation, row, self.formats) != row.translation:
             found.append("ruby")

@@ -1,8 +1,8 @@
 """Prompt section chain: batches and deterministic system/user messages."""
 
-from dataclasses import dataclass
 import hashlib
 import json
+from dataclasses import dataclass
 
 from ..text import plain
 from . import glossary
@@ -35,13 +35,15 @@ STYLE_PRESETS = {
         "- Keep name order as written in the source.\n"
         "- Use “ (opening) and ” (closing) for source 「…」 and 『…』; keep unquoted narration unquoted.\n"
         "- Keep ellipses, dashes and stammering where they show hesitation or emotion.\n"
-        "- Write sound effects and interjections the way a {target} reader would hear them."),
+        "- Write sound effects and interjections the way a {target} reader would hear them."
+    ),
     "Localize": (
         "- Drop honorifics and convey the relationship through word choice instead.\n"
         "- Adapt jokes, idioms and wordplay to natural {target} equivalents.\n"
         "- Use “ (opening) and ” (closing) for source 「…」 and 『…』; keep unquoted narration unquoted.\n"
         "- Keep ellipses, dashes and stammering where they show hesitation or emotion.\n"
-        "- Write sound effects and interjections the way a {target} reader would hear them."),
+        "- Write sound effects and interjections the way a {target} reader would hear them."
+    ),
 }
 
 DEFAULTS = {
@@ -51,7 +53,8 @@ DEFAULTS = {
         "without adding, omitting or softening content.\n"
         "Lines must fit the game's text box. When a faithful translation would run noticeably longer than the "
         "source, say the same thing more concisely: tighter phrasing, shorter words, no filler. Never drop "
-        "meaning, nuance, names or emotion to save space."),
+        "meaning, nuance, names or emotion to save space."
+    ),
     "style": STYLE_PRESETS["Keep honorifics"],
     "instructions": "",
 }
@@ -68,17 +71,20 @@ CONTRACT = (
     "- Keep every placeholder such as ⟦0⟧ exactly once and in the same order. Placeholders stand for game "
     "commands: never translate, remove or add them.\n"
     "- Use \\n for a line break inside a translation. Speaker names, titles and choices stay on one line.\n"
-    "- Use the glossary and character translations whenever those names or terms appear.")
+    "- Use the glossary and character translations whenever those names or terms appear."
+)
 
 THINKING = (
     'Before translating, think in the reply\'s "why" field, which comes before "translations" in the JSON '
     "object. Keep it extremely concise and structured:\n"
     "- Context: context, references, tone and who is speaking to whom that affect the meaning\n"
-    "- Decisions: how these instructions apply to the key constraints, ambiguities or difficult lines")
+    "- Decisions: how these instructions apply to the key constraints, ambiguities or difficult lines"
+)
 
 REVIEW_ROLE = (
     "You proofread existing {target} translations of {source} visual novel scripts.\n"
-    "Preserve fluent wording and make only the smallest correction supported by the source and context.")
+    "Preserve fluent wording and make only the smallest correction supported by the source and context."
+)
 
 REVIEW = (
     "Review task:\n"
@@ -101,7 +107,8 @@ REVIEW = (
     "claims such as 'more natural', 'better nuance' or 'matches dialogue format' are not sufficient.\n"
     "- Keep every placeholder such as ⟦0⟧ exactly once and in the same order. Use \\n for line breaks.\n"
     '- Remove an added "Name:" speaker label absent from the source. Keep character names used as part of '
-    "the sentence when the source mentions them; a sentence beginning with a name is not itself an error.")
+    "the sentence when the source mentions them; a sentence beginning with a name is not itself an error."
+)
 
 DISCOVER = (
     "You prepare a translation glossary for a {source} visual novel that will be translated into {target}.\n"
@@ -109,7 +116,8 @@ DISCOVER = (
     "expressions that must be translated the same way every time. Skip ordinary words.\n"
     'Reply with only this JSON object: {"terms": [{"source": "<exact text as written>", '
     '"target": "<{target} translation>", "kind": "character" or "term", "notes": "<gender, role or meaning>"}]}. '
-    "Use an empty list when there is nothing to add.")
+    "Use an empty list when there is nothing to add."
+)
 
 
 def chain(config: dict) -> list[dict]:
@@ -120,9 +128,20 @@ def chain(config: dict) -> list[dict]:
         if key in BY_KEY and key != "contract" and key not in seen:
             seen.add(key)
             text = item.get("text")
-            result.append(dict(key=key, enabled=bool(item.get("enabled", True)),
-                               text=text if isinstance(text, str) and BY_KEY[key].editable else None))
-    result += [dict(key=s.key, enabled=True, text=None) for s in SECTIONS if s.key not in seen and s.key != "contract"]
+            result.append(
+                dict(
+                    key=key,
+                    enabled=bool(item.get("enabled", True)),
+                    text=text
+                    if isinstance(text, str) and BY_KEY[key].editable
+                    else None,
+                )
+            )
+    result += [
+        dict(key=s.key, enabled=True, text=None)
+        for s in SECTIONS
+        if s.key not in seen and s.key != "contract"
+    ]
     return result + [dict(key="contract", enabled=True, text=None)]
 
 
@@ -138,7 +157,11 @@ def plan(rows, indices, *, lines=20, tokens=1200) -> list[list[int]]:
     for index in indices:
         row = rows[index]
         cost = estimate(row.source) + estimate(row.speaker) + 8
-        if current and ((row.file, row.scene) != key or len(current) >= lines or size + cost > tokens):
+        if current and (
+            (row.file, row.scene) != key
+            or len(current) >= lines
+            or size + cost > tokens
+        ):
             batches.append(current)
             current, size = [], 0
         current.append(index)
@@ -156,7 +179,11 @@ def neighbours(rows, batch, before, after):
 
     def collect(start, step, limit):
         found, index = [], start
-        while 0 <= index < len(rows) and len(found) < limit and (rows[index].file, rows[index].scene) == key:
+        while (
+            0 <= index < len(rows)
+            and len(found) < limit
+            and (rows[index].file, rows[index].scene) == key
+        ):
             if rows[index].kind != "speaker" and index not in members:
                 found.append(rows[index])
             index += step
@@ -169,7 +196,11 @@ def shown(row, formats) -> str:
     """The source a model sees: ruby readings left out (KS ruby keeps its base text), other markers kept."""
     if "⟦" not in row.source:
         return row.source
-    return plain(row.source, json.loads(row.context).get("controls", []), formats.get(row.file, ""))
+    return plain(
+        row.source,
+        json.loads(row.context).get("controls", []),
+        formats.get(row.file, ""),
+    )
 
 
 def line(row, translated: bool, formats=None) -> str:
@@ -198,22 +229,39 @@ class Prompt:
 
 
 def fill(text, languages):
-    return text.replace("{source}", languages["source"]).replace("{target}", languages["target"])
+    return text.replace("{source}", languages["source"]).replace(
+        "{target}", languages["target"]
+    )
 
 
-def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task="translate", pre=(),
-          formats=None) -> Prompt:
+def build(
+    sections,
+    languages,
+    rows,
+    batch,
+    *,
+    terms=(),
+    before=5,
+    after=2,
+    task="translate",
+    pre=(),
+    formats=None,
+) -> Prompt:
     """task: "translate" or "review"; `pre` replacement rules rewrite the source text the model sees.
 
     formats maps each file to its script format, which tells which markers are ruby."""
     formats = formats or {}
     records = [rows[index] for index in batch]
     texts = {id(row): shown(row, formats) for row in records}
-    matched = glossary.match(terms, list(texts.values()) + [row.speaker for row in records if row.speaker])
+    matched = glossary.match(
+        terms, list(texts.values()) + [row.speaker for row in records if row.speaker]
+    )
     earlier, later = neighbours(rows, batch, before, after)
 
     def entry(term):
-        return f"- {term.source} → {term.target}" + (f" ({term.notes.strip()})" if term.notes.strip() else "")
+        return f"- {term.source} → {term.target}" + (
+            f" ({term.notes.strip()})" if term.notes.strip() else ""
+        )
 
     system, user, thinking = [], [], False
     for item in sections:
@@ -221,8 +269,14 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
         if not item["enabled"]:
             continue
         if section.editable:
-            default = REVIEW_ROLE if task == "review" and section.key == "role" else DEFAULTS[section.key]
-            text = fill(item["text"] if item["text"] is not None else default, languages).strip()
+            default = (
+                REVIEW_ROLE
+                if task == "review" and section.key == "role"
+                else DEFAULTS[section.key]
+            )
+            text = fill(
+                item["text"] if item["text"] is not None else default, languages
+            ).strip()
         elif section.key == "contract":
             text = CONTRACT if task == "translate" else fill(REVIEW, languages)
         elif section.key == "thinking":
@@ -237,9 +291,15 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
         else:
             parts = []
             if earlier:
-                parts.append("Earlier lines (reference only):\n" + "\n".join(line(row, True, formats) for row in earlier))
+                parts.append(
+                    "Earlier lines (reference only):\n"
+                    + "\n".join(line(row, True, formats) for row in earlier)
+                )
             if later:
-                parts.append("Later lines (reference only):\n" + "\n".join(line(row, False, formats) for row in later))
+                parts.append(
+                    "Later lines (reference only):\n"
+                    + "\n".join(line(row, False, formats) for row in later)
+                )
             text = "\n\n".join(parts)
         if text:
             (system if section.role == "system" else user).append(text)
@@ -253,16 +313,32 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
             value["translation"] = row.translation
         return json.dumps(value, ensure_ascii=False)
 
-    heading = (f"Translate these {len(records)} records into {languages['target']}:" if task == "translate"
-               else f"Review these {len(records)} translations:")
-    user.append(heading + "\n" + "\n".join(record(number, row) for number, row in enumerate(records, 1)))
+    heading = (
+        f"Translate these {len(records)} records into {languages['target']}:"
+        if task == "translate"
+        else f"Review these {len(records)} translations:"
+    )
+    user.append(
+        heading
+        + "\n"
+        + "\n".join(record(number, row) for number, row in enumerate(records, 1))
+    )
     system_text = "\n\n".join(system)
-    return Prompt(system_text, "\n\n".join(user), records, matched,
-                  hashlib.sha256(system_text.encode()).hexdigest()[:12], len(earlier) + len(later), thinking)
+    return Prompt(
+        system_text,
+        "\n\n".join(user),
+        records,
+        matched,
+        hashlib.sha256(system_text.encode()).hexdigest()[:12],
+        len(earlier) + len(later),
+        thinking,
+    )
 
 
 def discovery(languages, rows, batch, formats=None) -> Prompt:
     records = [rows[index] for index in batch]
     system = fill(DISCOVER, languages)
     user = "Text:\n" + "\n".join(line(row, False, formats) for row in records)
-    return Prompt(system, user, records, [], hashlib.sha256(system.encode()).hexdigest()[:12])
+    return Prompt(
+        system, user, records, [], hashlib.sha256(system.encode()).hexdigest()[:12]
+    )

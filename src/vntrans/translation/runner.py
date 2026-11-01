@@ -5,18 +5,25 @@ writes are never concurrent. Accepted units are committed per batch, so stopping
 crashing keeps paid work, and the next run picks up the remaining `new` units."""
 
 import asyncio
-from collections import deque
-from dataclasses import dataclass, field
 import json
-from itertools import islice
 import re
 import time
+from collections import deque
+from contextlib import suppress
+from dataclasses import dataclass, field
+from itertools import islice
 
 from ..model import VnTransError
 from ..text import MARKER
 from . import prompts, quality
 from .glossary import Rules, Term
-from .providers import REVIEW_SCHEMA, SCHEMA, TERMS_SCHEMA, THINKING_SCHEMA, ProviderError
+from .providers import (
+    REVIEW_SCHEMA,
+    SCHEMA,
+    TERMS_SCHEMA,
+    THINKING_SCHEMA,
+    ProviderError,
+)
 
 SETTINGS = prompts.BATCH | dict(concurrency=4, rpm=0)
 TRANSPORT_TRIES = 5
@@ -33,7 +40,7 @@ def parse(text: str):
         end = max(text.rfind("}"), text.rfind("]"))
         if not starts or end <= min(starts):
             raise ValueError("reply is not JSON") from None
-        return json.loads(text[min(starts):end + 1])
+        return json.loads(text[min(starts) : end + 1])
 
 
 def listed(text: str, key: str) -> list[dict]:
@@ -63,7 +70,9 @@ def decode(text: str) -> tuple[dict[int, str], set[int]]:
     if isinstance(value, dict):
         items = list(value.items())
     elif isinstance(value, list):
-        items = [(item.get("i"), item.get("t")) for item in value if isinstance(item, dict)]
+        items = [
+            (item.get("i"), item.get("t")) for item in value if isinstance(item, dict)
+        ]
     else:
         raise ValueError("reply has no translations")
     found, duplicates = {}, set()
@@ -106,6 +115,7 @@ class Stats:
 @dataclass
 class Batch:
     """One finished request, for live inspection. records: (speaker, source, output, outcome, note)."""
+
     number: int
     task: str
     file: str
@@ -124,6 +134,7 @@ class Batch:
 @dataclass(eq=False)
 class Worker:
     """One profile taking batches from a run, with its own key rotation, rate-limit cooldowns and RPM pacing."""
+
     profile: object
     provider: object
     keys: list
@@ -144,9 +155,25 @@ class Run:
     batch goes to exactly one free slot, and all workspace writes stay on the event loop, so workers never race
     on a unit; a unit edited since planning keeps its value."""
 
-    def __init__(self, ws, rows, indices, *, profile, provider, sections, terms, settings, task="translate",
-                 rules=None, on_event=lambda kind, text: None, on_commit=lambda index: None,
-                 on_batch=lambda batch: None, parallel=(), offload=None):
+    def __init__(
+        self,
+        ws,
+        rows,
+        indices,
+        *,
+        profile,
+        provider,
+        sections,
+        terms,
+        settings,
+        task="translate",
+        rules=None,
+        on_event=lambda kind, text: None,
+        on_commit=lambda index: None,
+        on_batch=lambda batch: None,
+        parallel=(),
+        offload=None,
+    ):
         self.workers = []
         for each, service in [(profile, provider), *parallel]:
             keys = each.api_keys()
@@ -163,7 +190,9 @@ class Run:
         self.names = quality.speaker_names(rows, terms)
         self.settings = SETTINGS | settings
         self.languages = dict(ws.manifest["languages"])
-        self.planned = {index: (rows[index].status, rows[index].translation) for index in indices}
+        self.planned = {
+            index: (rows[index].status, rows[index].translation) for index in indices
+        }
         self.stats = Stats(total=len(indices))
         self.on_event, self.on_commit, self.on_batch = on_event, on_commit, on_batch
         self.offload = offload
@@ -187,13 +216,12 @@ class Run:
         self.pool.put_nowait(None)
 
     async def pause(self, delay):
-        try:
+        with suppress(TimeoutError):
             await asyncio.wait_for(self.stopped.wait(), delay)
-        except TimeoutError:
-            pass
 
     async def gather(self, *jobs):
         """Stop queued work on failure, and settle in-flight replies before returning."""
+
         async def guarded(job):
             try:
                 await job
@@ -238,10 +266,27 @@ class Run:
 
     def commit(self, pairs):
         """Store (index, text) pairs; the text also goes to the unit's pending identical occurrences."""
-        targets = [(target, text) for index, text in pairs
-                   for target in (index, *(alias for alias in self.aliases.get(index, ()) if self.pending(alias)))]
-        committed = {id(row) for row in self.ws.commit(
-            [(self.rows[target], text, *self.planned[target]) for target, text in targets])}
+        targets = [
+            (target, text)
+            for index, text in pairs
+            for target in (
+                index,
+                *(
+                    alias
+                    for alias in self.aliases.get(index, ())
+                    if self.pending(alias)
+                ),
+            )
+        ]
+        committed = {
+            id(row)
+            for row in self.ws.commit(
+                [
+                    (self.rows[target], text, *self.planned[target])
+                    for target, text in targets
+                ]
+            )
+        }
         for target, text in targets:
             if id(self.rows[target]) in committed:
                 self.stats.done += 1
@@ -251,22 +296,43 @@ class Run:
 
     def report(self, worker, prompt, batch, records, *, reply=None, depth=0, error=""):
         self.counter += 1
-        self.on_batch(Batch(
-            self.counter, self.task, self.rows[batch[0]].file, records,
-            reply.thinking if reply else "", reply.latency if reply else 0.0,
-            (reply.tokens_in or 0) if reply else 0, (reply.tokens_out or 0) if reply else 0,
-            [f"{term.source} → {term.target}" for term in prompt.terms], prompt.context, depth, error, worker.label))
+        self.on_batch(
+            Batch(
+                self.counter,
+                self.task,
+                self.rows[batch[0]].file,
+                records,
+                reply.thinking if reply else "",
+                reply.latency if reply else 0.0,
+                (reply.tokens_in or 0) if reply else 0,
+                (reply.tokens_out or 0) if reply else 0,
+                [f"{term.source} → {term.target}" for term in prompt.terms],
+                prompt.context,
+                depth,
+                error,
+                worker.label,
+            )
+        )
 
     def outcomes(self, batch, outputs, failed):
-        return [(row.speaker if row.kind != "speaker" else "", row.source, outputs.get(index, ""),
-                 "failed" if index in failed else "ok", failed.get(index, ""))
-                for index, row in ((index, self.rows[index]) for index in batch)]
+        return [
+            (
+                row.speaker if row.kind != "speaker" else "",
+                row.source,
+                outputs.get(index, ""),
+                "failed" if index in failed else "ok",
+                failed.get(index, ""),
+            )
+            for index, row in ((index, self.rows[index]) for index in batch)
+        ]
 
     def give_up(self, failed: dict[int, str]):
         if self.stopping:
             return
         for index, message in failed.items():
-            group = [i for i in (index, *self.aliases.get(index, ())) if self.pending(i)]
+            group = [
+                i for i in (index, *self.aliases.get(index, ())) if self.pending(i)
+            ]
             self.ws.mark_errors([self.rows[i] for i in group], message)
             self.stats.failed += len(group)
             for i in group:
@@ -278,7 +344,9 @@ class Run:
             await self.translate()
         elif self.task == "review":
             batches = prompts.plan(self.rows, self.indices, lines=size, tokens=tokens)
-            self.on_event("info", f"Reviewing {self.stats.total} units in {len(batches)} batches")
+            self.on_event(
+                "info", f"Reviewing {self.stats.total} units in {len(batches)} batches"
+            )
             await self.gather(*(self.side(batch, self.review) for batch in batches))
         else:
             unique, seen = [], set()
@@ -289,15 +357,24 @@ class Run:
                     unique.append(index)
             self.stats.total = len(unique)
             batches = prompts.plan(self.rows, unique, lines=size * 5, tokens=tokens * 5)
-            self.on_event("info", f"Scanning {len(unique)} unique lines in {len(batches)} batches")
+            self.on_event(
+                "info", f"Scanning {len(unique)} unique lines in {len(batches)} batches"
+            )
             await self.gather(*(self.side(batch, self.discover) for batch in batches))
-        found = dict(translate="", review=f", {self.found} suggestions", discover=f", {self.found} new terms")[self.task]
+        found = dict(
+            translate="",
+            review=f", {self.found} suggestions",
+            discover=f", {self.found} new terms",
+        )[self.task]
         if self.error:
             self.on_event("error", f"Stopped: {self.error}")
         else:
-            self.on_event("done", ("Stopped" if self.stopping else "Finished")
-                          + f": {self.stats.done} {'translated' if self.task == 'translate' else 'checked'}, "
-                          + f"{self.stats.failed} failed{found}")
+            self.on_event(
+                "done",
+                ("Stopped" if self.stopping else "Finished")
+                + f": {self.stats.done} {'translated' if self.task == 'translate' else 'checked'}, "
+                + f"{self.stats.failed} failed{found}",
+            )
 
     async def side(self, batch, accept):
         """One review/discovery request; failures never touch translations."""
@@ -313,12 +390,26 @@ class Run:
             if self.stopping:
                 return
             if self.task == "review":
-                prompt = prompts.build(self.sections, self.languages, self.rows, batch, terms=self.terms,
-                                       before=self.settings["context_before"], after=self.settings["context_after"],
-                                       task="review", pre=self.rules.pre, formats=self.ws.formats)
+                prompt = prompts.build(
+                    self.sections,
+                    self.languages,
+                    self.rows,
+                    batch,
+                    terms=self.terms,
+                    before=self.settings["context_before"],
+                    after=self.settings["context_after"],
+                    task="review",
+                    pre=self.rules.pre,
+                    formats=self.ws.formats,
+                )
                 schema = REVIEW_SCHEMA
             else:
-                prompt, schema = prompts.discovery(self.languages, self.rows, batch, self.ws.formats), TERMS_SCHEMA
+                prompt, schema = (
+                    prompts.discovery(
+                        self.languages, self.rows, batch, self.ws.formats
+                    ),
+                    TERMS_SCHEMA,
+                )
             reply = None
             try:
                 reply = await self.request(worker, prompt, schema)
@@ -334,13 +425,26 @@ class Run:
                 else:
                     self.stats.failed += len(batch)
                     self.on_event("error", f"{len(batch)} units skipped: {exc}")
-                    self.report(worker, prompt, batch, self.outcomes(batch, {}, dict.fromkeys(batch, str(exc))),
-                                error=str(exc))
+                    self.report(
+                        worker,
+                        prompt,
+                        batch,
+                        self.outcomes(batch, {}, dict.fromkeys(batch, str(exc))),
+                        error=str(exc),
+                    )
             except ValueError as exc:
                 self.stats.failed += len(batch)
-                self.on_event("error", f"{len(batch)} units skipped: unreadable reply ({exc})")
-                self.report(worker, prompt, batch, self.outcomes(batch, {}, dict.fromkeys(batch, "unreadable reply")),
-                            reply=reply, error=f"unreadable reply: {exc}")
+                self.on_event(
+                    "error", f"{len(batch)} units skipped: unreadable reply ({exc})"
+                )
+                self.report(
+                    worker,
+                    prompt,
+                    batch,
+                    self.outcomes(batch, {}, dict.fromkeys(batch, "unreadable reply")),
+                    reply=reply,
+                    error=f"unreadable reply: {exc}",
+                )
         finally:
             self.release(worker)
         if moved:
@@ -350,16 +454,27 @@ class Run:
         suggested = {}
         for item in listed(reply.text, "translations"):
             number, text, reason = item.get("i"), item.get("t"), item.get("r", "")
-            if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= len(batch) \
-                    or not isinstance(text, str) or not isinstance(reason, str) or not reason.strip():
+            if (
+                isinstance(number, bool)
+                or not isinstance(number, int)
+                or not 1 <= number <= len(batch)
+                or not isinstance(text, str)
+                or not isinstance(reason, str)
+                or not reason.strip()
+            ):
                 continue
             index = batch[number - 1]
             row = self.rows[index]
             if not self.pending(index):
                 continue
             try:
-                text = quality.review_text(Rules.apply(self.rules.post, text), row, self.names, self.ws.formats)
-                if not text.strip() and MARKER.sub("", prompts.shown(row, self.ws.formats)).strip():
+                text = quality.review_text(
+                    Rules.apply(self.rules.post, text), row, self.names, self.ws.formats
+                )
+                if (
+                    not text.strip()
+                    and MARKER.sub("", prompts.shown(row, self.ws.formats)).strip()
+                ):
                     continue
                 text = self.ws.check(row, text)
             except VnTransError:
@@ -367,15 +482,23 @@ class Run:
             if row.translation is not None and text != row.translation:
                 suggested[index] = (text, reason.strip())
         reviewed = [index for index in batch if self.pending(index)]
-        self.ws.replace_suggestions([self.rows[index] for index in reviewed],
-                                    [(self.rows[index], *value) for index, value in suggested.items()])
+        self.ws.replace_suggestions(
+            [self.rows[index] for index in reviewed],
+            [(self.rows[index], *value) for index, value in suggested.items()],
+        )
         self.found += len(suggested)
         for index in suggested:
             self.on_commit(index)
-        return [(row.speaker if row.kind != "speaker" else "", row.source,
-                 suggested[index][0] if index in suggested else row.translation or "",
-                 "changed" if index in suggested else "ok", suggested[index][1] if index in suggested else "")
-                for index, row in ((index, self.rows[index]) for index in batch)]
+        return [
+            (
+                row.speaker if row.kind != "speaker" else "",
+                row.source,
+                suggested[index][0] if index in suggested else row.translation or "",
+                "changed" if index in suggested else "ok",
+                suggested[index][1] if index in suggested else "",
+            )
+            for index, row in ((index, self.rows[index]) for index in batch)
+        ]
 
     def discover(self, batch, reply):
         known = {term.source for term in self.terms}
@@ -385,31 +508,74 @@ class Run:
             if not isinstance(source, str) or not isinstance(target, str):
                 continue
             source = source.strip()
-            examples = list(islice((row.source for row in self.rows
-                                    if source in prompts.shown(row, self.ws.formats)), 3)) if source else []
+            examples = (
+                list(
+                    islice(
+                        (
+                            row.source
+                            for row in self.rows
+                            if source in prompts.shown(row, self.ws.formats)
+                        ),
+                        3,
+                    )
+                )
+                if source
+                else []
+            )
             if not source or source in known or not examples:
                 if source:
-                    records.append(("", source, target.strip(), "skipped",
-                                    "already in glossary" if source in known else "not found in the text"))
+                    records.append(
+                        (
+                            "",
+                            source,
+                            target.strip(),
+                            "skipped",
+                            "already in glossary"
+                            if source in known
+                            else "not found in the text",
+                        )
+                    )
                 continue
             notes = item.get("notes") if isinstance(item.get("notes"), str) else ""
-            term = Term(source, target.strip(), "character" if item.get("kind") == "character" else "term",
-                        notes.strip(), approved=False, evidence=examples)
+            term = Term(
+                source,
+                target.strip(),
+                "character" if item.get("kind") == "character" else "term",
+                notes.strip(),
+                approved=False,
+                evidence=examples,
+            )
             self.ws.save_term(term)
             self.terms.append(term)
             known.add(source)
             self.found += 1
-            records.append(("", source, term.target, "ok", f"{term.kind}" + (f" · {term.notes}" if term.notes else "")))
+            records.append(
+                (
+                    "",
+                    source,
+                    term.target,
+                    "ok",
+                    f"{term.kind}" + (f" · {term.notes}" if term.notes else ""),
+                )
+            )
         return records
 
     async def translate(self):
         """Units with matching text and protected controls are sent once; the rest follow as aliases.
 
         New units reuse an identical translation from outside the run, preferring manual edits."""
-        glossary = {term.source: term.target for term in self.terms if term.approved and term.target}
+        glossary = {
+            term.source: term.target
+            for term in self.terms
+            if term.approved and term.target
+        }
         earlier = {}
         for index, row in enumerate(self.rows):
-            if index not in self.planned and row.translation is not None and row.status in ("edited", "machine"):
+            if (
+                index not in self.planned
+                and row.translation is not None
+                and row.status in ("edited", "machine")
+            ):
                 key = row.translation_key(self.ws.formats[row.file])
                 if row.status == "edited" or key not in earlier:
                     earlier[key] = row.translation
@@ -434,14 +600,33 @@ class Run:
         if exact:
             self.commit(exact)
         size = self.settings["batch_lines"]
-        names = [index for index in representatives.values() if self.rows[index].kind == "speaker"]
-        lines = [index for index in representatives.values() if self.rows[index].kind != "speaker"]
-        name_batches = [names[i:i + size] for i in range(0, len(names), size)]
-        batches = prompts.plan(self.rows, lines, lines=size, tokens=self.settings["batch_tokens"])
-        self.on_event("info", f"{self.stats.total} units in {len(name_batches) + len(batches)} batches"
-                              + (f", {len(exact)} filled from glossary or identical lines" if exact else ""))
-        await self.gather(*(self.handle(batch, context=False) for batch in name_batches),
-                          *(self.handle(batch) for batch in batches))
+        names = [
+            index
+            for index in representatives.values()
+            if self.rows[index].kind == "speaker"
+        ]
+        lines = [
+            index
+            for index in representatives.values()
+            if self.rows[index].kind != "speaker"
+        ]
+        name_batches = [names[i : i + size] for i in range(0, len(names), size)]
+        batches = prompts.plan(
+            self.rows, lines, lines=size, tokens=self.settings["batch_tokens"]
+        )
+        self.on_event(
+            "info",
+            f"{self.stats.total} units in {len(name_batches) + len(batches)} batches"
+            + (
+                f", {len(exact)} filled from glossary or identical lines"
+                if exact
+                else ""
+            ),
+        )
+        await self.gather(
+            *(self.handle(batch, context=False) for batch in name_batches),
+            *(self.handle(batch) for batch in batches),
+        )
 
     async def handle(self, batch, depth=0, context=True):
         batch = [index for index in batch if self.pending(index)]
@@ -456,12 +641,21 @@ class Run:
         try:
             if self.stopping:
                 return
-            prompt = prompts.build(self.sections, self.languages, self.rows, batch, terms=self.terms,
-                                   before=self.settings["context_before"] if context else 0,
-                                   after=self.settings["context_after"] if context else 0, pre=self.rules.pre,
-                                   formats=self.ws.formats)
+            prompt = prompts.build(
+                self.sections,
+                self.languages,
+                self.rows,
+                batch,
+                terms=self.terms,
+                before=self.settings["context_before"] if context else 0,
+                after=self.settings["context_after"] if context else 0,
+                pre=self.rules.pre,
+                formats=self.ws.formats,
+            )
             try:
-                reply = await self.request(worker, prompt, THINKING_SCHEMA if prompt.thinking else SCHEMA)
+                reply = await self.request(
+                    worker, prompt, THINKING_SCHEMA if prompt.thinking else SCHEMA
+                )
                 if reply is None:
                     return
             except ProviderError as exc:
@@ -470,15 +664,31 @@ class Run:
                     moved = True
                 else:
                     failed = dict.fromkeys(batch, str(exc))
-                    self.report(worker, prompt, batch, self.outcomes(batch, {}, failed), depth=depth, error=str(exc))
+                    self.report(
+                        worker,
+                        prompt,
+                        batch,
+                        self.outcomes(batch, {}, failed),
+                        depth=depth,
+                        error=str(exc),
+                    )
                     if exc.kind != "blocked":
                         self.give_up(failed)
                         return
             else:
                 if prompt.thinking:
-                    reply.thinking = "\n\n".join(part for part in (reply.thinking, why(reply.text)) if part)
+                    reply.thinking = "\n\n".join(
+                        part for part in (reply.thinking, why(reply.text)) if part
+                    )
                 failed, outputs = self.accept(batch, reply)
-                self.report(worker, prompt, batch, self.outcomes(batch, outputs, failed), reply=reply, depth=depth)
+                self.report(
+                    worker,
+                    prompt,
+                    batch,
+                    self.outcomes(batch, outputs, failed),
+                    reply=reply,
+                    depth=depth,
+                )
         finally:
             self.release(worker)
         if moved:
@@ -500,27 +710,39 @@ class Run:
             self.give_up(failed)
             return
         self.on_event("retry", f"Retrying {len(rest)} unit(s): {failed[rest[0]]}")
-        await self.gather(*(self.handle(batch, d, context) for batch, d, context in jobs))
+        await self.gather(
+            *(self.handle(batch, d, context) for batch, d, context in jobs)
+        )
 
     def accept(self, batch, reply) -> tuple[dict[int, str], dict[int, str]]:
         """Commit valid candidates; returns (failure reason by index, candidate text by index)."""
         try:
             found, duplicates = decode(reply.text)
         except ValueError as exc:
-            reason = "reply was cut off (raise max output tokens)" if reply.finish == "length" else f"unreadable reply: {exc}"
+            reason = (
+                "reply was cut off (raise max output tokens)"
+                if reply.finish == "length"
+                else f"unreadable reply: {exc}"
+            )
             return dict.fromkeys(batch, reason), {}
         failed, accepted, outputs = {}, [], {}
         for number, index in enumerate(batch, 1):
             row = self.rows[index]
             text = found.get(number)
             if text is not None:
-                text = outputs[index] = quality.tidy(Rules.apply(self.rules.post, text), row, self.names,
-                                                     self.ws.formats)
+                text = outputs[index] = quality.tidy(
+                    Rules.apply(self.rules.post, text), row, self.names, self.ws.formats
+                )
             if number in duplicates:
                 failed[index] = "duplicate entries in reply"
             elif text is None:
-                failed[index] = "missing from reply" + (" (cut off)" if reply.finish == "length" else "")
-            elif not text.strip() and MARKER.sub("", prompts.shown(row, self.ws.formats)).strip():
+                failed[index] = "missing from reply" + (
+                    " (cut off)" if reply.finish == "length" else ""
+                )
+            elif (
+                not text.strip()
+                and MARKER.sub("", prompts.shown(row, self.ws.formats)).strip()
+            ):
                 failed[index] = "empty translation"
             else:
                 try:
@@ -545,16 +767,36 @@ class Run:
             started = time.monotonic()
             try:
                 reply = await (self.offload or asyncio.to_thread)(
-                    worker.provider.complete, profile, key, prompt.system, prompt.user, schema)
+                    worker.provider.complete,
+                    profile,
+                    key,
+                    prompt.system,
+                    prompt.user,
+                    schema,
+                )
             except ProviderError as exc:
                 await self.writes_ready.wait()
-                self.ws.record_attempt(profile.name, profile.model, prompt.version, len(prompt.rows),
-                                       exc.kind, str(exc))
-                if exc.kind not in ("rate", "transient") or attempt == TRANSPORT_TRIES - 1 or self.stopping:
+                self.ws.record_attempt(
+                    profile.name,
+                    profile.model,
+                    prompt.version,
+                    len(prompt.rows),
+                    exc.kind,
+                    str(exc),
+                )
+                if (
+                    exc.kind not in ("rate", "transient")
+                    or attempt == TRANSPORT_TRIES - 1
+                    or self.stopping
+                ):
                     raise
                 delay = exc.retry_after or min(60, 2 ** (attempt + 1))
-                self.on_event("retry", f"{profile.name}: {exc} · retry in {delay:.0f}s"
-                              if len(self.workers) > 1 else f"{exc} · retry in {delay:.0f}s")
+                self.on_event(
+                    "retry",
+                    f"{profile.name}: {exc} · retry in {delay:.0f}s"
+                    if len(self.workers) > 1
+                    else f"{exc} · retry in {delay:.0f}s",
+                )
                 if exc.kind == "rate":
                     worker.cooldown[key] = time.monotonic() + delay
                 else:
@@ -573,8 +815,16 @@ class Run:
             self.stats.tokens_in += reply.tokens_in or 0
             self.stats.tokens_out += reply.tokens_out or 0
             await self.writes_ready.wait()
-            self.ws.record_attempt(profile.name, profile.model, prompt.version, len(prompt.rows),
-                                   "ok", None, reply.tokens_in, reply.tokens_out)
+            self.ws.record_attempt(
+                profile.name,
+                profile.model,
+                prompt.version,
+                len(prompt.rows),
+                "ok",
+                None,
+                reply.tokens_in,
+                reply.tokens_out,
+            )
             return reply
 
     async def key(self, worker) -> str | None:

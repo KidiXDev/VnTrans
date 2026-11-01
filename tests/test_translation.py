@@ -1,19 +1,27 @@
 import asyncio
 import json
-from pathlib import Path
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from vntrans import VnTransError, validate, workspace
 from vntrans.text import make_unit
 from vntrans.translation import glossary, prompts, providers, quality, runner
 from vntrans.translation.glossary import Rules, Term
-from vntrans.translation.providers import Gemini, OpenRouter, Profile, ProviderError, Reply
+from vntrans.translation.providers import (
+    Gemini,
+    OpenRouter,
+    Profile,
+    ProviderError,
+    Reply,
+)
 
-SCRIPT = ("*start|Opening\n[name name=Alice]Hello[l]world\n[name name=Bob]How are you?\n"
-          "[name name=Alice]Fine.\n*next|Second\n[name name=Bob]Bye.\n")
+SCRIPT = (
+    "*start|Opening\n[name name=Alice]Hello[l]world\n[name name=Bob]How are you?\n"
+    "[name name=Alice]Fine.\n*next|Second\n[name name=Bob]Bye.\n"
+)
 
 
 def records(user):
@@ -40,20 +48,30 @@ class FakeProvider:
         out = []
         for record in records(user):
             text = self.rules(record, len(self.calls))
-            out.append(dict(i=record["i"], t=f"T:{record['text']}" if text is None else text))
+            out.append(
+                dict(i=record["i"], t=f"T:{record['text']}" if text is None else text)
+            )
         return Reply(json.dumps(dict(translations=out)), "stop", 10, 5)
 
 
 class GlossaryPromptTests(unittest.TestCase):
     def test_match_is_selective_and_ordered(self):
-        terms = [Term("Alice", "Arisu", "character"), Term("alice", "x", case_sensitive=True),
-                 Term("Ali", "Al"), Term("Bob", ""), Term("Hello", "Halo", approved=False)]
+        terms = [
+            Term("Alice", "Arisu", "character"),
+            Term("alice", "x", case_sensitive=True),
+            Term("Ali", "Al"),
+            Term("Bob", ""),
+            Term("Hello", "Halo", approved=False),
+        ]
         found = glossary.match(terms, ["Hello ALICE"])
         self.assertEqual([t.target for t in found], ["Arisu", "Al"])
 
     def test_json_round_trip_and_foreign_keys(self):
         terms = glossary.loads('[{"src": "魔法", "dst": "magic", "info": "noun"}]')
-        self.assertEqual((terms[0].source, terms[0].target, terms[0].notes), ("魔法", "magic", "noun"))
+        self.assertEqual(
+            (terms[0].source, terms[0].target, terms[0].notes),
+            ("魔法", "magic", "noun"),
+        )
         self.assertEqual(glossary.loads(glossary.dumps(terms))[0].target, "magic")
         with self.assertRaises(VnTransError):
             glossary.loads('[{"source": ""}]')
@@ -67,10 +85,29 @@ class GlossaryPromptTests(unittest.TestCase):
                 Rules.parse(bad)
 
     def test_chain_keeps_order_and_contract_last(self):
-        chain = prompts.chain({"sections": [{"key": "context", "enabled": False}, {"key": "contract"},
-                                            {"key": "role", "text": "Mine {target}"}, {"key": "bogus"}]})
-        self.assertEqual([s["key"] for s in chain],
-                         ["context", "role", "style", "instructions", "characters", "glossary", "thinking", "contract"])
+        chain = prompts.chain(
+            {
+                "sections": [
+                    {"key": "context", "enabled": False},
+                    {"key": "contract"},
+                    {"key": "role", "text": "Mine {target}"},
+                    {"key": "bogus"},
+                ]
+            }
+        )
+        self.assertEqual(
+            [s["key"] for s in chain],
+            [
+                "context",
+                "role",
+                "style",
+                "instructions",
+                "characters",
+                "glossary",
+                "thinking",
+                "contract",
+            ],
+        )
         self.assertFalse(chain[0]["enabled"])
 
 
@@ -97,12 +134,22 @@ class PromptBuildTests(WorkspaceCase):
         chain = prompts.chain({})
         batch = [self.find("How are you?")]
         args = (chain, self.ws.manifest["languages"], self.rows, batch)
-        first = prompts.build(*args, terms=[Term("Bob", "Bobu", "character")], before=5, after=5)
-        self.assertEqual(first, prompts.build(*args, terms=[Term("Bob", "Bobu", "character")], before=5, after=5))
+        first = prompts.build(
+            *args, terms=[Term("Bob", "Bobu", "character")], before=5, after=5
+        )
+        self.assertEqual(
+            first,
+            prompts.build(
+                *args, terms=[Term("Bob", "Bobu", "character")], before=5, after=5
+            ),
+        )
         self.assertIn("Characters:\n- Bob → Bobu", first.user)
         self.assertIn("- [Alice] Hello⟦0⟧world", first.user)
         self.assertNotIn("Bye.", first.user)
-        self.assertEqual(records(first.user), [dict(i=1, kind="dialogue", speaker="Bob", text="How are you?")])
+        self.assertEqual(
+            records(first.user),
+            [dict(i=1, kind="dialogue", speaker="Bob", text="How are you?")],
+        )
         self.assertTrue(first.system.endswith(prompts.CONTRACT))
         self.assertIn("into natural, fluent English", first.system)
         quiet = prompts.build(*args, before=0, after=0)
@@ -116,35 +163,66 @@ class PromptBuildTests(WorkspaceCase):
         self.assertTrue(enhanced.thinking)
         self.assertIn(prompts.THINKING, enhanced.system)
         self.assertFalse(prompts.build(chain, *args, task="review").thinking)
-        plain = prompts.build([dict(item, enabled=item["key"] != "thinking") for item in chain], *args)
+        plain = prompts.build(
+            [dict(item, enabled=item["key"] != "thinking") for item in chain], *args
+        )
         self.assertFalse(plain.thinking)
         self.assertNotIn(prompts.THINKING, plain.system)
 
     def test_review_uses_proofreading_role_and_keeps_custom_instructions(self):
-        chain = prompts.chain({"sections": [{"key": "instructions", "text": "Use conversational {target}."}]})
+        chain = prompts.chain(
+            {
+                "sections": [
+                    {"key": "instructions", "text": "Use conversational {target}."}
+                ]
+            }
+        )
         index = self.find("How are you?")
         self.ws.save(self.rows[index], "Apa kabar?")
-        prompt = prompts.build(chain, dict(source="Japanese", target="Indonesian"), self.rows, [index], task="review")
+        prompt = prompts.build(
+            chain,
+            dict(source="Japanese", target="Indonesian"),
+            self.rows,
+            [index],
+            task="review",
+        )
         self.assertIn("You proofread existing Indonesian translations", prompt.system)
         self.assertNotIn("Lines must fit the game's text box", prompt.system)
         self.assertIn("Use conversational Indonesian.", prompt.system)
         self.assertIn("Keep acceptable translations exactly as written", prompt.system)
         self.assertIn("do not wrap the whole narration in quotes", prompt.system)
-        self.assertIn("a sentence beginning with a name is not itself an error", prompt.system)
+        self.assertIn(
+            "a sentence beginning with a name is not itself an error", prompt.system
+        )
         self.assertIn("point of view", prompt.system)
         self.assertEqual(records(prompt.user)[0]["translation"], "Apa kabar?")
-        custom = prompts.chain({"sections": [{"key": "role", "text": "Project-specific role."}]})
-        self.assertIn("Project-specific role.", prompts.build(custom, self.ws.manifest["languages"], self.rows,
-                                                              [index], task="review").system)
+        custom = prompts.chain(
+            {"sections": [{"key": "role", "text": "Project-specific role."}]}
+        )
+        self.assertIn(
+            "Project-specific role.",
+            prompts.build(
+                custom, self.ws.manifest["languages"], self.rows, [index], task="review"
+            ).system,
+        )
 
     def test_quote_rules_use_curly_marks_with_or_without_the_style_section(self):
         for enabled in (True, False):
-            chain = [dict(item, enabled=enabled if item["key"] == "style" else item["enabled"])
-                     for item in prompts.chain({})]
+            chain = [
+                dict(
+                    item, enabled=enabled if item["key"] == "style" else item["enabled"]
+                )
+                for item in prompts.chain({})
+            ]
             for task in ("translate", "review"):
                 with self.subTest(style=enabled, task=task):
-                    prompt = prompts.build(chain, self.ws.manifest["languages"], self.rows,
-                                           [self.find("How are you?")], task=task)
+                    prompt = prompts.build(
+                        chain,
+                        self.ws.manifest["languages"],
+                        self.rows,
+                        [self.find("How are you?")],
+                        task=task,
+                    )
                     self.assertIn("“ (opening) and ” (closing)", prompt.system)
         for preset in prompts.STYLE_PRESETS.values():
             self.assertIn("“ (opening) and ” (closing)", preset)
@@ -152,18 +230,31 @@ class PromptBuildTests(WorkspaceCase):
     def test_plan_splits_on_scene_and_size(self):
         lines = [i for i, row in enumerate(self.rows) if row.kind != "speaker"]
         self.assertEqual(len(prompts.plan(self.rows, lines)), 2)
-        self.assertEqual([len(b) for b in prompts.plan(self.rows, lines, lines=2)], [2, 2, 2])
+        self.assertEqual(
+            [len(b) for b in prompts.plan(self.rows, lines, lines=2)], [2, 2, 2]
+        )
 
 
 class DecodeTests(unittest.TestCase):
     def test_accepted_shapes(self):
         expected = ({1: "a", 2: "b"}, set())
-        self.assertEqual(runner.decode('{"translations": [{"i": 1, "t": "a"}, {"i": 2, "t": "b"}]}'), expected)
-        self.assertEqual(runner.decode('```json\n[{"i": 1, "t": "a"}, {"i": "2", "t": "b"}]\n```'), expected)
+        self.assertEqual(
+            runner.decode('{"translations": [{"i": 1, "t": "a"}, {"i": 2, "t": "b"}]}'),
+            expected,
+        )
+        self.assertEqual(
+            runner.decode('```json\n[{"i": 1, "t": "a"}, {"i": "2", "t": "b"}]\n```'),
+            expected,
+        )
         self.assertEqual(runner.decode('Sure!\n{"1": "a", "2": "b"} done'), expected)
 
     def test_duplicates_and_garbage(self):
-        self.assertEqual(runner.decode('[{"i": 1, "t": "a"}, {"i": 1, "t": "b"}, {"i": true, "t": "c"}, {"x": 1}]')[1], {1})
+        self.assertEqual(
+            runner.decode(
+                '[{"i": 1, "t": "a"}, {"i": 1, "t": "b"}, {"i": true, "t": "c"}, {"x": 1}]'
+            )[1],
+            {1},
+        )
         for bad in ("no json here", "[1, 2", "42"):
             with self.assertRaises(ValueError):
                 runner.decode(bad)
@@ -172,28 +263,72 @@ class DecodeTests(unittest.TestCase):
 class ProviderTests(unittest.TestCase):
     def test_classify(self):
         self.assertEqual(providers.classify(401, "{}", None).kind, "auth")
-        self.assertEqual(providers.classify(400, '{"error": {"details": [{"reason": "API_KEY_INVALID"}]}}', None).kind, "auth")
-        rate = providers.classify(429, '{"error": {"message": "slow", "details": [{"retryDelay": "21s"}]}}', None)
-        self.assertEqual((rate.kind, rate.retry_after, str(rate)), ("rate", 21.0, "HTTP 429: slow"))
+        self.assertEqual(
+            providers.classify(
+                400, '{"error": {"details": [{"reason": "API_KEY_INVALID"}]}}', None
+            ).kind,
+            "auth",
+        )
+        rate = providers.classify(
+            429,
+            '{"error": {"message": "slow", "details": [{"retryDelay": "21s"}]}}',
+            None,
+        )
+        self.assertEqual(
+            (rate.kind, rate.retry_after, str(rate)), ("rate", 21.0, "HTTP 429: slow")
+        )
         self.assertEqual(providers.classify(429, "", "7").retry_after, 7.0)
         self.assertEqual(providers.classify(503, "", None).kind, "transient")
         self.assertEqual(providers.classify(404, "", None).kind, "request")
 
     def test_gemini_mapping(self):
         gemini = Gemini()
-        body = gemini.payload(Profile("p", model="gemini-2.5-flash", reasoning="minimal"), "S", "U")
-        self.assertEqual(body["generationConfig"]["thinkingConfig"], {"thinkingBudget": 0, "includeThoughts": True})
+        body = gemini.payload(
+            Profile("p", model="gemini-2.5-flash", reasoning="minimal"), "S", "U"
+        )
+        self.assertEqual(
+            body["generationConfig"]["thinkingConfig"],
+            {"thinkingBudget": 0, "includeThoughts": True},
+        )
         body = gemini.payload(Profile("p", model="gemini-2.0-flash"), "S", "U")
         self.assertNotIn("thinkingConfig", body["generationConfig"])
         self.assertEqual(body["generationConfig"]["responseSchema"]["type"], "OBJECT")
         self.assertNotIn("additionalProperties", json.dumps(body))
-        ordered = gemini.payload(Profile("p", model="gemini-2.0-flash"), "S", "U", providers.THINKING_SCHEMA)
-        self.assertEqual(ordered["generationConfig"]["responseSchema"]["propertyOrdering"], ["why", "translations"])
-        body = gemini.payload(Profile("p", model="gemini-3-flash", reasoning="low", show_thinking=False), "S", "U")
-        self.assertEqual(body["generationConfig"]["thinkingConfig"], {"thinkingLevel": "LOW"})
-        reply = gemini.parse({"candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": [
-            {"text": "think", "thought": True}, {"text": "{}"}]}}],
-            "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 4, "thoughtsTokenCount": 5}})
+        ordered = gemini.payload(
+            Profile("p", model="gemini-2.0-flash"), "S", "U", providers.THINKING_SCHEMA
+        )
+        self.assertEqual(
+            ordered["generationConfig"]["responseSchema"]["propertyOrdering"],
+            ["why", "translations"],
+        )
+        body = gemini.payload(
+            Profile("p", model="gemini-3-flash", reasoning="low", show_thinking=False),
+            "S",
+            "U",
+        )
+        self.assertEqual(
+            body["generationConfig"]["thinkingConfig"], {"thinkingLevel": "LOW"}
+        )
+        reply = gemini.parse(
+            {
+                "candidates": [
+                    {
+                        "finishReason": "MAX_TOKENS",
+                        "content": {
+                            "parts": [
+                                {"text": "think", "thought": True},
+                                {"text": "{}"},
+                            ]
+                        },
+                    }
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": 3,
+                    "candidatesTokenCount": 4,
+                    "thoughtsTokenCount": 5,
+                },
+            }
+        )
         self.assertEqual(reply, Reply("{}", "length", 3, 9, "think"))
         with self.assertRaises(ProviderError) as caught:
             gemini.parse({"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}})
@@ -201,15 +336,31 @@ class ProviderTests(unittest.TestCase):
 
     def test_openrouter_mapping(self):
         router = OpenRouter()
-        body = router.payload(Profile("p", provider="openrouter", model="x/y", reasoning="high"), "S", "U")
+        body = router.payload(
+            Profile("p", provider="openrouter", model="x/y", reasoning="high"), "S", "U"
+        )
         self.assertEqual(body["reasoning"], {"effort": "high", "exclude": False})
-        body = router.payload(Profile("p", provider="openrouter", model="x/y", show_thinking=False), "S", "U")
+        body = router.payload(
+            Profile("p", provider="openrouter", model="x/y", show_thinking=False),
+            "S",
+            "U",
+        )
         self.assertEqual(body["reasoning"], {"exclude": True})
         self.assertEqual([m["role"] for m in body["messages"]], ["system", "user"])
-        self.assertEqual(router.parse({"choices": [{"message": {"content": "ok", "reasoning": "hmm"},
-                                                    "finish_reason": "stop"}],
-                                       "usage": {"prompt_tokens": 1, "completion_tokens": 2}}),
-                         Reply("ok", "stop", 1, 2, "hmm"))
+        self.assertEqual(
+            router.parse(
+                {
+                    "choices": [
+                        {
+                            "message": {"content": "ok", "reasoning": "hmm"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+                }
+            ),
+            Reply("ok", "stop", 1, 2, "hmm"),
+        )
         with self.assertRaises(ProviderError) as caught:
             router.parse({"error": {"code": 402, "message": "no credits"}})
         self.assertEqual(caught.exception.kind, "auth")
@@ -224,29 +375,50 @@ class ProviderTests(unittest.TestCase):
 class RunnerTests(WorkspaceCase):
     def test_reply_waits_for_manual_edit_and_does_not_overwrite_it(self):
         index = self.find("How are you?")
-        run = runner.Run(self.ws, self.rows, [index], profile=Profile("p", model="m", keys=["k"]),
-                         provider=FakeProvider(), sections=[], terms=[], settings={})
+        run = runner.Run(
+            self.ws,
+            self.rows,
+            [index],
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=FakeProvider(),
+            sections=[],
+            terms=[],
+            settings={},
+        )
+
         async def exercise():
             run.writes_ready.clear()
             task = asyncio.create_task(run.run())
             for _ in range(200):
                 if run.stats.replies:
                     break
-                await asyncio.sleep(.005)
+                await asyncio.sleep(0.005)
             self.assertGreater(run.stats.replies, 0)
             self.assertIsNone(self.rows[index].translation)
             self.ws.save(self.rows[index], "Manual edit")
             run.writes_ready.set()
             await task
+
         asyncio.run(exercise())
         self.assertEqual(self.rows[index].translation, "Manual edit")
         self.assertEqual(self.rows[index].status, "edited")
 
     def run_with(self, provider, indices=None, terms=(), **settings):
-        indices = [i for i, row in enumerate(self.rows) if row.status == "new"] if indices is None else indices
-        run = runner.Run(self.ws, self.rows, indices, profile=Profile("p", model="m", keys=["k"]),
-                         provider=provider, sections=prompts.chain({}), terms=list(terms),
-                         settings=dict(concurrency=2) | settings)
+        indices = (
+            [i for i, row in enumerate(self.rows) if row.status == "new"]
+            if indices is None
+            else indices
+        )
+        run = runner.Run(
+            self.ws,
+            self.rows,
+            indices,
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=provider,
+            sections=prompts.chain({}),
+            terms=list(terms),
+            settings=dict(concurrency=2) | settings,
+        )
         events = []
         run.on_event = lambda kind, text: events.append((kind, text))
         asyncio.run(run.run())
@@ -257,46 +429,73 @@ class RunnerTests(WorkspaceCase):
         run, events = self.run_with(fake, terms=[Term("Alice", "Arisu", "character")])
         self.assertEqual(run.stats.done, len(self.rows))
         self.assertTrue(all(row.status == "machine" for row in self.rows))
-        self.assertEqual({r.translation for r in self.rows if r.source == "Alice"}, {"Arisu"})
-        self.assertEqual({r.translation for r in self.rows if r.source == "Bob"}, {"T:Bob"})
-        name_requests = [call for call in fake.calls if call and call[0]["kind"] == "speaker"]
+        self.assertEqual(
+            {r.translation for r in self.rows if r.source == "Alice"}, {"Arisu"}
+        )
+        self.assertEqual(
+            {r.translation for r in self.rows if r.source == "Bob"}, {"T:Bob"}
+        )
+        name_requests = [
+            call for call in fake.calls if call and call[0]["kind"] == "speaker"
+        ]
         self.assertEqual(name_requests, [[dict(i=1, kind="speaker", text="Bob")]])
         self.assertEqual(events[-1][0], "done")
         target, _ = self.ws.build()
         validate(self.root / "work/source", translations=target / "json")
-        attempts = self.ws.db.execute("SELECT count(*), sum(tokens_in) FROM attempts WHERE outcome = 'ok'").fetchone()
+        attempts = self.ws.db.execute(
+            "SELECT count(*), sum(tokens_in) FROM attempts WHERE outcome = 'ok'"
+        ).fetchone()
         self.assertEqual(attempts, (len(fake.calls), 10 * len(fake.calls)))
 
     def test_bad_placeholder_is_split_and_retried(self):
         hello = self.find("Hello⟦0⟧world")
-        fake = FakeProvider(lambda record, call: "broken" if record["text"] == "Hello⟦0⟧world" and len(fake.calls) < 3 else None)
+        fake = FakeProvider(
+            lambda record, call: (
+                "broken"
+                if record["text"] == "Hello⟦0⟧world" and len(fake.calls) < 3
+                else None
+            )
+        )
         run, _ = self.run_with(fake)
         self.assertEqual(self.rows[hello].translation, "T:Hello⟦0⟧world")
         self.assertEqual(run.stats.failed, 0)
 
     def test_permanent_failure_is_marked_not_saved(self):
         hello = self.find("Hello⟦0⟧world")
-        fake = FakeProvider(lambda record, call: "broken" if record["text"] == "Hello⟦0⟧world" else None)
+        fake = FakeProvider(
+            lambda record, call: "broken" if record["text"] == "Hello⟦0⟧world" else None
+        )
         run, _ = self.run_with(fake)
         row = self.rows[hello]
         self.assertEqual((row.status, row.translation), ("new", None))
         self.assertIn("placeholders", row.error)
         self.assertEqual(run.stats.failed, 1)
         self.assertEqual(run.stats.done, len(self.rows) - 1)
-        single_tries = [call for call in fake.calls if call == [dict(i=1, kind="dialogue", speaker="Alice", text="Hello⟦0⟧world")]]
+        single_tries = [
+            call
+            for call in fake.calls
+            if call
+            == [dict(i=1, kind="dialogue", speaker="Alice", text="Hello⟦0⟧world")]
+        ]
         self.assertEqual(len(single_tries), 2)
         rerun, _ = self.run_with(FakeProvider())
-        self.assertEqual((rerun.stats.total, row.status, row.error), (1, "machine", None))
+        self.assertEqual(
+            (rerun.stats.total, row.status, row.error), (1, "machine", None)
+        )
 
     def test_transient_retried_auth_stops(self):
-        fake = FakeProvider(errors=[ProviderError("transient", "flaky", retry_after=0.01)])
+        fake = FakeProvider(
+            errors=[ProviderError("transient", "flaky", retry_after=0.01)]
+        )
         run, _ = self.run_with(fake, concurrency=1)
         self.assertEqual(run.stats.done, len(self.rows))
         for row in self.rows:
             self.ws.save(row, None)
         fake = FakeProvider(errors=[ProviderError("auth", "bad key")])
         run, events = self.run_with(fake, concurrency=1)
-        self.assertEqual((run.error, run.stats.done, run.stats.failed), ("bad key", 0, 0))
+        self.assertEqual(
+            (run.error, run.stats.done, run.stats.failed), ("bad key", 0, 0)
+        )
         self.assertEqual(events[-1], ("error", "Stopped: bad key"))
         self.assertTrue(all(row.error is None for row in self.rows))
 
@@ -314,18 +513,33 @@ class RunnerTests(WorkspaceCase):
 
         with patch("vntrans.translation.runner.asyncio.to_thread", inline):
             self.run_with(FakeProvider(rules))
-        self.assertEqual((self.rows[bye].translation, self.rows[bye].status), ("Mine", "edited"))
-        stored = self.ws.db.execute("SELECT translation FROM units WHERE id = ?", (self.rows[bye].id,)).fetchone()
+        self.assertEqual(
+            (self.rows[bye].translation, self.rows[bye].status), ("Mine", "edited")
+        )
+        stored = self.ws.db.execute(
+            "SELECT translation FROM units WHERE id = ?", (self.rows[bye].id,)
+        ).fetchone()
         self.assertEqual(stored, ("Mine",))
 
     def test_rules_apply_to_prompt_and_reply(self):
         fake = FakeProvider(lambda record, call: record["text"] + "!!")
         rules = Rules.parse("pre Bob => Robert\npost !! => .")
-        run = runner.Run(self.ws, self.rows, [self.find("How are you?")], profile=Profile("p", model="m", keys=["k"]),
-                         provider=fake, sections=prompts.chain({}), terms=[], settings={}, rules=rules)
+        run = runner.Run(
+            self.ws,
+            self.rows,
+            [self.find("How are you?")],
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=fake,
+            sections=prompts.chain({}),
+            terms=[],
+            settings={},
+            rules=rules,
+        )
         asyncio.run(run.run())
         self.assertEqual(fake.calls[0][0]["speaker"], "Bob")
-        self.assertEqual(self.rows[self.find("How are you?")].translation, "How are you?.")
+        self.assertEqual(
+            self.rows[self.find("How are you?")].translation, "How are you?."
+        )
 
     def test_review_suggests_without_touching_translations(self):
         self.run_with(FakeProvider())
@@ -333,18 +547,44 @@ class RunnerTests(WorkspaceCase):
         hello = self.find("Hello⟦0⟧world")
 
         def reply(recs, user):
-            out = [dict(i=r["i"], t="Better⟦0⟧one" if r["text"] == "Hello⟦0⟧world" else "no placeholder", r="tone")
-                   for r in recs if r["text"] in ("Hello⟦0⟧world", "Fine.")]
+            out = [
+                dict(
+                    i=r["i"],
+                    t="Better⟦0⟧one"
+                    if r["text"] == "Hello⟦0⟧world"
+                    else "no placeholder",
+                    r="tone",
+                )
+                for r in recs
+                if r["text"] in ("Hello⟦0⟧world", "Fine.")
+            ]
             return dict(translations=out + [dict(i=99, t="x", r="bogus")])
 
         fake = FakeProvider(reply=reply)
-        run = runner.Run(self.ws, self.rows, reviewed, profile=Profile("p", model="m", keys=["k"]), provider=fake,
-                         sections=prompts.chain({}), terms=[], settings={}, task="review")
+        run = runner.Run(
+            self.ws,
+            self.rows,
+            reviewed,
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=fake,
+            sections=prompts.chain({}),
+            terms=[],
+            settings={},
+            task="review",
+        )
         asyncio.run(run.run())
-        self.assertIn('"translation": "T:Hello⟦0⟧world"', json.dumps(fake.calls, ensure_ascii=False))
+        self.assertIn(
+            '"translation": "T:Hello⟦0⟧world"',
+            json.dumps(fake.calls, ensure_ascii=False),
+        )
         suggestions = self.ws.suggestions()
-        self.assertEqual(suggestions, {("a.ks", self.rows[hello].id): ("Better⟦0⟧one", "tone"),
-                                       ("a.ks", self.rows[self.find("Fine.")].id): ("no placeholder", "tone")})
+        self.assertEqual(
+            suggestions,
+            {
+                ("a.ks", self.rows[hello].id): ("Better⟦0⟧one", "tone"),
+                ("a.ks", self.rows[self.find("Fine.")].id): ("no placeholder", "tone"),
+            },
+        )
         self.assertEqual(self.rows[hello].translation, "T:Hello⟦0⟧world")
         self.assertEqual(run.found, 2)
 
@@ -353,21 +593,46 @@ class RunnerTests(WorkspaceCase):
         terms = self.ws.terms()
 
         def reply(recs, user):
-            return dict(terms=[dict(source="Bob", target="Bobby", kind="character", notes="friend"),
-                               dict(source="Alice", target="A", kind="character", notes=""),
-                               dict(source="Dragon", target="Naga", kind="term", notes="not in text")])
+            return dict(
+                terms=[
+                    dict(
+                        source="Bob", target="Bobby", kind="character", notes="friend"
+                    ),
+                    dict(source="Alice", target="A", kind="character", notes=""),
+                    dict(
+                        source="Dragon", target="Naga", kind="term", notes="not in text"
+                    ),
+                ]
+            )
 
-        run = runner.Run(self.ws, self.rows, list(range(len(self.rows))), profile=Profile("p", model="m", keys=["k"]),
-                         provider=FakeProvider(reply=reply), sections=[], terms=terms, settings={}, task="discover")
+        run = runner.Run(
+            self.ws,
+            self.rows,
+            list(range(len(self.rows))),
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=FakeProvider(reply=reply),
+            sections=[],
+            terms=terms,
+            settings={},
+            task="discover",
+        )
         asyncio.run(run.run())
         drafts = [t for t in self.ws.terms() if not t.approved]
-        self.assertEqual([(t.source, t.target, t.kind, t.notes) for t in drafts], [("Bob", "Bobby", "character", "friend")])
+        self.assertEqual(
+            [(t.source, t.target, t.kind, t.notes) for t in drafts],
+            [("Bob", "Bobby", "character", "friend")],
+        )
         self.assertIn("Bob", drafts[0].evidence)
 
     def test_quality_signals(self):
         rows = {row.source: row for row in self.rows}
-        self.ws.save_many([(rows["How are you?"], "お元気?"), (rows["Fine."], "Fine.\nOK"),
-                           (rows["Hello⟦0⟧world"], "Hi⟦0⟧Alicia")])
+        self.ws.save_many(
+            [
+                (rows["How are you?"], "お元気?"),
+                (rows["Fine."], "Fine.\nOK"),
+                (rows["Hello⟦0⟧world"], "Hi⟦0⟧Alicia"),
+            ]
+        )
         terms = [Term("Alice", "Arisu", "character"), Term("world", "dunia")]
         checker = quality.Checker(self.ws.check, "English", terms)
         found = {row.source: checker.issues(row) for row in self.rows}
@@ -380,64 +645,119 @@ class RunnerTests(WorkspaceCase):
         self.assertIsNone(rows["Bye."].translation)
 
     def test_batches_and_live_counters(self):
-        fake = FakeProvider(lambda record, call: "broken" if record["text"] == "Hello⟦0⟧world" else None)
+        fake = FakeProvider(
+            lambda record, call: "broken" if record["text"] == "Hello⟦0⟧world" else None
+        )
         batches = []
-        run = runner.Run(self.ws, self.rows, [i for i, r in enumerate(self.rows) if r.kind != "speaker"],
-                         profile=Profile("p", model="m", keys=["k"]), provider=fake, sections=prompts.chain({}),
-                         terms=[Term("Alice", "Arisu", "character")], settings=dict(concurrency=2),
-                         on_batch=batches.append)
+        run = runner.Run(
+            self.ws,
+            self.rows,
+            [i for i, r in enumerate(self.rows) if r.kind != "speaker"],
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=fake,
+            sections=prompts.chain({}),
+            terms=[Term("Alice", "Arisu", "character")],
+            settings=dict(concurrency=2),
+            on_batch=batches.append,
+        )
         asyncio.run(run.run())
         self.assertEqual([b.number for b in batches], list(range(1, len(batches) + 1)))
         first = batches[0]
-        self.assertEqual((first.task, first.file, first.tokens_in, first.tokens_out), ("translate", "a.ks", 10, 5))
+        self.assertEqual(
+            (first.task, first.file, first.tokens_in, first.tokens_out),
+            ("translate", "a.ks", 10, 5),
+        )
         self.assertIn("Alice → Arisu", first.terms)
-        outcomes = {source: (output, outcome, note) for _, source, output, outcome, note in first.records}
+        outcomes = {
+            source: (output, outcome, note)
+            for _, source, output, outcome, note in first.records
+        }
         self.assertEqual(outcomes["How are you?"], ("T:How are you?", "ok", ""))
         self.assertEqual(outcomes["Hello⟦0⟧world"][:2], ("broken", "failed"))
         self.assertIn("placeholders", outcomes["Hello⟦0⟧world"][2])
         self.assertTrue(any(b.attempt > 0 for b in batches))
-        self.assertEqual((run.stats.active, run.stats.queued, run.stats.cooling), (0, 0, 0))
+        self.assertEqual(
+            (run.stats.active, run.stats.queued, run.stats.cooling), (0, 0, 0)
+        )
         self.assertEqual(run.stats.replies, len(fake.calls))
         self.assertGreater(run.stats.rate(), 0)
 
     def test_speaker_labels_are_stripped_and_flagged(self):
         how = self.find("How are you?")
-        fake = FakeProvider(lambda record, call: f"{record['speaker']}: Apa kabar?" if record["text"] == "How are you?" else None)
+        fake = FakeProvider(
+            lambda record, call: (
+                f"{record['speaker']}: Apa kabar?"
+                if record["text"] == "How are you?"
+                else None
+            )
+        )
         self.run_with(fake, indices=[how])
         self.assertEqual(self.rows[how].translation, "Apa kabar?")
         self.assertIn("never add the speaker's name".lower(), prompts.CONTRACT.lower())
         fine = self.rows[self.find("Fine.")]
         self.ws.save(fine, "Alice: Baik.")
-        checker = quality.Checker(self.ws.check, "Indonesian", [], quality.speaker_names(self.rows))
+        checker = quality.Checker(
+            self.ws.check, "Indonesian", [], quality.speaker_names(self.rows)
+        )
         self.assertEqual(checker.issues(fine), ["speaker"])
         self.assertEqual(checker.issues(self.rows[how]), [])
 
     def test_prompt_enhancement_asks_for_reasoning_first(self):
         def reply(recs, user):
-            return dict(why="Context: Bob asks Alice", translations=[dict(i=r["i"], t=f"T:{r['text']}") for r in recs])
+            return dict(
+                why="Context: Bob asks Alice",
+                translations=[dict(i=r["i"], t=f"T:{r['text']}") for r in recs],
+            )
 
         fake, batches = FakeProvider(reply=reply), []
-        run = runner.Run(self.ws, self.rows, [self.find("How are you?")], profile=Profile("p", model="m", keys=["k"]),
-                         provider=fake, sections=prompts.chain({}), terms=[], settings={}, on_batch=batches.append)
+        run = runner.Run(
+            self.ws,
+            self.rows,
+            [self.find("How are you?")],
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=fake,
+            sections=prompts.chain({}),
+            terms=[],
+            settings={},
+            on_batch=batches.append,
+        )
         asyncio.run(run.run())
         self.assertEqual(fake.schemas, [providers.THINKING_SCHEMA])
         self.assertEqual(batches[0].thinking, "Context: Bob asks Alice")
-        self.assertEqual(self.rows[self.find("How are you?")].translation, "T:How are you?")
+        self.assertEqual(
+            self.rows[self.find("How are you?")].translation, "T:How are you?"
+        )
 
     def parallel_run(self, main, helper, **kwargs):
         events, batches = [], []
-        run = runner.Run(self.ws, self.rows, [i for i, row in enumerate(self.rows) if row.status == "new"],
-                         profile=Profile("a", model="m1", keys=["k"]), provider=main, sections=prompts.chain({}),
-                         terms=[], settings=dict(concurrency=1, batch_lines=1), on_batch=batches.append,
-                         on_event=lambda kind, text: events.append((kind, text)),
-                         parallel=[(Profile("b", model="m2", keys=["k"]), helper)], **kwargs)
+        run = runner.Run(
+            self.ws,
+            self.rows,
+            [i for i, row in enumerate(self.rows) if row.status == "new"],
+            profile=Profile("a", model="m1", keys=["k"]),
+            provider=main,
+            sections=prompts.chain({}),
+            terms=[],
+            settings=dict(concurrency=1, batch_lines=1),
+            on_batch=batches.append,
+            on_event=lambda kind, text: events.append((kind, text)),
+            parallel=[(Profile("b", model="m2", keys=["k"]), helper)],
+            **kwargs,
+        )
         asyncio.run(asyncio.wait_for(run.run(), 10))
         return run, events, batches
 
     def test_parallel_profiles_share_batches_without_overlap(self):
-        first, second = (FakeProvider(lambda record, call: time.sleep(0.005)) for _ in range(2))
+        first, second = (
+            FakeProvider(lambda record, call: time.sleep(0.005)) for _ in range(2)
+        )
         run, _, batches = self.parallel_run(first, second)
-        sent = [record["text"] for fake in (first, second) for call in fake.calls for record in call]
+        sent = [
+            record["text"]
+            for fake in (first, second)
+            for call in fake.calls
+            for record in call
+        ]
         self.assertEqual(len(sent), len(set(sent)))
         self.assertTrue(first.calls and second.calls)
         self.assertEqual({batch.worker for batch in batches}, {"a · m1", "b · m2"})
@@ -445,7 +765,10 @@ class RunnerTests(WorkspaceCase):
         self.assertEqual((run.stats.done, run.slots), (len(self.rows), 2))
 
     def test_failed_profile_leaves_and_the_other_finishes(self):
-        bad, good = FakeProvider(errors=[ProviderError("auth", "bad key")] * 50), FakeProvider()
+        bad, good = (
+            FakeProvider(errors=[ProviderError("auth", "bad key")] * 50),
+            FakeProvider(),
+        )
         run, events, _ = self.parallel_run(bad, good)
         self.assertIsNone(run.error)
         self.assertIn(("error", "a left the run: bad key"), events)
@@ -457,12 +780,22 @@ class RunnerTests(WorkspaceCase):
         run, events, _ = self.parallel_run(first, second)
         self.assertIsNotNone(run.error)
         self.assertEqual(events[-1], ("error", f"Stopped: {run.error}"))
-        self.assertTrue(all(row.status == "new" and row.error is None for row in self.rows))
+        self.assertTrue(
+            all(row.status == "new" and row.error is None for row in self.rows)
+        )
 
     def test_missing_key_is_rejected(self):
         with self.assertRaisesRegex(VnTransError, "no API key"):
-            runner.Run(self.ws, self.rows, [], profile=Profile("p", model="m"), provider=FakeProvider(),
-                       sections=[], terms=[], settings={})
+            runner.Run(
+                self.ws,
+                self.rows,
+                [],
+                profile=Profile("p", model="m"),
+                provider=FakeProvider(),
+                sections=[],
+                terms=[],
+                settings={},
+            )
 
 
 class RunLifecycleTests(WorkspaceCase):
@@ -470,10 +803,17 @@ class RunLifecycleTests(WorkspaceCase):
 
     def make_run(self, fake, indices=None, **kwargs):
         indices = list(range(len(self.rows))) if indices is None else indices
-        return runner.Run(self.ws, self.rows, indices,
-                          profile=Profile("p", model="m", keys=["k"]), provider=fake,
-                          sections=prompts.chain({}), terms=[], settings=dict(concurrency=2, batch_lines=1),
-                          **kwargs)
+        return runner.Run(
+            self.ws,
+            self.rows,
+            indices,
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=fake,
+            sections=prompts.chain({}),
+            terms=[],
+            settings=dict(concurrency=2, batch_lines=1),
+            **kwargs,
+        )
 
     def test_failure_waits_for_inflight_work_and_stops_queued_batches(self):
         async def check(task):
@@ -481,7 +821,11 @@ class RunLifecycleTests(WorkspaceCase):
             calls = []
 
             async def complete(function, profile, key, system, user, schema):
-                source = records(user)[0]["text"] if task != "discover" else user.splitlines()[-1][2:]
+                source = (
+                    records(user)[0]["text"]
+                    if task != "discover"
+                    else user.splitlines()[-1][2:]
+                )
                 calls.append(source)
                 if source == "first":
                     await second_started.wait()
@@ -490,7 +834,10 @@ class RunLifecycleTests(WorkspaceCase):
                 if source == "second":
                     second_started.set()
                     await finish_second.wait()
-                return Reply(json.dumps(dict(translations=[dict(i=1, t="saved")], terms=[])), "stop")
+                return Reply(
+                    json.dumps(dict(translations=[dict(i=1, t="saved")], terms=[])),
+                    "stop",
+                )
 
             run = self.make_run(FakeProvider(), task=task)
             with patch("vntrans.translation.runner.asyncio.to_thread", complete):
@@ -512,7 +859,9 @@ class RunLifecycleTests(WorkspaceCase):
 
         for task in ("translate", "review", "discover"):
             with self.subTest(task=task):
-                self.ws.save_many([(row, "old" if task == "review" else None) for row in self.rows])
+                self.ws.save_many(
+                    [(row, "old" if task == "review" else None) for row in self.rows]
+                )
                 asyncio.run(asyncio.wait_for(check(task), 2))
 
     def test_stop_interrupts_rate_and_network_retry_waits(self):
@@ -520,7 +869,9 @@ class RunLifecycleTests(WorkspaceCase):
             fake = FakeProvider(errors=[ProviderError(kind, "waiting", retry_after=60)])
             run = self.make_run(fake, indices=[0], task=task)
             loop = asyncio.get_running_loop()
-            run.on_event = lambda kind, text: loop.call_soon(run.stop) if kind == "retry" else None
+            run.on_event = lambda kind, text: (
+                loop.call_soon(run.stop) if kind == "retry" else None
+            )
             await asyncio.wait_for(run.run(), 1)
             self.assertEqual(len(fake.calls), 1)
             self.assertEqual((run.stats.active, run.stats.cooling), (0, 0))
@@ -561,7 +912,9 @@ class RunLifecycleTests(WorkspaceCase):
         with patch("vntrans.translation.runner.asyncio.to_thread", complete):
             asyncio.run(run.run())
         self.assertEqual(len(fake.calls), 1)
-        self.assertEqual((run.stats.done, self.ws.rows()[0].translation), (1, "T:first"))
+        self.assertEqual(
+            (run.stats.done, self.ws.rows()[0].translation), (1, "T:first")
+        )
 
 
 class DuplicateTests(WorkspaceCase):
@@ -574,7 +927,10 @@ class DuplicateTests(WorkspaceCase):
         sent = [record["text"] for call in fake.calls for record in call]
         self.assertEqual((sent.count("Fine."), sent.count("Bob")), (1, 1))
         fines = [row for row in self.rows if row.source == "Fine."]
-        self.assertEqual([(row.status, row.translation) for row in fines], [("machine", "T:Fine.")] * 2)
+        self.assertEqual(
+            [(row.status, row.translation) for row in fines],
+            [("machine", "T:Fine.")] * 2,
+        )
         self.assertEqual(run.stats.done, len(self.rows))
 
     def test_new_units_reuse_identical_translations(self):
@@ -583,7 +939,10 @@ class DuplicateTests(WorkspaceCase):
         fake = FakeProvider()
         run, events = self.run_with(fake, indices=[second])
         self.assertEqual(fake.calls, [])
-        self.assertEqual((self.rows[second].translation, self.rows[second].status, run.stats.done), ("Mine", "machine", 1))
+        self.assertEqual(
+            (self.rows[second].translation, self.rows[second].status, run.stats.done),
+            ("Mine", "machine", 1),
+        )
         self.assertIn("1 filled", events[0][1])
 
 
@@ -591,58 +950,119 @@ class ReviewTests(WorkspaceCase):
     first = "いつもと同じなんだけど、とてもいいなって感じる。"
     second = "いつも自分にとっての節目を見ていてくれたのは晶穂だった。"
     script = first + "\n" + second + "\n「うん」\n"
-    natural = ("Rasanya sama seperti biasanya, tapi entah kenapa terasa sangat menyenangkan.",
-               "Akiho-lah yang selalu memperhatikan momen-momen penting dalam hidupku.")
+    natural = (
+        "Rasanya sama seperti biasanya, tapi entah kenapa terasa sangat menyenangkan.",
+        "Akiho-lah yang selalu memperhatikan momen-momen penting dalam hidupku.",
+    )
 
     def setUp(self):
         super().setUp()
         self.ws.manifest["languages"]["target"] = "Indonesian"
-        self.ws.save_many([(self.rows[index], text) for index, text in enumerate((*self.natural, "Ya"))])
+        self.ws.save_many(
+            [
+                (self.rows[index], text)
+                for index, text in enumerate((*self.natural, "Ya"))
+            ]
+        )
 
     def review_run(self, reply, indices=(0, 1), **settings):
-        return runner.Run(self.ws, self.rows, list(indices), profile=Profile("p", model="m", keys=["k"]),
-                          provider=FakeProvider(reply=reply), sections=prompts.chain({}), terms=[],
-                          settings=settings, task="review")
+        return runner.Run(
+            self.ws,
+            self.rows,
+            list(indices),
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=FakeProvider(reply=reply),
+            sections=prompts.chain({}),
+            terms=[],
+            settings=settings,
+            task="review",
+        )
 
     def test_quote_only_advice_is_discarded_and_old_suggestions_are_replaced(self):
         self.ws.suggest(self.rows[0], "Old bad rewrite", "old reason")
         self.ws.suggest(self.rows[2], "“Ya”", "missing source quotation marks")
-        run = self.review_run(lambda recs, user: dict(translations=[
-            dict(i=r["i"], t="“" + r["translation"] + "”", r="Added quotes to match dialogue format.") for r in recs]))
+        run = self.review_run(
+            lambda recs, user: dict(
+                translations=[
+                    dict(
+                        i=r["i"],
+                        t="“" + r["translation"] + "”",
+                        r="Added quotes to match dialogue format.",
+                    )
+                    for r in recs
+                ]
+            )
+        )
         asyncio.run(run.run())
-        self.assertEqual(self.ws.suggestions(), {("a.ks", self.rows[2].id): ("“Ya”", "missing source quotation marks")})
-        self.assertEqual([row.translation for row in self.ws.rows()][:2], list(self.natural))
+        self.assertEqual(
+            self.ws.suggestions(),
+            {("a.ks", self.rows[2].id): ("“Ya”", "missing source quotation marks")},
+        )
+        self.assertEqual(
+            [row.translation for row in self.ws.rows()][:2], list(self.natural)
+        )
         self.assertEqual(run.found, 0)
         checker = quality.Checker(self.ws.check, "Indonesian", [])
         self.assertNotIn("quote", checker.issues(self.rows[0]))
         self.assertNotIn("quote", checker.issues(self.rows[1]))
 
     def test_genuinely_quoted_source_still_produces_quote_correction(self):
-        run = self.review_run(lambda recs, user: dict(translations=[
-            dict(i=1, t="Ya", r="Source 「うん」 encloses the speech in quotes.")]), indices=[2])
+        run = self.review_run(
+            lambda recs, user: dict(
+                translations=[
+                    dict(
+                        i=1, t="Ya", r="Source 「うん」 encloses the speech in quotes."
+                    )
+                ]
+            ),
+            indices=[2],
+        )
         asyncio.run(run.run())
         self.assertEqual(self.ws.suggestions()[("a.ks", self.rows[2].id)][0], "“Ya”")
         self.assertEqual(self.rows[2].translation, "Ya")
         self.assertEqual(run.found, 1)
 
     def test_review_has_nearby_context_and_retains_real_corrections(self):
-        self.ws.save(self.rows[1], "Akio-lah yang selalu memperhatikan momen-momen penting dalam hidupku.")
+        self.ws.save(
+            self.rows[1],
+            "Akio-lah yang selalu memperhatikan momen-momen penting dalam hidupku.",
+        )
         messages = []
+
         def reply(recs, user):
             messages.append(user)
-            return dict(translations=[dict(i=1, t="“" + self.natural[1] + "”",
-                                           r="The source 晶穂 names Akiho, not Akio.")])
+            return dict(
+                translations=[
+                    dict(
+                        i=1,
+                        t="“" + self.natural[1] + "”",
+                        r="The source 晶穂 names Akiho, not Akio.",
+                    )
+                ]
+            )
+
         run = self.review_run(reply, indices=[1], context_before=1, context_after=1)
         asyncio.run(run.run())
         self.assertIn(self.first, messages[0])
         self.assertIn("「うん」", messages[0])
         self.assertIn("Earlier lines (reference only)", messages[0])
-        self.assertEqual(self.ws.suggestions()[("a.ks", self.rows[1].id)][0], self.natural[1])
+        self.assertEqual(
+            self.ws.suggestions()[("a.ks", self.rows[1].id)][0], self.natural[1]
+        )
 
     def test_empty_or_unexplained_rewrites_are_not_suggestions(self):
-        for text, reason in (("", "Clear the translation."), ("  ", "Clear it."), ("Different wording", "  ")):
+        for text, reason in (
+            ("", "Clear the translation."),
+            ("  ", "Clear it."),
+            ("Different wording", "  "),
+        ):
             with self.subTest(text=text, reason=reason):
-                run = self.review_run(lambda recs, user: dict(translations=[dict(i=1, t=text, r=reason)]), indices=[0])
+                run = self.review_run(
+                    lambda recs, user, text=text, reason=reason: dict(
+                        translations=[dict(i=1, t=text, r=reason)]
+                    ),
+                    indices=[0],
+                )
                 asyncio.run(run.run())
                 self.assertEqual(self.ws.suggestions(), {})
                 self.assertEqual(self.rows[0].translation, self.natural[0])
@@ -652,22 +1072,38 @@ class ReviewTests(WorkspaceCase):
         run = self.review_run(lambda recs, user: {}, indices=[0])
         asyncio.run(run.run())
         self.assertEqual(run.stats.failed, 1)
-        self.assertEqual(self.ws.suggestions()[("a.ks", self.rows[0].id)], ("Previous suggestion", "Previous reason"))
+        self.assertEqual(
+            self.ws.suggestions()[("a.ks", self.rows[0].id)],
+            ("Previous suggestion", "Previous reason"),
+        )
 
     def test_review_reply_for_an_edited_row_is_ignored(self):
         run = self.review_run(lambda recs, user: {}, indices=[0])
         self.ws.save(self.rows[0], "My manual edit")
         self.ws.suggest(self.rows[0], "Newer suggestion", "Newer reason")
-        result = run.review([0], Reply(json.dumps(dict(translations=[dict(i=1, t="Old rewrite", r="old reason")])), "stop"))
-        self.assertEqual(self.ws.suggestions()[("a.ks", self.rows[0].id)], ("Newer suggestion", "Newer reason"))
+        result = run.review(
+            [0],
+            Reply(
+                json.dumps(
+                    dict(translations=[dict(i=1, t="Old rewrite", r="old reason")])
+                ),
+                "stop",
+            ),
+        )
+        self.assertEqual(
+            self.ws.suggestions()[("a.ks", self.rows[0].id)],
+            ("Newer suggestion", "Newer reason"),
+        )
         self.assertEqual(self.rows[0].translation, "My manual edit")
         self.assertEqual(result[0][3], "ok")
         self.assertEqual(run.found, 0)
 
 
 class ProtectedDuplicateTests(WorkspaceCase):
-    script = ('Go [ruby text=x char=5]Tokyo\nGo [ruby text=y char=5]Osaka\n'
-              'Go [l]\nGo [ruby text=x char=5]Tokyo\n[ruby text=x char=5]Tokyo\n')
+    script = (
+        "Go [ruby text=x char=5]Tokyo\nGo [ruby text=y char=5]Osaka\n"
+        "Go [l]\nGo [ruby text=x char=5]Tokyo\n[ruby text=x char=5]Tokyo\n"
+    )
     run_with = RunnerTests.run_with
 
     def test_different_ruby_bases_and_controls_are_sent_separately(self):
@@ -675,8 +1111,10 @@ class ProtectedDuplicateTests(WorkspaceCase):
         run, _ = self.run_with(fake)
         sent = [record["text"] for call in fake.calls for record in call]
         self.assertEqual(sent, ["Go Tokyo", "Go Osaka", "Go ⟦0⟧", "Tokyo"])
-        self.assertEqual([row.translation for row in self.ws.rows()],
-                         ["T:Go Tokyo", "T:Go Osaka", "T:Go ⟦0⟧", "T:Go Tokyo", "T:Tokyo"])
+        self.assertEqual(
+            [row.translation for row in self.ws.rows()],
+            ["T:Go Tokyo", "T:Go Osaka", "T:Go ⟦0⟧", "T:Go Tokyo", "T:Tokyo"],
+        )
         self.assertEqual(run.stats.done, 5)
         self.ws.build()
 
@@ -698,11 +1136,24 @@ class ProtectedDuplicateTests(WorkspaceCase):
 
         def reply(records, user):
             messages.append(user)
-            return dict(terms=[dict(source=name, target=name, kind="term", notes="") for name in ("Tokyo", "Osaka")])
+            return dict(
+                terms=[
+                    dict(source=name, target=name, kind="term", notes="")
+                    for name in ("Tokyo", "Osaka")
+                ]
+            )
 
-        run = runner.Run(self.ws, self.rows, list(range(len(self.rows))),
-                         profile=Profile("p", model="m", keys=["k"]), provider=FakeProvider(reply=reply),
-                         sections=prompts.chain({}), terms=[], settings={}, task="discover")
+        run = runner.Run(
+            self.ws,
+            self.rows,
+            list(range(len(self.rows))),
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=FakeProvider(reply=reply),
+            sections=prompts.chain({}),
+            terms=[],
+            settings={},
+            task="discover",
+        )
         asyncio.run(run.run())
         self.assertIn("Go Tokyo", messages[0])
         self.assertIn("Go Osaka", messages[0])
@@ -712,18 +1163,39 @@ class ProtectedDuplicateTests(WorkspaceCase):
 
 class RubyTests(unittest.TestCase):
     def test_model_sees_plain_text_and_fix_drops_furigana(self):
-        unit = make_unit("scenes/0/texts/0/2", "dialogue", "「本当の[ざ]座[す]主様」", "scn")
-        row = workspace.Row("a.scn", unit.id, "dialogue", unit.source, "加弥", "0",
-                            json.dumps(unit.context, ensure_ascii=False), '"Benar ⟦0⟧Za⟦1⟧su-sama"', "machine", None)
+        unit = make_unit(
+            "scenes/0/texts/0/2", "dialogue", "「本当の[ざ]座[す]主様」", "scn"
+        )
+        row = workspace.Row(
+            "a.scn",
+            unit.id,
+            "dialogue",
+            unit.source,
+            "加弥",
+            "0",
+            json.dumps(unit.context, ensure_ascii=False),
+            '"Benar ⟦0⟧Za⟦1⟧su-sama"',
+            "machine",
+            None,
+        )
         formats = {"a.scn": "scn"}
         self.assertEqual(prompts.shown(row, formats), "「本当の座主様」")
         self.assertEqual(prompts.shown(row, {}), unit.source)
-        prompt = prompts.build(prompts.chain({}), dict(source="Japanese", target="Indonesian"), [row], [0],
-                               formats=formats)
+        prompt = prompts.build(
+            prompts.chain({}),
+            dict(source="Japanese", target="Indonesian"),
+            [row],
+            [0],
+            formats=formats,
+        )
         self.assertEqual(records(prompt.user)[0]["text"], "「本当の座主様」")
-        checker = quality.Checker(lambda row, text: text, "Indonesian", [], set(), formats)
+        checker = quality.Checker(
+            lambda row, text: text, "Indonesian", [], set(), formats
+        )
         self.assertEqual(checker.issues(row), ["ruby", "quote"])
-        self.assertEqual(quality.tidy(row.translation, row, set(), formats), "“Benar Zasu-sama”")
+        self.assertEqual(
+            quality.tidy(row.translation, row, set(), formats), "“Benar Zasu-sama”"
+        )
 
 
 class QuoteTests(unittest.TestCase):
@@ -734,15 +1206,33 @@ class QuoteTests(unittest.TestCase):
             ("うん", "Ya", "「Ya」", "Ya"),
             ("「うん」", "Ya", "Ya", "“Ya”"),
             ("⟦0⟧うん⟦1⟧", "⟦0⟧Ya⟦1⟧", "⟦0⟧“Ya”⟦1⟧", "⟦0⟧Ya⟦1⟧"),
-            ("平気", "I'm fine", '“I\'m fine”', "I'm fine"),
-            ("「うん」と言った。", '"Ya," katanya.', '“"Ya," katanya.”', '"Ya," katanya.'),
+            ("平気", "I'm fine", "“I'm fine”", "I'm fine"),
+            (
+                "「うん」と言った。",
+                '"Ya," katanya.',
+                '“"Ya," katanya.”',
+                '"Ya," katanya.',
+            ),
             ("うん", "“Ya”", "“Iya”", "“Iya”"),
             ("『うん』", "“Ya”", "“Iya”", "“Iya”"),
         ]
         for source, current, candidate, expected in cases:
             with self.subTest(source=source, candidate=candidate):
-                row = workspace.Row("a.ks", "line/0", "dialogue", source, "Alice", "", "{}", current, "machine", None)
-                self.assertEqual(quality.review_text(candidate, row, {"alice"}, {}), expected)
+                row = workspace.Row(
+                    "a.ks",
+                    "line/0",
+                    "dialogue",
+                    source,
+                    "Alice",
+                    "",
+                    "{}",
+                    current,
+                    "machine",
+                    None,
+                )
+                self.assertEqual(
+                    quality.review_text(candidate, row, {"alice"}, {}), expected
+                )
 
     def test_requote_fixes_outer_marks_only_for_quoted_sources(self):
         cases = [
@@ -756,7 +1246,11 @@ class QuoteTests(unittest.TestCase):
             ("Ya", "『うん』", "“Ya”"),
             ('⟦0⟧"Ya"⟦1⟧', "⟦0⟧『うん』⟦1⟧", "⟦0⟧“Ya”⟦1⟧"),
             ('⟦0⟧"Ya."\n', "⟦0⟧「おう」\n", "⟦0⟧“Ya.”\n"),
-            ("Baris satu,\nbaris dua.", "「一行目、\n二行目」", "“Baris satu,\nbaris dua.”"),
+            (
+                "Baris satu,\nbaris dua.",
+                "「一行目、\n二行目」",
+                "“Baris satu,\nbaris dua.”",
+            ),
             ('Dia bilang "bodoh"', "「バカって言った」", '“Dia bilang "bodoh"”'),
             ("“Dia bilang ‘bodoh’", "「『バカ』って」", "“Dia bilang ‘bodoh’”"),
             ("I'm fine", "「平気」", "“I'm fine”"),

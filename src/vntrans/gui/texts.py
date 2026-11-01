@@ -1,12 +1,22 @@
 """Text indexes and worker-side workspace preparation, independent of Slint."""
 
-from dataclasses import dataclass, replace
 import re
 import time
+from dataclasses import dataclass, replace
 
 from .. import workspace
 
-STATES = ("all", "untranslated", "new", "machine", "edited", "failed", "excluded", "issues", "review")
+STATES = (
+    "all",
+    "untranslated",
+    "new",
+    "machine",
+    "edited",
+    "failed",
+    "excluded",
+    "issues",
+    "review",
+)
 FIELDS = {
     "source": lambda row: (row.source,),
     "translation": lambda row: (row.translation or "",),
@@ -24,7 +34,9 @@ def cooperative(rows, batch=250):
     for index, row in enumerate(rows):
         yield row
         if index % batch == batch - 1:
-            time.sleep(.001)  # Yield the GIL long enough for Slint to render and handle input.
+            time.sleep(
+                0.001
+            )  # Yield the GIL long enough for Slint to render and handle input.
 
 
 def check_rows(checker, rows, suggestions):
@@ -38,11 +50,28 @@ def check_rows(checker, rows, suggestions):
     return tags
 
 
-def filter_rows(rows, *, file=None, query="", scope="both", regex=False, case=False, kind="", status="all",
-                tags=None, issue=""):
+def filter_rows(
+    rows,
+    *,
+    file=None,
+    query="",
+    scope="both",
+    regex=False,
+    case=False,
+    kind="",
+    status="all",
+    tags=None,
+    issue="",
+):
     """Matching indices and counts ignoring the status filter. Invalid regexes raise re.error."""
     tags = tags or {}
-    search = re.compile(query if regex else re.escape(query), 0 if case else re.IGNORECASE).search if query else None
+    search = (
+        re.compile(
+            query if regex else re.escape(query), 0 if case else re.IGNORECASE
+        ).search
+        if query
+        else None
+    )
     fields = FIELDS[scope]
     counts = dict.fromkeys(STATES, 0)
     indices = []
@@ -62,9 +91,12 @@ def filter_rows(rows, *, file=None, query="", scope="both", regex=False, case=Fa
         counts["untranslated"] += untranslated
         counts["issues"] += flagged
         counts["review"] += "review" in marks
-        if status in ("all", current) or (status == "untranslated" and untranslated) \
-                or (status == "review" and "review" in marks) \
-                or (status == "issues" and (issue in marks if issue else flagged)):
+        if (
+            status in ("all", current)
+            or (status == "untranslated" and untranslated)
+            or (status == "review" and "review" in marks)
+            or (status == "issues" and (issue in marks if issue else flagged))
+        ):
             indices.append(index)
     return indices, counts
 
@@ -92,8 +124,11 @@ class TextState:
             self._count(row, 1)
 
     def _count(self, row, direction):
-        values = (row.status != "excluded", row.status != "excluded" and row.translation is not None,
-                  row.status != "excluded" and state(row) == "failed")
+        values = (
+            row.status != "excluded",
+            row.status != "excluded" and row.translation is not None,
+            row.status != "excluded" and state(row) == "failed",
+        )
         for index, value in enumerate(values):
             self.totals[index] += direction * value
             self.files[row.file][index] += direction * value
@@ -110,9 +145,17 @@ class TextState:
 
     def twins(self, row):
         key = self.keys[self.index_of[(row.file, row.id)]]
-        return [other for index in self.groups[key] if (other := self.rows[index]) is not row
-                and other.status != "excluded"
-                and (other.translation is None or other.status == "machine" or other.translation == row.translation)]
+        return [
+            other
+            for index in self.groups[key]
+            if (other := self.rows[index]) is not row
+            and other.status != "excluded"
+            and (
+                other.translation is None
+                or other.status == "machine"
+                or other.translation == row.translation
+            )
+        ]
 
 
 @dataclass
@@ -130,7 +173,10 @@ def load(root, filters=None):
     """Read and prepare a workspace entirely on the worker connection."""
     ws = workspace.Workspace(root)
     try:
-        rows = [workspace.Row(*values) for values in cooperative(ws.db.execute(workspace.ROWS))]
+        rows = [
+            workspace.Row(*values)
+            for values in cooperative(ws.db.execute(workspace.ROWS))
+        ]
         undo = []
         if not ws.manifest.get("prefiltered"):
             skipped = ws.untranslatable(rows)
@@ -138,7 +184,16 @@ def load(root, filters=None):
             ws.exclude_many(skipped, True)
             ws.manifest["prefiltered"] = True
             ws.save_manifest()
-        return Loaded(rows, TextState(rows, ws.formats), ws.manifest, ws.terms(), ws.suggestions(), undo,
-                      filter_snapshot(rows, **(filters if filters is not None else dict(kind="lines"))))
+        return Loaded(
+            rows,
+            TextState(rows, ws.formats),
+            ws.manifest,
+            ws.terms(),
+            ws.suggestions(),
+            undo,
+            filter_snapshot(
+                rows, **(filters if filters is not None else dict(kind="lines"))
+            ),
+        )
     finally:
         ws.close()

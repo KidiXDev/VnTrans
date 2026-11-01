@@ -24,8 +24,11 @@ class Progress:
             self.state = (phase, completed, total, filename)
             if not self.terminal and (phase, completed) != self.last_logged:
                 count = f" {completed}/{total}" if total else "..."
-                print(f"{phase}{count}" + (f"  {filename}" if filename else ""),
-                      file=self.stream, flush=True)
+                print(
+                    f"{phase}{count}" + (f"  {filename}" if filename else ""),
+                    file=self.stream,
+                    flush=True,
+                )
                 self.last_logged = (phase, completed)
         if self.terminal and self.thread is None:
             self.thread = threading.Thread(target=self.animate, daemon=True)
@@ -43,7 +46,12 @@ class Progress:
                     meter = "..."
                 line = f"{'|/-\\'[frame % 4]} {phase} {meter}  {filename}"
                 columns = max(1, shutil.get_terminal_size().columns - 1)
-                print("\r" + line[:columns].ljust(columns), end="", file=self.stream, flush=True)
+                print(
+                    "\r" + line[:columns].ljust(columns),
+                    end="",
+                    file=self.stream,
+                    flush=True,
+                )
             frame += 1
             self.stop.wait(0.1)
 

@@ -20,7 +20,9 @@ ATTRIBUTES = {
     "addselect": ("choice", {"text", "caption"}),
     **{f"sel0{i}": ("choice", {"text", "caption"}) for i in range(1, 5)},
 }
-ATTRIBUTE = re.compile(r'''([^\s=]+)\s*=\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s]+)''')
+ATTRIBUTE = re.compile(
+    r"""([^\s=]+)\s*=\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s]+)"""
+)
 
 
 def command(text: str):
@@ -54,9 +56,11 @@ class KsScript:
         self.data = data
         self.bom = b""
         detected = None
-        for bom, codec in ((codecs.BOM_UTF8, "utf-8"),
-                           (codecs.BOM_UTF16_LE, "utf-16-le"),
-                           (codecs.BOM_UTF16_BE, "utf-16-be")):
+        for bom, codec in (
+            (codecs.BOM_UTF8, "utf-8"),
+            (codecs.BOM_UTF16_LE, "utf-16-le"),
+            (codecs.BOM_UTF16_BE, "utf-16-be"),
+        ):
             if data.startswith(bom):
                 self.bom, detected = bom, codec
                 break
@@ -64,12 +68,16 @@ class KsScript:
             self.encoding = codecs.lookup(encoding or detected or "cp932").name
             # Normalize BOM-aware codec aliases; BOM is tracked independently.
             if self.encoding in ("utf-8-sig", "utf-16"):
-                self.encoding = detected or ("utf-8" if self.encoding == "utf-8-sig" else "utf-16-le")
+                self.encoding = detected or (
+                    "utf-8" if self.encoding == "utf-8-sig" else "utf-16-le"
+                )
             if detected and self.encoding != detected:
                 raise VnTransError("encoding override conflicts with the script BOM")
-            self.text = data[len(self.bom):].decode(self.encoding)
+            self.text = data[len(self.bom) :].decode(self.encoding)
         except (LookupError, UnicodeError) as exc:
-            raise VnTransError(f"cannot decode KS script: {exc}; specify --encoding") from exc
+            raise VnTransError(
+                f"cannot decode KS script: {exc}; specify --encoding"
+            ) from exc
         if "\x00" in self.text:
             raise VnTransError("NUL in KS script; check encoding or compiled format")
         self.units = []
@@ -95,17 +103,28 @@ class KsScript:
         raw = self.text[start:end]
         if quote:
             raw = raw.replace("\\" + quote, quote).replace("\\\\", "\\")
-        unit = make_unit(f"span/{start}:{end}/{kind}", kind, raw, self.format,
-                         line=line, label=self.label, speaker=self.speaker,
-                         literal=quote is not None or kind in ("speaker", "title"))
-        if not re.sub(r"⟦\d+⟧", "", plain(unit.source, unit.context["controls"], self.format)).strip():
+        unit = make_unit(
+            f"span/{start}:{end}/{kind}",
+            kind,
+            raw,
+            self.format,
+            line=line,
+            label=self.label,
+            speaker=self.speaker,
+            literal=quote is not None or kind in ("speaker", "title"),
+        )
+        if not re.sub(
+            r"⟦\d+⟧", "", plain(unit.source, unit.context["controls"], self.format)
+        ).strip():
             return
         self.units.append(unit)
         self.locations[unit.id] = (start, end, quote, self.line_start)
         if kind == "speaker":
             self.speaker = raw
         if any(c.startswith("[ruby") for c in unit.context["controls"]):
-            self.warnings.append(f"{unit.id}: ruby spans are protected; translations may leave them out")
+            self.warnings.append(
+                f"{unit.id}: ruby spans are protected; translations may leave them out"
+            )
 
     def attributes(self, body, base, line):
         name, end = command(body)
@@ -176,7 +195,7 @@ class KsScript:
                 p += 2
                 continue
             end = tag_end(line, p)
-            body = line[p + 1:end - 1]
+            body = line[p + 1 : end - 1]
             name, _ = command(body)
             if name in ("iscript", "macro"):
                 self.add(offset + start, offset + p, kind, number)
@@ -184,7 +203,9 @@ class KsScript:
                 if close:
                     expected = "endscript" if name == "iscript" else "endmacro"
                     if close[1].lower() != expected:
-                        raise VnTransError(f"line {number}: mismatched script/macro block")
+                        raise VnTransError(
+                            f"line {number}: mismatched script/macro block"
+                        )
                     p = end + close.end()
                     start = p
                     continue
@@ -220,14 +241,21 @@ class KsScript:
             value = render(unit, translated, self.format, wrap_columns)
             if quote is not None:
                 if value.lstrip().startswith(("&", "%")):
-                    raise VnTransError(f"{unit.id}: translation would introduce an attribute expression")
+                    raise VnTransError(
+                        f"{unit.id}: translation would introduce an attribute expression"
+                    )
                 delimiter = quote or '"'
                 value = value.replace("\\", "\\\\").replace(delimiter, "\\" + delimiter)
                 if not quote:
                     value = '"' + value + '"'
-            if unit.kind in ("dialogue", "choice") and not self.text[line_start:start].strip(" \t"):
-                if value.lstrip().startswith(("@", ";", "*", "#")):
-                    raise VnTransError(f"{unit.id}: translation would introduce a line command")
+            if (
+                unit.kind in ("dialogue", "choice")
+                and not self.text[line_start:start].strip(" \t")
+                and value.lstrip().startswith(("@", ";", "*", "#"))
+            ):
+                raise VnTransError(
+                    f"{unit.id}: translation would introduce a line command"
+                )
             changes.append((start, end, value))
         if not changes and output_encoding is None:
             return self.data
@@ -244,10 +272,22 @@ class KsScript:
             if output_encoding:
                 bom = b""
                 if encoding in ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be"):
-                    bom = codecs.BOM_UTF8 if encoding == "utf-8-sig" else (
-                        codecs.BOM_UTF16_BE if encoding == "utf-16-be" else codecs.BOM_UTF16_LE)
-                    encoding = "utf-8" if encoding == "utf-8-sig" else (
-                        "utf-16-be" if encoding == "utf-16-be" else "utf-16-le")
+                    bom = (
+                        codecs.BOM_UTF8
+                        if encoding == "utf-8-sig"
+                        else (
+                            codecs.BOM_UTF16_BE
+                            if encoding == "utf-16-be"
+                            else codecs.BOM_UTF16_LE
+                        )
+                    )
+                    encoding = (
+                        "utf-8"
+                        if encoding == "utf-8-sig"
+                        else ("utf-16-be" if encoding == "utf-16-be" else "utf-16-le")
+                    )
             return bom + text.encode(encoding)
         except (LookupError, UnicodeError) as exc:
-            raise VnTransError(f"cannot encode rebuilt KS script: {exc}; specify --output-encoding") from exc
+            raise VnTransError(
+                f"cannot encode rebuilt KS script: {exc}; specify --output-encoding"
+            ) from exc

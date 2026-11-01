@@ -1,18 +1,18 @@
 """Batch orchestration shared by the Python API and CLI."""
 
-from dataclasses import dataclass, field
-from collections.abc import Callable
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing, contextmanager, nullcontext
-from itertools import islice
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import tempfile
 import warnings
+from collections import deque
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, contextmanager, nullcontext
+from dataclasses import dataclass, field
+from itertools import islice
+from pathlib import Path
 
 import orjson
 
@@ -36,7 +36,9 @@ def _no_progress(phase, completed, total, filename):
 
 def check_destination(output: Path):
     if output.exists() or output.is_symlink():
-        raise VnTransError(f"destination already exists (choose a new directory): {output}")
+        raise VnTransError(
+            f"destination already exists (choose a new directory): {output}"
+        )
 
 
 def safe_path(value) -> Path:
@@ -51,9 +53,11 @@ def safe_path(value) -> Path:
 
 def disjoint(*paths):
     for i, left in enumerate(paths):
-        for right in paths[i + 1:]:
+        for right in paths[i + 1 :]:
             if left.is_relative_to(right) or right.is_relative_to(left):
-                raise VnTransError(f"input, translations, and output must not overlap: {left}, {right}")
+                raise VnTransError(
+                    f"input, translations, and output must not overlap: {left}, {right}"
+                )
 
 
 def _open(path):
@@ -65,7 +69,9 @@ def opened_files(paths):
     """Overlap slow file opens, retaining at most four handles and reading payloads on demand."""
     with ThreadPoolExecutor(max_workers=min(4, max(1, len(paths)))) as pool:
         remaining = iter(paths)
-        pending = deque((path, pool.submit(_open, path)) for path in islice(remaining, 4))
+        pending = deque(
+            (path, pool.submit(_open, path)) for path in islice(remaining, 4)
+        )
         try:
             while pending:
                 path, future = pending.popleft()
@@ -114,10 +120,16 @@ def source_files(path: Path, engine, progress=_no_progress):
 
 
 def document(relative, data, engine, script, language_index):
-    return dict(schema_version=1, engine=engine, format=script.format,
-                source=str(relative.as_posix()), sha256=hashlib.sha256(data).hexdigest(),
-                encoding=script.encoding, language_index=language_index,
-                units=[unit.document() for unit in script.units])
+    return dict(
+        schema_version=1,
+        engine=engine,
+        format=script.format,
+        source=str(relative.as_posix()),
+        sha256=hashlib.sha256(data).hexdigest(),
+        encoding=script.encoding,
+        language_index=language_index,
+        units=[unit.document() for unit in script.units],
+    )
 
 
 def strict_object(pairs):
@@ -135,9 +147,14 @@ def invalid_constant(value):
 
 def read_document(path, stream=None):
     try:
-        text = path.read_text(encoding="utf-8") if stream is None else stream.read().decode("utf-8")
-        value = json.loads(text, object_pairs_hook=strict_object,
-                           parse_constant=invalid_constant)
+        text = (
+            path.read_text(encoding="utf-8")
+            if stream is None
+            else stream.read().decode("utf-8")
+        )
+        value = json.loads(
+            text, object_pairs_hook=strict_object, parse_constant=invalid_constant
+        )
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise VnTransError(f"invalid translation JSON: {exc}") from exc
     if not isinstance(value, dict):
@@ -150,7 +167,9 @@ def translations_for(actual, expected):
         raise VnTransError("translation document fields differ from schema")
     for key in expected.keys() - {"units"}:
         if type(actual[key]) is not type(expected[key]) or actual[key] != expected[key]:
-            raise VnTransError(f"source metadata changed: {key}; extract again from the original")
+            raise VnTransError(
+                f"source metadata changed: {key}; extract again from the original"
+            )
     units = actual["units"]
     if not isinstance(units, list):
         raise VnTransError("units must be an array")
@@ -158,7 +177,13 @@ def translations_for(actual, expected):
     seen = set()
     translations = {}
     for unit in units:
-        if not isinstance(unit, dict) or set(unit) != {"id", "kind", "source", "translation", "context"}:
+        if not isinstance(unit, dict) or set(unit) != {
+            "id",
+            "kind",
+            "source",
+            "translation",
+            "context",
+        }:
             raise VnTransError("invalid unit fields")
         id = unit["id"]
         if not isinstance(id, str) or id not in original or id in seen:
@@ -166,9 +191,15 @@ def translations_for(actual, expected):
         seen.add(id)
         for key in ("kind", "source"):
             if not isinstance(unit[key], str) or unit[key] != original[id][key]:
-                raise VnTransError(f"{id}: only translation may be edited ({key} changed)")
-        if json.dumps(unit["context"], sort_keys=True) != json.dumps(original[id]["context"], sort_keys=True):
-            raise VnTransError(f"{id}: only translation may be edited (context changed)")
+                raise VnTransError(
+                    f"{id}: only translation may be edited ({key} changed)"
+                )
+        if json.dumps(unit["context"], sort_keys=True) != json.dumps(
+            original[id]["context"], sort_keys=True
+        ):
+            raise VnTransError(
+                f"{id}: only translation may be edited (context changed)"
+            )
         value = unit["translation"]
         if value is not None:
             if not isinstance(value, str):
@@ -181,7 +212,12 @@ def translations_for(actual, expected):
 
 @contextmanager
 def staging(output: Path, *, empty=False):
-    replace_empty = empty and not output.is_symlink() and output.is_dir() and not any(output.iterdir())
+    replace_empty = (
+        empty
+        and not output.is_symlink()
+        and output.is_dir()
+        and not any(output.iterdir())
+    )
     identity = output.stat() if replace_empty else None
     if not replace_empty:
         check_destination(output)
@@ -226,8 +262,15 @@ def publish(output: Path, files, progress=_no_progress):
         progress("Writing output", count, count, "")
 
 
-def extract(input, *, output, engine="kirikiri", encoding=None, language_index=0,
-            progress: ProgressCallback = _no_progress) -> Report:
+def extract(
+    input,
+    *,
+    output,
+    engine="kirikiri",
+    encoding=None,
+    language_index=0,
+    progress: ProgressCallback = _no_progress,
+) -> Report:
     """Export all supported scripts to a new JSON directory."""
     if type(language_index) is not int or language_index < 0:
         raise VnTransError("language index must be a nonnegative integer")
@@ -239,7 +282,12 @@ def extract(input, *, output, engine="kirikiri", encoding=None, language_index=0
     with staging(destination) as folder:
         for relative, data in source_files(source, handler, progress):
             try:
-                script = handler.extract(str(relative), data, encoding=encoding, language_index=language_index)
+                script = handler.extract(
+                    str(relative),
+                    data,
+                    encoding=encoding,
+                    language_index=language_index,
+                )
                 doc = document(relative, data, engine, script, language_index)
                 write_file(folder, Path(str(relative) + ".json"), encode_document(doc))
                 report.files += 1
@@ -273,13 +321,19 @@ def translation_sources(source, json_dir, progress=_no_progress, *, phase="Rebui
             raise VnTransError("translation batch must identify one engine")
         handler = get_engine(engine)
         completed = 0
+
         def update(_phase, _completed, _total, filename):
             progress(phase, completed, len(docs), filename)
+
         with closing(source_files(source, handler, update)) as sources:
             for index, (relative, data) in enumerate(sources):
                 item = (first_path, None) if index == 0 else next(opened, None)
-                if item is None or item[0].relative_to(json_dir) != Path(str(relative) + ".json"):
-                    raise VnTransError("translation files do not match source scripts; missing or extra JSON")
+                if item is None or item[0].relative_to(json_dir) != Path(
+                    str(relative) + ".json"
+                ):
+                    raise VnTransError(
+                        "translation files do not match source scripts; missing or extra JSON"
+                    )
                 path, stream = item
                 try:
                     doc = first if index == 0 else read_document(path, stream)
@@ -291,10 +345,14 @@ def translation_sources(source, json_dir, progress=_no_progress, *, phase="Rebui
                 yield relative, data, doc, engine, len(docs)
                 completed += 1
         if next(opened, None) is not None:
-            raise VnTransError("translation files do not match source scripts; missing or extra JSON")
+            raise VnTransError(
+                "translation files do not match source scripts; missing or extra JSON"
+            )
 
 
-def rebuild_file(relative, data, doc, engine, report, *, wrap_columns=None, output_encoding=None):
+def rebuild_file(
+    relative, data, doc, engine, report, *, wrap_columns=None, output_encoding=None
+):
     try:
         language = doc.get("language_index")
         if type(language) is not int or language < 0:
@@ -302,12 +360,21 @@ def rebuild_file(relative, data, doc, engine, report, *, wrap_columns=None, outp
         encoding = doc.get("encoding")
         if encoding is not None and not isinstance(encoding, str):
             raise VnTransError("invalid encoding")
-        script = get_engine(engine).extract(str(relative), data, encoding=encoding, language_index=language)
-        values = translations_for(doc, document(relative, data, engine, script, language))
+        script = get_engine(engine).extract(
+            str(relative), data, encoding=encoding, language_index=language
+        )
+        values = translations_for(
+            doc, document(relative, data, engine, script, language)
+        )
         with warnings.catch_warnings(record=True) as notices:
             warnings.simplefilter("always", UserWarning)
-            rebuilt = script.rebuild(values, wrap_columns=wrap_columns,
-                                     output_encoding=output_encoding if script.encoding is not None else None)
+            rebuilt = script.rebuild(
+                values,
+                wrap_columns=wrap_columns,
+                output_encoding=output_encoding
+                if script.encoding is not None
+                else None,
+            )
         report.files += 1
         report.units += len(values)
         report.warnings.extend(f"{relative}: {w}" for w in script.warnings)
@@ -317,19 +384,37 @@ def rebuild_file(relative, data, doc, engine, report, *, wrap_columns=None, outp
         raise VnTransError(f"{relative}: {exc}") from exc
 
 
-def _rebuild(input, translations, *, output=None, wrap_columns=None, output_encoding=None,
-             progress=_no_progress):
+def _rebuild(
+    input,
+    translations,
+    *,
+    output=None,
+    wrap_columns=None,
+    output_encoding=None,
+    progress=_no_progress,
+):
     check_wrap(wrap_columns)
     source, json_dir = safe_path(input), safe_path(translations)
     destination = safe_path(output) if output is not None else None
     disjoint(source, json_dir, *([destination] if destination is not None else []))
     report = Report()
     phase = "Rebuilding" if destination is not None else "Validating"
-    with staging(destination) if destination is not None else nullcontext(None) as folder:
-        for relative, data, doc, engine, total in translation_sources(source, json_dir, progress, phase=phase):
+    with (
+        staging(destination) if destination is not None else nullcontext(None) as folder
+    ):
+        for relative, data, doc, engine, total in translation_sources(
+            source, json_dir, progress, phase=phase
+        ):
             progress(phase, report.files, total, str(relative))
-            rebuilt = rebuild_file(relative, data, doc, engine, report,
-                                   wrap_columns=wrap_columns, output_encoding=output_encoding)
+            rebuilt = rebuild_file(
+                relative,
+                data,
+                doc,
+                engine,
+                report,
+                wrap_columns=wrap_columns,
+                output_encoding=output_encoding,
+            )
             if folder is not None:
                 write_file(folder, relative, rebuilt)
             progress(phase, report.files, total, str(relative))
@@ -339,15 +424,39 @@ def _rebuild(input, translations, *, output=None, wrap_columns=None, output_enco
     return report
 
 
-def rebuild(input, *, translations, output, wrap_columns=None, output_encoding=None,
-            progress: ProgressCallback = _no_progress) -> Report:
+def rebuild(
+    input,
+    *,
+    translations,
+    output,
+    wrap_columns=None,
+    output_encoding=None,
+    progress: ProgressCallback = _no_progress,
+) -> Report:
     """Validate and write rebuilt scripts to a new output directory."""
-    return _rebuild(input, translations, output=output, wrap_columns=wrap_columns,
-                    output_encoding=output_encoding, progress=progress)
+    return _rebuild(
+        input,
+        translations,
+        output=output,
+        wrap_columns=wrap_columns,
+        output_encoding=output_encoding,
+        progress=progress,
+    )
 
 
-def validate(input, *, translations, wrap_columns=None, output_encoding=None,
-             progress: ProgressCallback = _no_progress) -> Report:
+def validate(
+    input,
+    *,
+    translations,
+    wrap_columns=None,
+    output_encoding=None,
+    progress: ProgressCallback = _no_progress,
+) -> Report:
     """Run the same checks and in-memory rebuild without writing output."""
-    return _rebuild(input, translations, wrap_columns=wrap_columns,
-                    output_encoding=output_encoding, progress=progress)
+    return _rebuild(
+        input,
+        translations,
+        wrap_columns=wrap_columns,
+        output_encoding=output_encoding,
+        progress=progress,
+    )

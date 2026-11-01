@@ -15,9 +15,15 @@ class Kirikiri:
                 raise VnTransError("encoding overrides apply only to KS files")
             return ScnScript(data, language_index)
         if data.startswith((b"mdf\0", b"\xfe\xfe")):
-            raise VnTransError("compressed/scrambled scripts must be decoded externally before extraction")
+            raise VnTransError(
+                "compressed/scrambled scripts must be decoded externally before extraction"
+            )
         if Path(name).suffix.lower() != ".ks":
-            raise VnTransError("unsupported compiled script; expected unencrypted PSB v3")
+            raise VnTransError(
+                "unsupported compiled script; expected unencrypted PSB v3"
+            )
         if language_index:
-            raise VnTransError("language index selection applies only to multilingual SCN files")
+            raise VnTransError(
+                "language index selection applies only to multilingual SCN files"
+            )
         return KsScript(data, encoding)

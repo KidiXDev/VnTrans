@@ -9,33 +9,52 @@ from vntrans.text import make_unit, render, width
 
 class KsTests(unittest.TestCase):
     def test_many_replacements_preserve_spans_and_line_boundaries(self):
-        original = '; comment\r\n' + ('  Hello [[world[p]\rGood morning[l]\n' * 2000)
+        original = "; comment\r\n" + ("  Hello [[world[p]\rGood morning[l]\n" * 2000)
         script = self.parse(original)
-        translations = {u.id: u.source.replace("Hello", "Hi").replace("morning", "evening")
-                        for u in script.units}
+        translations = {
+            u.id: u.source.replace("Hello", "Hi").replace("morning", "evening")
+            for u in script.units
+        }
         expected = original.replace("Hello", "Hi").replace("morning", "evening")
-        self.assertEqual(script.rebuild(translations), codecs.BOM_UTF8 + expected.encode())
+        self.assertEqual(
+            script.rebuild(translations), codecs.BOM_UTF8 + expected.encode()
+        )
         self.assertEqual(script.rebuild({}), script.data)
         for unit in (script.units[0], script.units[-1]):
             with self.assertRaisesRegex(VnTransError, "line command"):
-                script.rebuild({unit.id: "@jump" + ''.join(f"⟦{i}⟧" for i in range(len(unit.context['controls'])))})
+                script.rebuild(
+                    {
+                        unit.id: "@jump"
+                        + "".join(
+                            f"⟦{i}⟧" for i in range(len(unit.context["controls"]))
+                        )
+                    }
+                )
 
     def parse(self, text):
         return KsScript(codecs.BOM_UTF8 + text.encode())
 
     def test_preserve_nontext_and_mixed_newlines(self):
-        text = ('; comment\r\n*start|Scene title\n@iscript\r\nvar s = "hidden";\n@endscript\n'
-                '[macro name=test]\nHidden definition\n[endmacro]\n'
-                '[name name="Alice" storage="秘密.ks"]Hello [font color=red]world[resetfont][p]\r\n'
-                '[link target="*next"]Choose me[endlink]\n'
-                '@button text="Choice two" storage="hidden.ks"\n')
+        text = (
+            '; comment\r\n*start|Scene title\n@iscript\r\nvar s = "hidden";\n@endscript\n'
+            "[macro name=test]\nHidden definition\n[endmacro]\n"
+            '[name name="Alice" storage="秘密.ks"]Hello [font color=red]world[resetfont][p]\r\n'
+            '[link target="*next"]Choose me[endlink]\n'
+            '@button text="Choice two" storage="hidden.ks"\n'
+        )
         script = self.parse(text)
-        self.assertEqual([u.kind for u in script.units], ["title", "speaker", "dialogue", "choice", "choice"])
+        self.assertEqual(
+            [u.kind for u in script.units],
+            ["title", "speaker", "dialogue", "choice", "choice"],
+        )
         self.assertEqual(script.rebuild({}), script.data)
         unit = next(u for u in script.units if u.kind == "dialogue")
         translated = "Good ⟦0⟧evening⟦1⟧⟦2⟧"
         result = script.rebuild({unit.id: translated})
-        expected = text.replace("Hello [font color=red]world[resetfont][p]", "Good [font color=red]evening[resetfont][p]")
+        expected = text.replace(
+            "Hello [font color=red]world[resetfont][p]",
+            "Good [font color=red]evening[resetfont][p]",
+        )
         self.assertEqual(result, codecs.BOM_UTF8 + expected.encode())
 
     def test_quoted_brackets_and_attributes(self):
@@ -58,8 +77,12 @@ class KsTests(unittest.TestCase):
         self.assertIn(b"Hi [[world [[literal][r]Bye", changed)
 
     def test_encodings_and_explicit_override(self):
-        for codec, bom in (("cp932", b""), ("utf-8", codecs.BOM_UTF8),
-                           ("utf-16-le", codecs.BOM_UTF16_LE), ("utf-16-be", codecs.BOM_UTF16_BE)):
+        for codec, bom in (
+            ("cp932", b""),
+            ("utf-8", codecs.BOM_UTF8),
+            ("utf-16-le", codecs.BOM_UTF16_LE),
+            ("utf-16-be", codecs.BOM_UTF16_BE),
+        ):
             with self.subTest(codec=codec):
                 data = bom + "こんにちは\r\n".encode(codec)
                 script = KsScript(data)
@@ -81,22 +104,26 @@ class KsTests(unittest.TestCase):
         self.assertIn('[ruby text="kanji" char=2]漢字'.encode(), changed)
         self.assertTrue(script.warnings)
         dropped = script.rebuild({unit.id: "A Chinese character example⟦1⟧"})
-        self.assertEqual(dropped.decode("utf-8-sig"), "A Chinese character example[p]\n")
+        self.assertEqual(
+            dropped.decode("utf-8-sig"), "A Chinese character example[p]\n"
+        )
         with self.assertRaises(VnTransError):
             script.rebuild({unit.id: "An example"})
 
     def test_break_text_inside_tag_attribute_stays_untouched(self):
-        script = self.parse('Hello [emb exp="\'[r]\'"] friend\n')
+        script = self.parse("Hello [emb exp=\"'[r]'\"] friend\n")
         unit = script.units[0]
         result = script.rebuild({unit.id: "Hi ⟦0⟧ friend"})
-        self.assertIn(b'[emb exp="\'[r]\'"]', result)
+        self.assertIn(b"[emb exp=\"'[r]'\"]", result)
 
     def test_ruby_only_text_is_extracted(self):
-        script = self.parse('[ruby text=x char=2]東京[p]\n')
+        script = self.parse("[ruby text=x char=2]東京[p]\n")
         self.assertEqual(len(script.units), 1)
         unit = script.units[0]
         self.assertEqual(unit.source, "⟦0⟧⟦1⟧")
-        self.assertEqual(script.rebuild({unit.id: "Tokyo⟦1⟧"}).decode("utf-8-sig"), "Tokyo[p]\n")
+        self.assertEqual(
+            script.rebuild({unit.id: "Tokyo⟦1⟧"}).decode("utf-8-sig"), "Tokyo[p]\n"
+        )
 
     def test_no_attribute_expression_extraction(self):
         script = self.parse('[name name="&variable"]Hello\n@button text=%macro\n')
@@ -107,11 +134,22 @@ class KsTests(unittest.TestCase):
                 script.rebuild({script.units[0].id: value})
 
     def test_bad_tags_blocks_unicode_and_command_injection(self):
-        for text in ("Hello [font", "@iscript\ncode\n", "[macro name=x]\nhello", "; comment\n"):
+        for text in (
+            "Hello [font",
+            "@iscript\ncode\n",
+            "[macro name=x]\nhello",
+            "; comment\n",
+        ):
             with self.subTest(text=text), self.assertRaises(VnTransError):
                 self.parse(text)
         script = self.parse("Hello\n")
-        for translated in ("@jump target=*x", ";comment", "\ud800", "bad\x00text", "⟦99⟧"):
+        for translated in (
+            "@jump target=*x",
+            ";comment",
+            "\ud800",
+            "bad\x00text",
+            "⟦99⟧",
+        ):
             with self.subTest(text=repr(translated)), self.assertRaises(VnTransError):
                 script.rebuild({script.units[0].id: translated})
         script = self.parse("  Hello\n")
@@ -119,7 +157,9 @@ class KsTests(unittest.TestCase):
             script.rebuild({script.units[0].id: "@jump target=*x"})
 
     def test_wrapping_is_control_aware(self):
-        unit = make_unit("test", "dialogue", "One [font color=red]two[resetfont] three", "ks")
+        unit = make_unit(
+            "test", "dialogue", "One [font color=red]two[resetfont] three", "ks"
+        )
         result = render(unit, unit.source, "ks", 7)
         self.assertEqual(result, "One [font color=red]two[resetfont][r]three")
         self.assertEqual(width("a\u0301界"), 3)

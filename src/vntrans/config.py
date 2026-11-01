@@ -2,8 +2,8 @@
 
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def config_dir() -> Path:
@@ -49,4 +49,5 @@ def save(config: dict):
 def remember(config: dict, workspace: Path, name: str):
     path = str(workspace)
     config["recent"] = [dict(path=path, name=name)] + [
-        item for item in config.get("recent", []) if item.get("path") != path][:9]
+        item for item in config.get("recent", []) if item.get("path") != path
+    ][:9]

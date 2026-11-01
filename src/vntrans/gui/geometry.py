@@ -20,14 +20,19 @@ def normalize(value) -> dict:
         if type(number) in (int, float) and 0 < number <= LIMIT:
             state[key] = float(number)
     position = value.get("position")
-    if isinstance(position, list) and len(position) == 2 \
-            and all(type(number) is int and abs(number) <= 8 * LIMIT for number in position):
+    if (
+        isinstance(position, list)
+        and len(position) == 2
+        and all(type(number) is int and abs(number) <= 8 * LIMIT for number in position)
+    ):
         state["position"] = position
     return state
 
 
 def overlap(a, b) -> int:
-    return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(
+        0, min(a[3], b[3]) - max(a[1], b[1])
+    )
 
 
 def place(rect, areas) -> tuple[tuple, bool]:
@@ -60,30 +65,72 @@ if sys.platform == "win32":
     LOCATION_CHANGE = 0x800B
 
     class WINDOWPLACEMENT(ctypes.Structure):
-        _fields_ = [("length", wintypes.UINT), ("flags", wintypes.UINT), ("showCmd", wintypes.UINT),
-                    ("ptMinPosition", wintypes.POINT), ("ptMaxPosition", wintypes.POINT),
-                    ("rcNormalPosition", wintypes.RECT)]
+        _fields_ = [
+            ("length", wintypes.UINT),
+            ("flags", wintypes.UINT),
+            ("showCmd", wintypes.UINT),
+            ("ptMinPosition", wintypes.POINT),
+            ("ptMaxPosition", wintypes.POINT),
+            ("rcNormalPosition", wintypes.RECT),
+        ]
 
     class MONITORINFO(ctypes.Structure):
-        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
-                    ("dwFlags", wintypes.DWORD)]
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", wintypes.RECT),
+            ("rcWork", wintypes.RECT),
+            ("dwFlags", wintypes.DWORD),
+        ]
 
     ENUM_WINDOWS = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    ENUM_MONITORS = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
-                                       ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
-    WIN_EVENT = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND, wintypes.LONG,
-                                   wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
+    ENUM_MONITORS = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HMONITOR,
+        wintypes.HDC,
+        ctypes.POINTER(wintypes.RECT),
+        wintypes.LPARAM,
+    )
+    WIN_EVENT = ctypes.WINFUNCTYPE(
+        None,
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.HWND,
+        wintypes.LONG,
+        wintypes.LONG,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    )
     user32.EnumWindows.argtypes = [ENUM_WINDOWS, wintypes.LPARAM]
-    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
     user32.IsWindowVisible.argtypes = [wintypes.HWND]
     user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-    user32.GetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WINDOWPLACEMENT)]
-    user32.SetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WINDOWPLACEMENT)]
-    user32.EnumDisplayMonitors.argtypes = [wintypes.HDC, ctypes.POINTER(wintypes.RECT), ENUM_MONITORS,
-                                           wintypes.LPARAM]
+    user32.GetWindowPlacement.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(WINDOWPLACEMENT),
+    ]
+    user32.SetWindowPlacement.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(WINDOWPLACEMENT),
+    ]
+    user32.EnumDisplayMonitors.argtypes = [
+        wintypes.HDC,
+        ctypes.POINTER(wintypes.RECT),
+        ENUM_MONITORS,
+        wintypes.LPARAM,
+    ]
     user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
-    user32.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE, WIN_EVENT,
-                                       wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
+    user32.SetWinEventHook.argtypes = [
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HMODULE,
+        WIN_EVENT,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ]
     user32.SetWinEventHook.restype = wintypes.HANDLE
     user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
 
@@ -119,7 +166,11 @@ if sys.platform == "win32":
             def visit(hwnd, data):
                 owner, title = wintypes.DWORD(), ctypes.create_unicode_buffer(2)
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-                if owner.value == os.getpid() and user32.IsWindowVisible(hwnd) and user32.GetWindowTextW(hwnd, title, 2):
+                if (
+                    owner.value == os.getpid()
+                    and user32.IsWindowVisible(hwnd)
+                    and user32.GetWindowTextW(hwnd, title, 2)
+                ):
                     found.append(hwnd)
                 return not found
 
@@ -128,7 +179,11 @@ if sys.platform == "win32":
 
         def placement(self) -> WINDOWPLACEMENT | None:
             placement = WINDOWPLACEMENT(length=ctypes.sizeof(WINDOWPLACEMENT))
-            return placement if user32.GetWindowPlacement(self.hwnd, ctypes.byref(placement)) else None
+            return (
+                placement
+                if user32.GetWindowPlacement(self.hwnd, ctypes.byref(placement))
+                else None
+            )
 
         @staticmethod
         def offset() -> tuple[int, int]:
@@ -136,7 +191,10 @@ if sys.platform == "win32":
             if not screens:
                 return 0, 0
             primary = screens[0]
-            return primary.rcWork.left - primary.rcMonitor.left, primary.rcWork.top - primary.rcMonitor.top
+            return (
+                primary.rcWork.left - primary.rcMonitor.left,
+                primary.rcWork.top - primary.rcMonitor.top,
+            )
 
         def read(self) -> tuple[tuple, int, bool] | None:
             """(restored bounds in screen coordinates, show state, restores maximized), or None once closed."""
@@ -146,32 +204,48 @@ if sys.platform == "win32":
             dx, dy = self.offset()
             left, top, right, bottom = box(placement.rcNormalPosition)
             maximized = placement.showCmd == MAXIMIZED or (
-                placement.showCmd == MINIMIZED and bool(placement.flags & RESTORE_TO_MAXIMIZED))
-            return (left + dx, top + dy, right + dx, bottom + dy), placement.showCmd, maximized
+                placement.showCmd == MINIMIZED
+                and bool(placement.flags & RESTORE_TO_MAXIMIZED)
+            )
+            return (
+                (left + dx, top + dy, right + dx, bottom + dy),
+                placement.showCmd,
+                maximized,
+            )
 
         def restore(self, position, maximized: bool):
             """Move the window's restored bounds to `position`, keeping its size and keeping it reachable.
 
             A window too large for its monitor is maximized there instead."""
-            placement, areas = self.placement(), [box(info.rcWork) for info in monitors()]
+            placement, areas = (
+                self.placement(),
+                [box(info.rcWork) for info in monitors()],
+            )
             if placement is None or not areas:
                 return
             left, top, right, bottom = box(placement.rcNormalPosition)
             x, y = position
-            (left, top, right, bottom), fits = place((x, y, x + right - left, y + bottom - top), areas)
+            (left, top, right, bottom), fits = place(
+                (x, y, x + right - left, y + bottom - top), areas
+            )
             dx, dy = self.offset()
-            placement.rcNormalPosition = wintypes.RECT(left - dx, top - dy, right - dx, bottom - dy)
+            placement.rcNormalPosition = wintypes.RECT(
+                left - dx, top - dy, right - dx, bottom - dy
+            )
             placement.showCmd = MAXIMIZED if maximized or not fits else NORMAL
             user32.SetWindowPlacement(self.hwnd, ctypes.byref(placement))
 
         def watch(self, callback):
             """Call `callback` after every move, resize, minimize or maximize of the window."""
+
             def changed(hook, event, hwnd, kind, child, thread, time):
                 if hwnd == self.hwnd and kind == 0:
                     callback()
 
             self.proc = WIN_EVENT(changed)
-            self.hook = user32.SetWinEventHook(LOCATION_CHANGE, LOCATION_CHANGE, None, self.proc, os.getpid(), 0, 0)
+            self.hook = user32.SetWinEventHook(
+                LOCATION_CHANGE, LOCATION_CHANGE, None, self.proc, os.getpid(), 0, 0
+            )
 
         def close(self):
             if self.hook:

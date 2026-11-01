@@ -2,7 +2,7 @@
 
 from ...model import VnTransError
 from ...text import make_unit, render
-from .psb import Node, PSB
+from .psb import PSB, Node
 
 
 def string(node):
@@ -20,7 +20,9 @@ class ScnScript:
         self.warnings = []
         root = self.psb.root
         if root.tag != 33 or "scenes" not in root.value or "name" not in root.value:
-            raise VnTransError("PSB is not a supported scenario (expected name and scenes)")
+            raise VnTransError(
+                "PSB is not a supported scenario (expected name and scenes)"
+            )
         scenes = root.value["scenes"]
         if scenes.tag != 32:
             raise VnTransError("scenario scenes must be a list")
@@ -53,10 +55,14 @@ class ScnScript:
                     if message.tag == 32:
                         langs = message.value
                         if language_index >= len(langs):
-                            raise VnTransError(f"{base}: language index {language_index} is unavailable")
+                            raise VnTransError(
+                                f"{base}: language index {language_index} is unavailable"
+                            )
                         language = langs[language_index]
                         if language.tag != 32 or len(language.value) < 2:
-                            raise VnTransError(f"{base}: unsupported multilingual record")
+                            raise VnTransError(
+                                f"{base}: unsupported multilingual record"
+                            )
                         base += f"/{message_index}/{language_index}"
                         row = language.value
                         if string(row[0]) is not None:
@@ -64,11 +70,20 @@ class ScnScript:
                         self.add(base + "/1", "dialogue", row, 1, **context_row)
                     elif string(message) is not None:
                         if language_index:
-                            raise VnTransError(f"{base}: record has no language {language_index}")
+                            raise VnTransError(
+                                f"{base}: record has no language {language_index}"
+                            )
                         if string(row[1]) is not None:
                             self.add(base + "/1", "speaker", row, 1, **context_row)
                         elif row[1].tag == 1 and real_name and real_name != "＠":
-                            self.add(base + "/1", "speaker", row, 1, fallback=real_name, **context_row)
+                            self.add(
+                                base + "/1",
+                                "speaker",
+                                row,
+                                1,
+                                fallback=real_name,
+                                **context_row,
+                            )
                         self.add(base + "/2", "dialogue", row, 2, **context_row)
                     else:
                         raise VnTransError(f"{base}: unsupported message value")
@@ -83,7 +98,10 @@ class ScnScript:
                     choice = choice.value
                     if "language" in choice and choice["language"].tag == 32:
                         languages = choice["language"].value
-                        if language_index >= len(languages) or languages[language_index].tag != 33:
+                        if (
+                            language_index >= len(languages)
+                            or languages[language_index].tag != 33
+                        ):
                             raise VnTransError(f"{base}: unavailable choice language")
                         choice = languages[language_index].value
                         base += f"/language/{language_index}"
@@ -94,21 +112,33 @@ class ScnScript:
             raise VnTransError("scenario contains no supported dialogue or choices")
 
     def add(self, id, kind, container, key, fallback=None, **context):
-        raw = fallback if fallback is not None else string(container.get(key) if isinstance(container, dict) else container[key])
+        raw = (
+            fallback
+            if fallback is not None
+            else string(
+                container.get(key) if isinstance(container, dict) else container[key]
+            )
+        )
         if raw is None:
             raise VnTransError(f"{id}: expected text string")
         unit = make_unit(id, kind, raw, self.format, **context)
         self.units.append(unit)
         if any(c.startswith("[") for c in unit.context["controls"]):
-            self.warnings.append(f"{id}: ruby/annotation spans are protected; translations may leave them out")
+            self.warnings.append(
+                f"{id}: ruby/annotation spans are protected; translations may leave them out"
+            )
 
     def rebuild(self, translations, *, wrap_columns=None, output_encoding=None):
         if output_encoding:
-            raise VnTransError("output encoding overrides apply only to KS files; PSB uses UTF-8")
+            raise VnTransError(
+                "output encoding overrides apply only to KS files; PSB uses UTF-8"
+            )
         changes = {}
         for unit in self.units:
             if unit.id in translations and translations[unit.id] != unit.source:
-                changes[unit.id] = render(unit, translations[unit.id], self.format, wrap_columns)
+                changes[unit.id] = render(
+                    unit, translations[unit.id], self.format, wrap_columns
+                )
         if not changes:
             return self.data
         # Reparse for repeatable API calls; never mutate the source model.

@@ -1,9 +1,9 @@
-from contextlib import redirect_stderr, redirect_stdout
 import io
-from pathlib import Path
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 from vntrans import extract
 from vntrans.cli import main
@@ -33,11 +33,10 @@ class ProgressTests(unittest.TestCase):
         stream = Terminal()
         with redirect_stderr(stream):
             display = Progress()
-            with self.assertRaisesRegex(ValueError, "failed"):
-                with display as progress:
-                    progress("Extracting", 0, 1, "scenario.ks")
-                    self.assertTrue(stream.animated.wait(2), "spinner did not animate")
-                    raise ValueError("failed")
+            with self.assertRaisesRegex(ValueError, "failed"), display as progress:
+                progress("Extracting", 0, 1, "scenario.ks")
+                self.assertTrue(stream.animated.wait(2), "spinner did not animate")
+                raise ValueError("failed")
         self.assertFalse(display.thread.is_alive())
         self.assertIn("0/1", stream.getvalue())
         self.assertTrue(stream.getvalue().endswith("\r"))
@@ -48,7 +47,9 @@ class ProgressTests(unittest.TestCase):
             source.write_bytes(b"Hello\n")
             stdout, stderr = io.StringIO(), io.StringIO()
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                code = main(["extract", str(source), "--output", str(Path(temp) / "json")])
+                code = main(
+                    ["extract", str(source), "--output", str(Path(temp) / "json")]
+                )
         self.assertEqual(code, 0)
         self.assertEqual(stdout.getvalue(), "extract: 1 file(s), 1 unit(s)\n")
         self.assertIn("Extracting 1/1", stderr.getvalue())

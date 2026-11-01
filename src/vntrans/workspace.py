@@ -1,12 +1,12 @@
 """Project workspace: copied sources, immutable extraction, and a SQLite translation store."""
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import sqlite3
 import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 
 from . import pipeline
 from .engines import get_engine
@@ -34,8 +34,10 @@ CREATE TABLE IF NOT EXISTS attempts(
 CREATE TABLE IF NOT EXISTS suggestions(
     file TEXT NOT NULL, id TEXT NOT NULL, text TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(file, id));
 """
-ROWS = ("SELECT file, id, kind, source, speaker, scene, context, translation, status, error "
-        "FROM units ORDER BY file, ord")
+ROWS = (
+    "SELECT file, id, kind, source, speaker, scene, context, translation, status, error "
+    "FROM units ORDER BY file, ord"
+)
 
 
 @dataclass(slots=True)
@@ -56,8 +58,13 @@ class Row:
 
     def translation_key(self, format):
         context = json.loads(self.context)
-        return (self.kind, format, self.source, context.get("literal", False),
-                tuple(context.get("controls", [])))
+        return (
+            self.kind,
+            format,
+            self.source,
+            context.get("literal", False),
+            tuple(context.get("controls", [])),
+        )
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -83,29 +90,42 @@ def load_rows(root) -> list[Row]:
 
 def write_json(path: Path, value):
     temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     os.replace(temporary, path)
 
 
 def store_rows(root, entries, *, check=True, dismiss=False):
     """Commit detached GUI edits on a private connection; publish their row values only after success."""
     ws = Workspace(root)
+
     def cooperative():
         for index, row in enumerate(entries):
             yield row
             if index % 250 == 249:
-                time.sleep(.001)  # Rapid SQLite calls can otherwise starve the Slint thread of the GIL.
+                time.sleep(
+                    0.001
+                )  # Rapid SQLite calls can otherwise starve the Slint thread of the GIL.
+
     try:
         if check:
             for row in cooperative():
                 if row.translation is not None:
                     row.translation = ws.check(row, row.translation)
         with ws.db:
-            ws.db.executemany("UPDATE units SET translation = ?, status = ?, error = ? WHERE file = ? AND id = ?",
-                              ((r.translation, r.status, r.error, r.file, r.id) for r in cooperative()))
+            ws.db.executemany(
+                "UPDATE units SET translation = ?, status = ?, error = ? WHERE file = ? AND id = ?",
+                (
+                    (r.translation, r.status, r.error, r.file, r.id)
+                    for r in cooperative()
+                ),
+            )
             if dismiss:
-                ws.db.executemany("DELETE FROM suggestions WHERE file = ? AND id = ?",
-                                  ((r.file, r.id) for r in cooperative()))
+                ws.db.executemany(
+                    "DELETE FROM suggestions WHERE file = ? AND id = ?",
+                    ((r.file, r.id) for r in cooperative()),
+                )
         return entries
     finally:
         ws.close()
@@ -119,7 +139,11 @@ def speakers(units):
         if unit["kind"] == "speaker":
             names[record] = unit["source"]
         speaking = unit["kind"] in ("dialogue", "speaker")
-        yield (names.get(record) or unit["context"].get("speaker") or "") if speaking else ""
+        yield (
+            (names.get(record) or unit["context"].get("speaker") or "")
+            if speaking
+            else ""
+        )
 
 
 def scene(context) -> str:
@@ -127,9 +151,18 @@ def scene(context) -> str:
     return "" if value is None else str(value)
 
 
-def create(original, root, *, name, engine="kirikiri", encoding=None, language_index=0,
-           source_language="Japanese", target_language="English",
-           progress=pipeline._no_progress) -> Path:
+def create(
+    original,
+    root,
+    *,
+    name,
+    engine="kirikiri",
+    encoding=None,
+    language_index=0,
+    source_language="Japanese",
+    target_language="English",
+    progress=pipeline._no_progress,
+) -> Path:
     original, root = pipeline.safe_path(original), pipeline.safe_path(root)
     pipeline.disjoint(original, root)
     if root.is_file() or (root.is_dir() and any(root.iterdir())):
@@ -143,28 +176,65 @@ def create(original, root, *, name, engine="kirikiri", encoding=None, language_i
         db = connect(folder / DATABASE)
         try:
             with db:
-                for relative, data in pipeline.source_files(original, handler, progress):
+                for relative, data in pipeline.source_files(
+                    original, handler, progress
+                ):
                     try:
-                        script = handler.extract(str(relative), data, encoding=encoding, language_index=language_index)
-                        doc = pipeline.document(relative, data, engine, script, language_index)
+                        script = handler.extract(
+                            str(relative),
+                            data,
+                            encoding=encoding,
+                            language_index=language_index,
+                        )
+                        doc = pipeline.document(
+                            relative, data, engine, script, language_index
+                        )
                     except VnTransError as exc:
                         raise VnTransError(f"{relative}: {exc}") from exc
                     pipeline.write_file(folder / "source", relative, data)
-                    pipeline.write_file(folder / "extracted", Path(str(relative) + ".json"),
-                                        pipeline.encode_document(doc))
-                    db.execute("INSERT INTO files VALUES (?, ?)", (doc["source"], doc["format"]))
+                    pipeline.write_file(
+                        folder / "extracted",
+                        Path(str(relative) + ".json"),
+                        pipeline.encode_document(doc),
+                    )
+                    db.execute(
+                        "INSERT INTO files VALUES (?, ?)",
+                        (doc["source"], doc["format"]),
+                    )
                     db.executemany(
                         "INSERT INTO units(file, id, ord, kind, source, speaker, scene, context) VALUES (?,?,?,?,?,?,?,?)",
-                        ((doc["source"], unit["id"], ord, unit["kind"], unit["source"], speaker,
-                          scene(unit["context"]), json.dumps(unit["context"], ensure_ascii=False))
-                         for ord, (unit, speaker) in enumerate(zip(doc["units"], speakers(doc["units"]), strict=True))))
+                        (
+                            (
+                                doc["source"],
+                                unit["id"],
+                                ord,
+                                unit["kind"],
+                                unit["source"],
+                                speaker,
+                                scene(unit["context"]),
+                                json.dumps(unit["context"], ensure_ascii=False),
+                            )
+                            for ord, (unit, speaker) in enumerate(
+                                zip(doc["units"], speakers(doc["units"]), strict=True)
+                            )
+                        ),
+                    )
         finally:
             db.close()
-        write_json(folder / MANIFEST, dict(
-            schema_version=1, name=name, engine=engine, encoding=encoding, language_index=language_index,
-            original=str(original), created=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            languages=dict(source=source_language, target=target_language),
-            build=dict(wrap_columns=None, output_encoding=None)))
+        write_json(
+            folder / MANIFEST,
+            dict(
+                schema_version=1,
+                name=name,
+                engine=engine,
+                encoding=encoding,
+                language_index=language_index,
+                original=str(original),
+                created=datetime.now(UTC).isoformat(timespec="seconds"),
+                languages=dict(source=source_language, target=target_language),
+                build=dict(wrap_columns=None, output_encoding=None),
+            ),
+        )
     return root
 
 
@@ -172,13 +242,19 @@ class Workspace:
     def __init__(self, root):
         self.root = Path(root).absolute()
         if not (self.root / MANIFEST).is_file() or not (self.root / DATABASE).is_file():
-            raise VnTransError(f"not a VnTrans workspace (missing {MANIFEST} or {DATABASE}): {self.root}")
+            raise VnTransError(
+                f"not a VnTrans workspace (missing {MANIFEST} or {DATABASE}): {self.root}"
+            )
         try:
-            self.manifest = json.loads((self.root / MANIFEST).read_text(encoding="utf-8"))
+            self.manifest = json.loads(
+                (self.root / MANIFEST).read_text(encoding="utf-8")
+            )
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise VnTransError(f"invalid {MANIFEST}: {exc}") from exc
         if self.manifest.get("schema_version") != 1:
-            raise VnTransError(f"unsupported workspace version: {self.manifest.get('schema_version')}")
+            raise VnTransError(
+                f"unsupported workspace version: {self.manifest.get('schema_version')}"
+            )
         self.db = connect(self.root / DATABASE)
         self.formats = dict(self.db.execute("SELECT file, format FROM files"))
 
@@ -202,66 +278,118 @@ class Workspace:
 
     def save_many(self, pairs, status: str = "edited"):
         """Check every (row, text) first, then store them in one transaction."""
-        checked = [(row, None if text is None else self.check(row, text)) for row, text in pairs]
+        checked = [
+            (row, None if text is None else self.check(row, text))
+            for row, text in pairs
+        ]
         with self.db:
             self.db.executemany(
                 "UPDATE units SET translation = ?, status = ?, error = NULL WHERE file = ? AND id = ?",
-                [(text, "new" if text is None else status, row.file, row.id) for row, text in checked])
+                [
+                    (text, "new" if text is None else status, row.file, row.id)
+                    for row, text in checked
+                ],
+            )
         for row, text in checked:
-            row.translation, row.status, row.error = text, "new" if text is None else status, None
+            row.translation, row.status, row.error = (
+                text,
+                "new" if text is None else status,
+                None,
+            )
 
     def commit(self, entries) -> list[Row]:
         """Store machine translations in one transaction; a unit changed since planning keeps its value.
 
         entries: (row, text, planned status, planned translation)."""
-        checked = [(row, self.check(row, text), status, translation) for row, text, status, translation in entries]
+        checked = [
+            (row, self.check(row, text), status, translation)
+            for row, text, status, translation in entries
+        ]
         committed = []
         with self.db:
             for row, text, status, translation in checked:
                 if self.db.execute(
-                        "UPDATE units SET translation = ?, status = 'machine', error = NULL "
-                        "WHERE file = ? AND id = ? AND status = ? AND translation IS ?",
-                        (text, row.file, row.id, status, translation)).rowcount:
+                    "UPDATE units SET translation = ?, status = 'machine', error = NULL "
+                    "WHERE file = ? AND id = ? AND status = ? AND translation IS ?",
+                    (text, row.file, row.id, status, translation),
+                ).rowcount:
                     row.translation, row.status, row.error = text, "machine", None
                     committed.append(row)
         return committed
 
     def mark_errors(self, rows, message: str):
         with self.db:
-            self.db.executemany("UPDATE units SET error = ? WHERE file = ? AND id = ?",
-                                [(message, row.file, row.id) for row in rows])
+            self.db.executemany(
+                "UPDATE units SET error = ? WHERE file = ? AND id = ?",
+                [(message, row.file, row.id) for row in rows],
+            )
         for row in rows:
             row.error = message
 
-    def record_attempt(self, profile, model, prompt, units, outcome, error=None, tokens_in=None, tokens_out=None):
+    def record_attempt(
+        self,
+        profile,
+        model,
+        prompt,
+        units,
+        outcome,
+        error=None,
+        tokens_in=None,
+        tokens_out=None,
+    ):
         with self.db:
-            self.db.execute("INSERT INTO attempts(at, profile, model, prompt, units, outcome, error, tokens_in, tokens_out) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (datetime.now(timezone.utc).isoformat(timespec="seconds"), profile, model, prompt, units,
-                             outcome, error, tokens_in, tokens_out))
+            self.db.execute(
+                "INSERT INTO attempts(at, profile, model, prompt, units, outcome, error, tokens_in, tokens_out) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    datetime.now(UTC).isoformat(timespec="seconds"),
+                    profile,
+                    model,
+                    prompt,
+                    units,
+                    outcome,
+                    error,
+                    tokens_in,
+                    tokens_out,
+                ),
+            )
 
     def suggestions(self) -> dict[tuple[str, str], tuple[str, str]]:
-        return {(file, id): (text, reason) for file, id, text, reason in self.db.execute(
-            "SELECT file, id, text, reason FROM suggestions")}
+        return {
+            (file, id): (text, reason)
+            for file, id, text, reason in self.db.execute(
+                "SELECT file, id, text, reason FROM suggestions"
+            )
+        }
 
     def suggest(self, row: Row, text: str, reason: str):
         with self.db:
-            self.db.execute("INSERT OR REPLACE INTO suggestions VALUES (?, ?, ?, ?)", (row.file, row.id, text, reason))
+            self.db.execute(
+                "INSERT OR REPLACE INTO suggestions VALUES (?, ?, ?, ?)",
+                (row.file, row.id, text, reason),
+            )
 
     def replace_suggestions(self, rows, suggestions):
         """Publish a successful review batch together, including removal of outdated suggestions."""
         with self.db:
-            self.db.executemany("DELETE FROM suggestions WHERE file = ? AND id = ?",
-                                ((row.file, row.id) for row in rows))
-            self.db.executemany("INSERT INTO suggestions VALUES (?, ?, ?, ?)",
-                                ((row.file, row.id, text, reason) for row, text, reason in suggestions))
+            self.db.executemany(
+                "DELETE FROM suggestions WHERE file = ? AND id = ?",
+                ((row.file, row.id) for row in rows),
+            )
+            self.db.executemany(
+                "INSERT INTO suggestions VALUES (?, ?, ?, ?)",
+                ((row.file, row.id, text, reason) for row, text, reason in suggestions),
+            )
 
     def dismiss(self, row: Row | None = None):
         with self.db:
             if row is None:
                 self.db.execute("DELETE FROM suggestions")
             else:
-                self.db.execute("DELETE FROM suggestions WHERE file = ? AND id = ?", (row.file, row.id))
+                self.db.execute(
+                    "DELETE FROM suggestions WHERE file = ? AND id = ?",
+                    (row.file, row.id),
+                )
 
     def snapshot(self, rows) -> list[tuple]:
         return [(row, row.translation, row.status, row.error) for row in rows]
@@ -269,25 +397,52 @@ class Workspace:
     def restore(self, snapshot):
         """Put rows back exactly as `snapshot()` recorded them (translation, status and error)."""
         with self.db:
-            self.db.executemany("UPDATE units SET translation = ?, status = ?, error = ? WHERE file = ? AND id = ?",
-                                [(text, status, error, row.file, row.id) for row, text, status, error in snapshot])
+            self.db.executemany(
+                "UPDATE units SET translation = ?, status = ?, error = ? WHERE file = ? AND id = ?",
+                [
+                    (text, status, error, row.file, row.id)
+                    for row, text, status, error in snapshot
+                ],
+            )
         for row, text, status, error in snapshot:
             row.translation, row.status, row.error = text, status, error
 
     def exclude_many(self, rows, excluded: bool):
-        values = [("excluded" if excluded else ("new" if row.translation is None else "edited"), row) for row in rows]
+        values = [
+            (
+                "excluded"
+                if excluded
+                else ("new" if row.translation is None else "edited"),
+                row,
+            )
+            for row in rows
+        ]
         with self.db:
-            self.db.executemany("UPDATE units SET status = ? WHERE file = ? AND id = ?",
-                                [(status, row.file, row.id) for status, row in values])
+            self.db.executemany(
+                "UPDATE units SET status = ? WHERE file = ? AND id = ?",
+                [(status, row.file, row.id) for status, row in values],
+            )
         for status, row in values:
             row.status = status
 
     def untranslatable(self, rows) -> list[Row]:
         """Untouched rows without letters of the source language; excluding them keeps their original text."""
         language = self.manifest["languages"]["source"]
-        return [row for row in rows if row.status == "new" and row.translation is None and not row.error
-                and not translatable(plain(row.source, json.loads(row.context).get("controls", []),
-                                           self.formats[row.file]), language)]
+        return [
+            row
+            for row in rows
+            if row.status == "new"
+            and row.translation is None
+            and not row.error
+            and not translatable(
+                plain(
+                    row.source,
+                    json.loads(row.context).get("controls", []),
+                    self.formats[row.file],
+                ),
+                language,
+            )
+        ]
 
     def export_messages(self, folder: Path, rows) -> int:
         """LinguaGacha MESSAGE JSON: one file per script with every non-speaker unit in order, speakers as `name`.
@@ -297,14 +452,19 @@ class Workspace:
         for row in rows:
             if row.kind != "speaker":
                 scripts.setdefault(row.file, []).append(
-                    dict(name=row.speaker, message=row.source) if row.speaker else dict(message=row.source))
+                    dict(name=row.speaker, message=row.source)
+                    if row.speaker
+                    else dict(message=row.source)
+                )
         for file, items in scripts.items():
             path = folder / f"{file}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             write_json(path, items)
         return len(scripts)
 
-    def import_messages(self, folder: Path, rows) -> tuple[list[tuple[Row, str]], int, list[str]]:
+    def import_messages(
+        self, folder: Path, rows
+    ) -> tuple[list[tuple[Row, str]], int, list[str]]:
         """(row, text) pairs from LinguaGacha's translated MESSAGE JSON, the count failing checks, and unmatched files.
 
         Files match scripts by path and lines by position; a translated `name` fills that speaker everywhere.
@@ -318,25 +478,41 @@ class Workspace:
         candidates, names, ignored = [], {}, []
         for path in sorted(folder.rglob("*.json")):
             relative = path.relative_to(folder).as_posix().removesuffix(".json")
-            file = max((name for name in lines if f"/{relative}".endswith(f"/{name}")), key=len, default=None)
+            file = max(
+                (name for name in lines if f"/{relative}".endswith(f"/{name}")),
+                key=len,
+                default=None,
+            )
             try:
                 items = json.loads(path.read_text(encoding="utf-8-sig"))
             except (UnicodeError, ValueError):
                 items = None
-            if file is None or not isinstance(items, list) or len(items) != len(lines[file]):
+            if (
+                file is None
+                or not isinstance(items, list)
+                or len(items) != len(lines[file])
+            ):
                 ignored.append(relative)
                 continue
-            for row, item in zip(lines[file], items):
+            for row, item in zip(lines[file], items, strict=True):
                 item = item if isinstance(item, dict) else {}
                 candidates.append((row, item.get("message")))
                 name = item.get("name")
                 if row.speaker and isinstance(name, str) and name != row.speaker:
                     names.setdefault(row.speaker, name)
-        candidates += [(row, name) for source, name in names.items() for row in speakers.get(source, ())]
+        candidates += [
+            (row, name)
+            for source, name in names.items()
+            for row in speakers.get(source, ())
+        ]
         pairs, skipped = [], 0
         for row, text in candidates:
-            if row.status not in ("new", "machine") or not isinstance(text, str) or not text.strip() \
-                    or text in (row.source, row.translation):
+            if (
+                row.status not in ("new", "machine")
+                or not isinstance(text, str)
+                or not text.strip()
+                or text in (row.source, row.translation)
+            ):
                 continue
             try:
                 pairs.append((row, self.check(row, text)))
@@ -345,30 +521,59 @@ class Workspace:
         return pairs, skipped, ignored
 
     def exclude(self, row: Row, excluded: bool):
-        status = "excluded" if excluded else ("new" if row.translation is None else "edited")
+        status = (
+            "excluded" if excluded else ("new" if row.translation is None else "edited")
+        )
         with self.db:
-            self.db.execute("UPDATE units SET status = ? WHERE file = ? AND id = ?", (status, row.file, row.id))
+            self.db.execute(
+                "UPDATE units SET status = ? WHERE file = ? AND id = ?",
+                (status, row.file, row.id),
+            )
         row.status = status
 
     def terms(self) -> list[Term]:
-        return [Term(source, target, kind, notes, bool(case), bool(approved), json.loads(evidence), id)
-                for id, source, target, kind, notes, case, approved, evidence in self.db.execute(
-                    "SELECT id, source, target, kind, notes, case_sensitive, approved, evidence FROM glossary ORDER BY id")]
+        return [
+            Term(
+                source,
+                target,
+                kind,
+                notes,
+                bool(case),
+                bool(approved),
+                json.loads(evidence),
+                id,
+            )
+            for id, source, target, kind, notes, case, approved, evidence in self.db.execute(
+                "SELECT id, source, target, kind, notes, case_sensitive, approved, evidence FROM glossary ORDER BY id"
+            )
+        ]
 
     def save_term(self, term: Term):
         term.source, term.target = term.source.strip(), term.target.strip()
         if not term.source:
             raise VnTransError("source term is required")
-        values = (term.source, term.target, term.kind, term.notes, int(term.case_sensitive), int(term.approved),
-                  json.dumps(term.evidence, ensure_ascii=False))
+        values = (
+            term.source,
+            term.target,
+            term.kind,
+            term.notes,
+            int(term.case_sensitive),
+            int(term.approved),
+            json.dumps(term.evidence, ensure_ascii=False),
+        )
         with self.db:
             if term.id is None:
                 term.id = self.db.execute(
                     "INSERT INTO glossary(source, target, kind, notes, case_sensitive, approved, evidence) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)", values).lastrowid
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    values,
+                ).lastrowid
             else:
-                self.db.execute("UPDATE glossary SET source = ?, target = ?, kind = ?, notes = ?, case_sensitive = ?, "
-                                "approved = ?, evidence = ? WHERE id = ?", (*values, term.id))
+                self.db.execute(
+                    "UPDATE glossary SET source = ?, target = ?, kind = ?, notes = ?, case_sensitive = ?, "
+                    "approved = ?, evidence = ? WHERE id = ?",
+                    (*values, term.id),
+                )
 
     def delete_term(self, id: int):
         with self.db:
@@ -390,14 +595,31 @@ class Workspace:
         return added, updated
 
     def builds(self) -> list[Path]:
-        return sorted((p for p in (self.root / "builds").glob("*")
-                       if not p.name.startswith(".") and (p / "patch").is_dir()), reverse=True)
+        return sorted(
+            (
+                p
+                for p in (self.root / "builds").glob("*")
+                if not p.name.startswith(".") and (p / "patch").is_dir()
+            ),
+            reverse=True,
+        )
 
     def translations(self) -> dict[tuple[str, str], str]:
-        return {(file, id): text for file, id, text in self.db.execute(
-            "SELECT file, id, translation FROM units WHERE translation IS NOT NULL AND status != 'excluded'")}
+        return {
+            (file, id): text
+            for file, id, text in self.db.execute(
+                "SELECT file, id, translation FROM units WHERE translation IS NOT NULL AND status != 'excluded'"
+            )
+        }
 
-    def build(self, translations=None, *, wrap_columns=None, output_encoding=None, progress=pipeline._no_progress):
+    def build(
+        self,
+        translations=None,
+        *,
+        wrap_columns=None,
+        output_encoding=None,
+        progress=pipeline._no_progress,
+    ):
         """Export complete translation JSON, then rebuild it into a new patch folder.
 
         Pass `translations()` taken on the connection's thread to run the rest elsewhere."""
@@ -411,20 +633,43 @@ class Workspace:
             suffix += 1
             target = self.root / "builds" / f"{stamp}-{suffix}"
         report = pipeline.Report()
-        source, extracted = pipeline.safe_path(self.root / "source"), pipeline.safe_path(self.root / "extracted")
+        source, extracted = (
+            pipeline.safe_path(self.root / "source"),
+            pipeline.safe_path(self.root / "extracted"),
+        )
         pipeline.disjoint(source, extracted, pipeline.safe_path(target))
         with pipeline.staging(target) as folder:
-            for relative, data, doc, engine, total in pipeline.translation_sources(source, extracted, progress):
+            for relative, data, doc, engine, total in pipeline.translation_sources(
+                source, extracted, progress
+            ):
                 progress("Rebuilding", report.files, total, str(relative))
                 for unit in doc["units"]:
                     unit["translation"] = translations.get((doc["source"], unit["id"]))
-                rebuilt = pipeline.rebuild_file(relative, data, doc, engine, report,
-                                                wrap_columns=wrap_columns, output_encoding=output_encoding)
-                pipeline.write_file(folder / "json", Path(str(relative) + ".json"), pipeline.encode_document(doc))
+                rebuilt = pipeline.rebuild_file(
+                    relative,
+                    data,
+                    doc,
+                    engine,
+                    report,
+                    wrap_columns=wrap_columns,
+                    output_encoding=output_encoding,
+                )
+                pipeline.write_file(
+                    folder / "json",
+                    Path(str(relative) + ".json"),
+                    pipeline.encode_document(doc),
+                )
                 pipeline.write_file(folder / "patch", relative, rebuilt)
                 progress("Rebuilding", report.files, total, str(relative))
-            write_json(folder / "report.json", dict(
-                files=report.files, units=report.units, warnings=report.warnings,
-                wrap_columns=wrap_columns, output_encoding=output_encoding))
+            write_json(
+                folder / "report.json",
+                dict(
+                    files=report.files,
+                    units=report.units,
+                    warnings=report.warnings,
+                    wrap_columns=wrap_columns,
+                    output_encoding=output_encoding,
+                ),
+            )
             progress("Writing output", report.files, report.files, "")
         return target, report

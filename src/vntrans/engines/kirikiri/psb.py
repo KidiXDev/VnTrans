@@ -1,8 +1,8 @@
 """PSB v3 codec, retaining original scalar bytes and string/resource identities."""
 
-from dataclasses import dataclass
 import struct
 import zlib
+from dataclasses import dataclass
 
 from ...model import VnTransError
 
@@ -21,8 +21,12 @@ class Node:
 def pack_array(values: list[int]) -> bytes:
     count_width = max(1, (len(values).bit_length() + 7) // 8)
     width = max(1, (max(values, default=0).bit_length() + 7) // 8)
-    return (bytes([12 + count_width]) + len(values).to_bytes(count_width, "little")
-            + bytes([12 + width]) + b"".join(v.to_bytes(width, "little") for v in values))
+    return (
+        bytes([12 + count_width])
+        + len(values).to_bytes(count_width, "little")
+        + bytes([12 + width])
+        + b"".join(v.to_bytes(width, "little") for v in values)
+    )
 
 
 class PSB:
@@ -33,11 +37,31 @@ class PSB:
             raise VnTransError("expected an unencrypted PSB v3 file")
         signature, version, flags, *fields = struct.unpack_from("<4sHH9I", data)
         if version != 3 or flags:
-            raise VnTransError(f"unsupported PSB version/encryption: version={version}, flags={flags}")
-        (header, names, strings, string_data, chunk_offsets, chunk_lengths,
-         chunk_data, entries, checksum) = fields
-        if header != 44 or not (44 == names < entries < strings < string_data
-                               <= chunk_offsets < chunk_lengths < chunk_data <= len(data)):
+            raise VnTransError(
+                f"unsupported PSB version/encryption: version={version}, flags={flags}"
+            )
+        (
+            header,
+            names,
+            strings,
+            string_data,
+            chunk_offsets,
+            chunk_lengths,
+            chunk_data,
+            entries,
+            checksum,
+        ) = fields
+        if header != 44 or not (
+            44
+            == names
+            < entries
+            < strings
+            < string_data
+            <= chunk_offsets
+            < chunk_lengths
+            < chunk_data
+            <= len(data)
+        ):
             raise VnTransError("invalid or unsupported PSB section offsets")
         if zlib.adler32(data[8:40]) != checksum:
             raise VnTransError("invalid PSB header checksum")
@@ -72,7 +96,10 @@ class PSB:
         sizes, end = self.array(chunk_lengths, chunk_data)
         if end != chunk_data or len(resources) != len(sizes):
             raise VnTransError("invalid resource-length table")
-        if any(o + n > len(data) - chunk_data for o, n in zip(resources, sizes)):
+        if any(
+            o + n > len(data) - chunk_data
+            for o, n in zip(resources, sizes, strict=True)
+        ):
             raise VnTransError("resource outside PSB file")
         self.resource_count = len(resources)
         self.resource_offsets = data[chunk_offsets:chunk_lengths]
@@ -83,7 +110,7 @@ class PSB:
     def uint(self, p: int, width: int, limit: int) -> int:
         if width < 1 or width > 8 or p < 0 or p + width > limit:
             raise VnTransError("PSB integer/offset out of bounds")
-        return int.from_bytes(self.data[p:p + width], "little")
+        return int.from_bytes(self.data[p : p + width], "little")
 
     def array(self, p: int, limit: int) -> tuple[list[int], int]:
         if p >= limit:
@@ -97,7 +124,10 @@ class PSB:
         p += 1
         if not 1 <= width <= 8 or count > (limit - p) // width:
             raise VnTransError("PSB array exceeds section")
-        return ([self.uint(p + i * width, width, limit) for i in range(count)], p + count * width)
+        return (
+            [self.uint(p + i * width, width, limit) for i in range(count)],
+            p + count * width,
+        )
 
     def _name(self, index: int) -> str:
         first, second, third = self._name_arrays
@@ -130,14 +160,20 @@ class PSB:
             keys = None
             if tag == 33:
                 keys, p = self.array(p, self.entry_end)
-                if any(k >= len(self.names) for k in keys) or len(set(keys)) != len(keys):
+                if any(k >= len(self.names) for k in keys) or len(set(keys)) != len(
+                    keys
+                ):
                     raise VnTransError("invalid PSB dictionary keys")
             offsets, p = self.array(p, self.entry_end)
             if keys is not None and len(keys) != len(offsets):
                 raise VnTransError("PSB dictionary key/value count differs")
             children = [self.node(p + offset, depth + 1) for offset in offsets]
-            return Node(tag, dict(zip((self.names[k] for k in keys), children))
-                        if keys is not None else children)
+            return Node(
+                tag,
+                dict(zip((self.names[k] for k in keys), children, strict=True))
+                if keys is not None
+                else children,
+            )
         if 13 <= tag <= 20:
             value, p = self.array(start, self.entry_end)
         elif tag in (1, 2, 3, 4, 29):
@@ -145,7 +181,7 @@ class PSB:
         elif 5 <= tag <= 12:
             width = tag - 4
             self.uint(p, width, self.entry_end)
-            value = int.from_bytes(self.data[p:p + width], "little", signed=True)
+            value = int.from_bytes(self.data[p : p + width], "little", signed=True)
             p += width
         elif 21 <= tag <= 28:
             width = tag - (20 if tag <= 24 else 24)
@@ -179,7 +215,11 @@ class PSB:
             for part in parts:
                 offsets.append(length)
                 length += len(part)
-            keys = pack_array([self.names.index(k) for k in node.value]) if node.tag == 33 else b""
+            keys = (
+                pack_array([self.names.index(k) for k in node.value])
+                if node.tag == 33
+                else b""
+            )
             return bytes([node.tag]) + keys + pack_array(offsets) + b"".join(parts)
         if node.tag == 21 and isinstance(node.value, str):
             index = len(strings)
@@ -207,8 +247,25 @@ class PSB:
         chunk_offsets = string_data + length
         chunk_lengths = chunk_offsets + len(self.resource_offsets)
         chunk_data = chunk_lengths + len(self.resource_lengths)
-        fields = struct.pack("<8I", 44, names, strings_offset, string_data,
-                             chunk_offsets, chunk_lengths, chunk_data, entries)
+        fields = struct.pack(
+            "<8I",
+            44,
+            names,
+            strings_offset,
+            string_data,
+            chunk_offsets,
+            chunk_lengths,
+            chunk_data,
+            entries,
+        )
         header = b"PSB\0\x03\0\0\0" + fields + struct.pack("<I", zlib.adler32(fields))
-        return (header + self.name_data + entries_data + table + b"".join(parts)
-                + self.resource_offsets + self.resource_lengths + self.resource_data)
+        return (
+            header
+            + self.name_data
+            + entries_data
+            + table
+            + b"".join(parts)
+            + self.resource_offsets
+            + self.resource_lengths
+            + self.resource_data
+        )

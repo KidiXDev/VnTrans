@@ -29,3 +29,26 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 source-include = ["tests/**"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # Pyflakes
+    "W",      # pycodestyle warnings
+    "I",      # import sorting
+    "UP",     # Python modernization
+    "B",      # common bugs
+    "SIM",    # simplification
+    "RUF100", # unused noqa comments
+]
+# Let the formatter handle line wrapping, including strings it cannot split.
+ignore = ["E501"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.3",
+]

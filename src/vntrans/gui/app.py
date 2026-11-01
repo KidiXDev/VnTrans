@@ -2,20 +2,20 @@
 
 import asyncio
 import gc
-from collections import Counter, deque
-from contextlib import closing, contextmanager
-from datetime import datetime, timedelta
-from dataclasses import replace
-from itertools import islice
 import json
 import os
-from pathlib import Path
 import re
 import sqlite3
 import subprocess
 import sys
 import threading
 import time
+from collections import Counter, deque
+from contextlib import closing, contextmanager
+from dataclasses import replace
+from datetime import datetime, timedelta
+from itertools import islice
+from pathlib import Path
 
 import slint
 
@@ -26,7 +26,15 @@ from ..translation.providers import PROVIDERS, REASONING, Profile, ProviderError
 from . import geometry, jobs
 from .dialogs import pick
 from .jobs import Cancelled, Latest, Progress
-from .texts import STATES, TextState, check_rows, filter_rows, filter_snapshot, load, state
+from .texts import (
+    STATES,
+    TextState,
+    check_rows,
+    filter_rows,
+    filter_snapshot,
+    load,
+    state,
+)
 
 UI = slint.load_file(Path(__file__).parent / "ui" / "main.slint", style="fluent-dark")
 ISSUES = ("",) + tuple(quality.LABELS)
@@ -38,8 +46,8 @@ ABOUT = {
     "glossary": "Approved terms that appear in the batch.",
     "context": "Nearby lines from the same scene, with existing translations, as read-only reference.",
     "thinking": "Strengthens instruction following by having the model write brief structured reasoning (context, "
-                "then decisions) before its translations. Turning it off saves a few output tokens per batch but "
-                "noticeably lowers quality. On by default.",
+    "then decisions) before its translations. Turning it off saves a few output tokens per batch but "
+    "noticeably lowers quality. On by default.",
     "contract": "Fixed. VnTrans relies on this format to read and check replies.",
 }
 
@@ -60,7 +68,11 @@ def compact(number) -> str:
 
 def duration(seconds) -> str:
     seconds = int(seconds)
-    return f"{seconds // 3600}:{seconds // 60 % 60:02}:{seconds % 60:02}" if seconds >= 3600 else f"{seconds // 60}:{seconds % 60:02}"
+    return (
+        f"{seconds // 3600}:{seconds // 60 % 60:02}:{seconds % 60:02}"
+        if seconds >= 3600
+        else f"{seconds // 60}:{seconds % 60:02}"
+    )
 
 
 def oneline(text: str) -> str:
@@ -80,8 +92,15 @@ class UnitModel(slint.Model):
     def row_data(self, index):
         position = self.indices[index]
         row = self.rows[position]
-        return dict(n=position + 1, kind=row.kind, speaker=row.speaker, source=oneline(row.source),
-                    translation=oneline(row.translation or ""), state=state(row), picked=position in self.picked)
+        return dict(
+            n=position + 1,
+            kind=row.kind,
+            speaker=row.speaker,
+            source=oneline(row.source),
+            translation=oneline(row.translation or ""),
+            state=state(row),
+            picked=position in self.picked,
+        )
 
     def reset(self, rows, indices):
         """Show other rows. Notifying the view is near-instant, while assigning a new model to the
@@ -135,12 +154,16 @@ class Window(UI.AppWindow):
         self.rules_timer = slint.Timer()
         self.run_timer = slint.Timer()
         self.settings = config.load()
-        self.profiles = [Profile.load(value) for value in self.settings.get("profiles", [])]
+        self.profiles = [
+            Profile.load(value) for value in self.settings.get("profiles", [])
+        ]
         self.geometry = geometry.normalize(self.settings.get("window"))
         self.native = None
         self.geometry_timer = slint.Timer()
         self.gc_timer = slint.Timer()
-        self.gc_timer.start(slint.TimerMode.Repeated, timedelta(seconds=5), self.collect)
+        self.gc_timer.start(
+            slint.TimerMode.Repeated, timedelta(seconds=5), self.collect
+        )
         self.ui.log = self.log
         self.ui.batches = self.batches
         self.ui.units = self.model
@@ -153,9 +176,18 @@ class Window(UI.AppWindow):
         return self.App
 
     def collect(self):
-        if time.monotonic() - self.last_action < 2 or self.ui.loading or self.ui.busy or self.editing or self.run:
+        if (
+            time.monotonic() - self.last_action < 2
+            or self.ui.loading
+            or self.ui.busy
+            or self.editing
+            or self.run
+        ):
             return
-        if all(job.task is None or job.task.done() for job in (self.filter_job, self.check_job)):
+        if all(
+            job.task is None or job.task.done()
+            for job in (self.filter_job, self.check_job)
+        ):
             gc.collect(0)
 
     def save_config(self):
@@ -196,7 +228,11 @@ class Window(UI.AppWindow):
 
     @slint.callback()
     def geometry_changed(self):
-        self.geometry_timer.start(slint.TimerMode.SingleShot, timedelta(milliseconds=250), self.capture_geometry)
+        self.geometry_timer.start(
+            slint.TimerMode.SingleShot,
+            timedelta(milliseconds=250),
+            self.capture_geometry,
+        )
 
     def capture_geometry(self):
         """Record the current state. A minimized window keeps its earlier state, so the app never starts
@@ -226,12 +262,19 @@ class Window(UI.AppWindow):
 
     def show_recent(self):
         self.ui.recent = slint.ListModel(
-            dict(name=item.get("name", ""), path=item["path"]) for item in self.settings.get("recent", []))
+            dict(name=item.get("name", ""), path=item["path"])
+            for item in self.settings.get("recent", [])
+        )
 
     @slint.callback(global_name="App")
     def remove_recent(self, path):
-        settings = self.settings | {"recent": [item for item in self.settings.get("recent", [])
-                                               if item.get("path") != path]}
+        settings = self.settings | {
+            "recent": [
+                item
+                for item in self.settings.get("recent", [])
+                if item.get("path") != path
+            ]
+        }
         try:
             config.save(settings)
         except OSError as exc:
@@ -266,6 +309,7 @@ class Window(UI.AppWindow):
         def show(phase, completed, total, filename):
             self.ui.busy_text = f"{phase} {filename}".strip()
             self.ui.busy_progress = completed / total if total else 0
+
         update = Progress(show, self.cancel)
         self.progress_updates.append(update)
         return update
@@ -278,7 +322,9 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     async def browse(self, target):
-        titles = dict(open="Open workspace", original="Game scripts", workspace="Workspace folder")
+        titles = dict(
+            open="Open workspace", original="Game scripts", workspace="Workspace folder"
+        )
         path = await jobs.thread(pick, titles[target])
         if not path:
             return
@@ -311,11 +357,17 @@ class Window(UI.AppWindow):
         self.busy("Creating project")
         try:
             root = await jobs.run(
-                workspace.create, Path(ui.new_original).expanduser(), Path(ui.new_workspace).expanduser(),
-                name=ui.new_name.strip(), encoding=None if encoding == "Auto" else encoding,
+                workspace.create,
+                Path(ui.new_original).expanduser(),
+                Path(ui.new_workspace).expanduser(),
+                name=ui.new_name.strip(),
+                encoding=None if encoding == "Auto" else encoding,
                 language_index=ui.new_language_index,
                 source_language=list(self.Languages.sources)[ui.new_source],
-                target_language=list(self.Languages.targets)[ui.new_target], progress=self.progress(), cancel=self.cancel)
+                target_language=list(self.Languages.targets)[ui.new_target],
+                progress=self.progress(),
+                cancel=self.cancel,
+            )
         except Cancelled:
             self.say("Cancelled")
             return
@@ -347,13 +399,24 @@ class Window(UI.AppWindow):
         self.open_serial += 1
         serial = self.open_serial
         path = Path(path).expanduser()
-        name = next((item.get("name") for item in self.settings.get("recent", [])
-                     if item.get("path") == str(path.absolute())), None) or path.name
+        name = (
+            next(
+                (
+                    item.get("name")
+                    for item in self.settings.get("recent", [])
+                    if item.get("path") == str(path.absolute())
+                ),
+                None,
+            )
+            or path.name
+        )
         with self.overlay(f"Opening {name}…"):
             try:
                 ws = workspace.Workspace(path)
                 try:
-                    filters = self.filters() | dict(file=None, query="", status="all", tags={})
+                    filters = self.filters() | dict(
+                        file=None, query="", status="all", tags={}
+                    )
                     data = await jobs.thread(load, ws.root, filters)
                 except BaseException:
                     ws.close()
@@ -399,7 +462,11 @@ class Window(UI.AppWindow):
         ui.wrap = build.get("wrap_columns") is not None
         ui.wrap_columns = build.get("wrap_columns") or 48
         encodings = list(self.Encodings.output)
-        ui.output_encoding = encodings.index(build["output_encoding"]) if build.get("output_encoding") in encodings else 0
+        ui.output_encoding = (
+            encodings.index(build["output_encoding"])
+            if build.get("output_encoding") in encodings
+            else 0
+        )
         ui.file_index = -1
         ui.query = ""
         ui.status_filter = "all"
@@ -417,7 +484,9 @@ class Window(UI.AppWindow):
         self.load_run_settings()
         ui.page = "texts"
         ui.has_project = True
-        self.say(f"Excluded {skipped:,} lines with nothing to translate" if skipped else "")
+        self.say(
+            f"Excluded {skipped:,} lines with nothing to translate" if skipped else ""
+        )
 
     @slint.callback(global_name="App")
     def navigate(self, page):
@@ -455,9 +524,17 @@ class Window(UI.AppWindow):
         ui.suggestion_count = len(self.suggestions)
         ui.total, ui.translated, ui.failed = included, translated, failed
         ui.progress_text = f"{translated:,} / {included:,}"
-        ui.status_text = f"{len(self.rows):,} units · {translated:,} translated" + (f" · {failed:,} failed" if failed else "")
-        files = [dict(name=name, total=self.texts.files[name][0], done=self.texts.files[name][1])
-                 for name in self.file_names]
+        ui.status_text = f"{len(self.rows):,} units · {translated:,} translated" + (
+            f" · {failed:,} failed" if failed else ""
+        )
+        files = [
+            dict(
+                name=name,
+                total=self.texts.files[name][0],
+                done=self.texts.files[name][1],
+            )
+            for name in self.file_names
+        ]
         if [row["name"] for row in self.files] == self.file_names:
             for index, value in enumerate(files):
                 if self.files[index] != value:
@@ -468,16 +545,26 @@ class Window(UI.AppWindow):
 
     def filters(self):
         ui = self.ui
-        return dict(file=self.file_names[ui.file_index] if ui.file_index >= 0 else None, query=ui.query,
-                    scope=SCOPES[ui.scope], regex=ui.regex, case=ui.match_case, kind=KINDS[ui.kind_index],
-                    status=ui.status_filter, tags=self.tags, issue=ISSUES[ui.issue_index])
+        return dict(
+            file=self.file_names[ui.file_index] if ui.file_index >= 0 else None,
+            query=ui.query,
+            scope=SCOPES[ui.scope],
+            regex=ui.regex,
+            case=ui.match_case,
+            kind=KINDS[ui.kind_index],
+            status=ui.status_filter,
+            tags=self.tags,
+            issue=ISSUES[ui.issue_index],
+        )
 
     @slint.callback(global_name="App")
     def query_edited(self, text):
         self.last_action = time.monotonic()
         self.ui.query = text
         self.filter_job.invalidate()
-        self.debounce.start(slint.TimerMode.SingleShot, timedelta(milliseconds=200), self.apply_filter)
+        self.debounce.start(
+            slint.TimerMode.SingleShot, timedelta(milliseconds=200), self.apply_filter
+        )
 
     @slint.callback(global_name="App")
     def filter_changed(self):
@@ -501,6 +588,7 @@ class Window(UI.AppWindow):
         revision = texts.revision
         rows = texts.snapshot()
         options = self.filters() | dict(tags=dict(self.tags))
+
         def apply(result):
             if texts is not self.texts:
                 return
@@ -513,12 +601,17 @@ class Window(UI.AppWindow):
                 self.filter_reset = False
             else:
                 self.show_counts(counts)
+
         self.filter_job.submit(lambda: filter_snapshot(rows, **options), apply)
 
     def filtered(self, indices, counts):
         ui = self.ui
         ui.regex_error = False
-        selected = self.model.indices[ui.current] if 0 <= ui.current < len(self.model.indices) else None
+        selected = (
+            self.model.indices[ui.current]
+            if 0 <= ui.current < len(self.model.indices)
+            else None
+        )
         self.picked.clear()
         self.anchor = None
         self.model.reset(self.rows, indices)
@@ -538,7 +631,11 @@ class Window(UI.AppWindow):
 
     def current_row(self):
         index = self.ui.current
-        return self.rows[self.model.indices[index]] if 0 <= index < len(self.model.indices) else None
+        return (
+            self.rows[self.model.indices[index]]
+            if 0 <= index < len(self.model.indices)
+            else None
+        )
 
     @slint.callback(global_name="App")
     def select(self, index):
@@ -548,13 +645,17 @@ class Window(UI.AppWindow):
         ui.current = index
         row = self.current_row()
         if row is None:
-            ui.cur_source = ui.cur_legend = ui.cur_meta = ui.cur_state = ui.cur_error = ui.cur_translation = ""
+            ui.cur_source = ui.cur_legend = ui.cur_meta = ui.cur_state = (
+                ui.cur_error
+            ) = ui.cur_translation = ""
             ui.cur_speaker = ui.cur_number = ""
             ui.cur_issues = ui.cur_suggestion = ui.cur_reason = ""
             return
         controls = json.loads(row.context).get("controls", [])
         ui.cur_source = row.source
-        ui.cur_legend = "\n".join(f"⟦{i}⟧  {control}" for i, control in enumerate(controls))
+        ui.cur_legend = "\n".join(
+            f"⟦{i}⟧  {control}" for i, control in enumerate(controls)
+        )
         ui.cur_meta = f"{row.file} · {row.kind} · {row.id}"
         ui.cur_speaker = row.speaker if row.kind != "speaker" else ""
         ui.cur_number = f"{self.model.indices[index] + 1:,}"
@@ -566,8 +667,12 @@ class Window(UI.AppWindow):
     def show_marks(self, row):
         ui = self.ui
         marks = self.tags.get(self.index_of[(row.file, row.id)], ())
-        ui.cur_issues = " · ".join(quality.LABELS[mark] for mark in marks if mark != "review")
-        ui.cur_suggestion, ui.cur_reason = self.suggestions.get((row.file, row.id), ("", ""))
+        ui.cur_issues = " · ".join(
+            quality.LABELS[mark] for mark in marks if mark != "review"
+        )
+        ui.cur_suggestion, ui.cur_reason = self.suggestions.get(
+            (row.file, row.id), ("", "")
+        )
 
     def retag(self, index):
         row = self.rows[index]
@@ -588,7 +693,9 @@ class Window(UI.AppWindow):
         target = ws.manifest["languages"]["target"]
 
         def scan():
-            checker = quality.Checker(ws.check, target, terms, quality.speaker_names(rows, terms), ws.formats)
+            checker = quality.Checker(
+                ws.check, target, terms, quality.speaker_names(rows, terms), ws.formats
+            )
             return checker, check_rows(checker, rows, suggestions)
 
         def apply(result):
@@ -631,14 +738,25 @@ class Window(UI.AppWindow):
             self.ui.cur_error = str(exc).removeprefix(f"{row.id}: ")
             return
         twins = [] if text is None else self.twins(row)
-        entries = await self.edit("edit" if twins else None, lambda: [
-            replace(other, translation=text, status="new" if text is None else "edited", error=None)
-            for other in (row, *twins)])
+        entries = await self.edit(
+            "edit" if twins else None,
+            lambda: [
+                replace(
+                    other,
+                    translation=text,
+                    status="new" if text is None else "edited",
+                    error=None,
+                )
+                for other in (row, *twins)
+            ],
+        )
         if entries is None:
             return
         self.ui.cur_error = ""
         if twins:
-            self.say(f"Also applied to {len(twins):,} identical line{'s' * (len(twins) != 1)}")
+            self.say(
+                f"Also applied to {len(twins):,} identical line{'s' * (len(twins) != 1)}"
+            )
         if advance and self.ui.current + 1 < len(self.model.indices):
             self.select(self.ui.current + 1)
 
@@ -676,12 +794,23 @@ class Window(UI.AppWindow):
                 date = path.name
             options = []
             if report:
-                options.append(f"wrap at {report['wrap_columns']}" if report.get("wrap_columns") else "no wrap")
+                options.append(
+                    f"wrap at {report['wrap_columns']}"
+                    if report.get("wrap_columns")
+                    else "no wrap"
+                )
                 options.append(report.get("output_encoding") or "original encoding")
-            rows.append(dict(name=path.name, date=date, path=str(path / "patch"),
-                             files=f"{report['files']:,}" if "files" in report else "—",
-                             units=f"{report['units']:,}" if "units" in report else "—",
-                             settings=" · ".join(options) or "—", warnings=len(report.get("warnings", []))))
+            rows.append(
+                dict(
+                    name=path.name,
+                    date=date,
+                    path=str(path / "patch"),
+                    files=f"{report['files']:,}" if "files" in report else "—",
+                    units=f"{report['units']:,}" if "units" in report else "—",
+                    settings=" · ".join(options) or "—",
+                    warnings=len(report.get("warnings", [])),
+                )
+            )
         self.ui.builds = slint.ListModel(rows)
         self.ui.build_summary = f"{len(rows)} build{'s' * (len(rows) != 1)}"
         self.build_select(0 if rows else -1)
@@ -696,13 +825,21 @@ class Window(UI.AppWindow):
     async def build(self):
         ui, ws = self.ui, self.ws
         encoding = list(self.Encodings.output)[ui.output_encoding]
-        settings = dict(wrap_columns=ui.wrap_columns if ui.wrap else None,
-                        output_encoding=None if encoding == "Keep" else encoding)
+        settings = dict(
+            wrap_columns=ui.wrap_columns if ui.wrap else None,
+            output_encoding=None if encoding == "Keep" else encoding,
+        )
         ws.manifest["build"] = settings
         self.busy("Building")
         try:
             ws.save_manifest()
-            target, report = await jobs.run(jobs.build, ws.root, **settings, progress=self.progress(), cancel=self.cancel)
+            target, report = await jobs.run(
+                jobs.build,
+                ws.root,
+                **settings,
+                progress=self.progress(),
+                cancel=self.cancel,
+            )
         except Cancelled:
             self.say("Build cancelled")
             return
@@ -712,7 +849,10 @@ class Window(UI.AppWindow):
         finally:
             self.idle()
         self.show_builds()
-        self.say(f"Built {report.files:,} files" + (f" with {len(report.warnings):,} warnings" if report.warnings else ""))
+        self.say(
+            f"Built {report.files:,} files"
+            + (f" with {len(report.warnings):,} warnings" if report.warnings else "")
+        )
 
     @slint.callback(global_name="App")
     def open_folder(self, path):
@@ -720,19 +860,37 @@ class Window(UI.AppWindow):
             if sys.platform == "win32":
                 os.startfile(path)
             else:
-                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", path])
+                subprocess.Popen(
+                    ["open" if sys.platform == "darwin" else "xdg-open", path]
+                )
         except OSError as exc:
             self.fail(exc)
 
     def show_terms(self):
         query = self.ui.term_query.casefold()
-        self.term_view = [term for term in self.terms if not query or any(
-            query in value.casefold() for value in (term.source, term.target, term.notes))]
+        self.term_view = [
+            term
+            for term in self.terms
+            if not query
+            or any(
+                query in value.casefold()
+                for value in (term.source, term.target, term.notes)
+            )
+        ]
         self.ui.terms = slint.ListModel(
-            dict(source=term.source, target=term.target, kind=term.kind, notes=oneline(term.notes),
-                 approved=term.approved) for term in self.term_view)
+            dict(
+                source=term.source,
+                target=term.target,
+                kind=term.kind,
+                notes=oneline(term.notes),
+                approved=term.approved,
+            )
+            for term in self.term_view
+        )
         self.ui.term_total = len(self.terms)
-        self.ui.term_current = next((i for i, term in enumerate(self.term_view) if term is self.term), -1)
+        self.ui.term_current = next(
+            (i for i, term in enumerate(self.term_view) if term is self.term), -1
+        )
 
     @slint.callback(global_name="App")
     def term_query_edited(self, text):
@@ -761,13 +919,31 @@ class Window(UI.AppWindow):
     def term_save(self):
         ui = self.ui
         term = self.term or glossary.Term("")
-        values = (term.source, term.target, term.kind, term.notes, term.case_sensitive, term.approved)
+        values = (
+            term.source,
+            term.target,
+            term.kind,
+            term.notes,
+            term.case_sensitive,
+            term.approved,
+        )
         term.source, term.target, term.notes = ui.t_source, ui.t_target, ui.t_notes
-        term.kind, term.case_sensitive, term.approved = glossary.KINDS[ui.t_kind], ui.t_case, ui.t_approved
+        term.kind, term.case_sensitive, term.approved = (
+            glossary.KINDS[ui.t_kind],
+            ui.t_case,
+            ui.t_approved,
+        )
         try:
             self.ws.save_term(term)
         except (VnTransError, OSError) as exc:
-            (term.source, term.target, term.kind, term.notes, term.case_sensitive, term.approved) = values
+            (
+                term.source,
+                term.target,
+                term.kind,
+                term.notes,
+                term.case_sensitive,
+                term.approved,
+            ) = values
             ui.t_error = str(exc)
             return
         if self.term is None:
@@ -793,7 +969,9 @@ class Window(UI.AppWindow):
         if not path:
             return
         try:
-            added, updated = self.ws.import_terms(glossary.loads(Path(path).read_text(encoding="utf-8")))
+            added, updated = self.ws.import_terms(
+                glossary.loads(Path(path).read_text(encoding="utf-8"))
+            )
         except (VnTransError, OSError, UnicodeError) as exc:
             self.fail(exc)
             return
@@ -805,7 +983,9 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     def term_export(self):
-        path = self.ws.root / "exports" / f"glossary-{datetime.now():%Y%m%d-%H%M%S}.json"
+        path = (
+            self.ws.root / "exports" / f"glossary-{datetime.now():%Y%m%d-%H%M%S}.json"
+        )
         try:
             path.parent.mkdir(exist_ok=True)
             path.write_text(glossary.dumps(self.terms), encoding="utf-8")
@@ -816,10 +996,14 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     async def lg_export(self):
-        folder = self.ws.root / "exports" / f"linguagacha-{datetime.now():%Y%m%d-%H%M%S}"
+        folder = (
+            self.ws.root / "exports" / f"linguagacha-{datetime.now():%Y%m%d-%H%M%S}"
+        )
         with self.overlay("Exporting LinguaGacha JSON…"):
             try:
-                count = await jobs.thread(self.ws.export_messages, folder, list(self.rows))
+                count = await jobs.thread(
+                    self.ws.export_messages, folder, list(self.rows)
+                )
             except OSError as exc:
                 self.fail(exc)
                 return
@@ -833,35 +1017,60 @@ class Window(UI.AppWindow):
         with self.overlay("Importing LinguaGacha translations…"):
             try:
                 pairs, skipped, ignored = await jobs.thread(
-                    self.ws.import_messages, Path(path).expanduser(), self.rows)
+                    self.ws.import_messages, Path(path).expanduser(), self.rows
+                )
             except OSError as exc:
                 self.fail(exc)
                 return
             rows = [row for row, _ in pairs]
-            if await self.edit("import", lambda: [replace(row, translation=text, status="machine", error=None)
-                                                  for row, text in pairs]) is None:
+            if (
+                await self.edit(
+                    "import",
+                    lambda: [
+                        replace(row, translation=text, status="machine", error=None)
+                        for row, text in pairs
+                    ],
+                )
+                is None
+            ):
                 return
-        notes = [f"{skipped:,} failed checks"] * bool(skipped) + [f"{len(ignored):,} files not matched"] * bool(ignored)
-        self.say(f"Imported {len(rows):,} translations" + (f" ({', '.join(notes)})" if notes else ""),
-                 error=not rows and bool(notes))
+        notes = [f"{skipped:,} failed checks"] * bool(skipped) + [
+            f"{len(ignored):,} files not matched"
+        ] * bool(ignored)
+        self.say(
+            f"Imported {len(rows):,} translations"
+            + (f" ({', '.join(notes)})" if notes else ""),
+            error=not rows and bool(notes),
+        )
 
     def load_prompt(self):
         manifest = self.ws.manifest
         self.sections = prompts.chain(manifest.get("prompt", {}))
         sources, targets = list(self.Languages.sources), list(self.Languages.targets)
         languages = manifest["languages"]
-        self.ui.p_source = sources.index(languages["source"]) if languages["source"] in sources else 0
-        self.ui.p_target = targets.index(languages["target"]) if languages["target"] in targets else 0
+        self.ui.p_source = (
+            sources.index(languages["source"]) if languages["source"] in sources else 0
+        )
+        self.ui.p_target = (
+            targets.index(languages["target"]) if languages["target"] in targets else 0
+        )
         self.show_sections()
         self.section_select(0)
 
     def show_sections(self):
         self.ui.sections = slint.ListModel(
-            dict(title=prompts.BY_KEY[item["key"]].title, enabled=item["enabled"], locked=item["key"] == "contract")
-            for item in self.sections)
+            dict(
+                title=prompts.BY_KEY[item["key"]].title,
+                enabled=item["enabled"],
+                locked=item["key"] == "contract",
+            )
+            for item in self.sections
+        )
 
     def store_prompt(self):
-        self.ws.manifest["prompt"] = dict(sections=[item for item in self.sections if item["key"] != "contract"])
+        self.ws.manifest["prompt"] = dict(
+            sections=[item for item in self.sections if item["key"] != "contract"]
+        )
         try:
             self.ws.save_manifest()
         except OSError as exc:
@@ -876,8 +1085,15 @@ class Window(UI.AppWindow):
         ui.section_key = key
         ui.section_editable = prompts.BY_KEY[key].editable
         ui.section_about = ABOUT.get(key, "")
-        ui.section_text = prompts.CONTRACT if key == "contract" else (
-            item["text"] if item["text"] is not None else prompts.DEFAULTS.get(key, ""))
+        ui.section_text = (
+            prompts.CONTRACT
+            if key == "contract"
+            else (
+                item["text"]
+                if item["text"] is not None
+                else prompts.DEFAULTS.get(key, "")
+            )
+        )
 
     @slint.callback(global_name="App")
     def section_toggle(self, index):
@@ -890,14 +1106,19 @@ class Window(UI.AppWindow):
     def section_move(self, index, delta):
         other = index + delta
         if 0 <= other < len(self.sections) - 1 and index < len(self.sections) - 1:
-            self.sections[index], self.sections[other] = self.sections[other], self.sections[index]
+            self.sections[index], self.sections[other] = (
+                self.sections[other],
+                self.sections[index],
+            )
             self.prompt_changed()
             self.section_select(other)
 
     @slint.callback(global_name="App")
     def section_edited(self, text):
         self.sections[self.ui.section_current]["text"] = text
-        self.section_timer.start(slint.TimerMode.SingleShot, timedelta(milliseconds=400), self.prompt_changed)
+        self.section_timer.start(
+            slint.TimerMode.SingleShot, timedelta(milliseconds=400), self.prompt_changed
+        )
 
     @slint.callback(global_name="App")
     def section_reset(self):
@@ -907,7 +1128,9 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     def style_preset(self, name):
-        index = next(i for i, item in enumerate(self.sections) if item["key"] == "style")
+        index = next(
+            i for i, item in enumerate(self.sections) if item["key"] == "style"
+        )
         self.sections[index]["text"] = prompts.STYLE_PRESETS[name]
         self.section_select(index)
         self.prompt_changed()
@@ -920,16 +1143,21 @@ class Window(UI.AppWindow):
     @slint.callback(global_name="App")
     def languages_changed(self):
         ui = self.ui
-        self.ws.manifest["languages"] = dict(source=list(self.Languages.sources)[ui.p_source],
-                                             target=list(self.Languages.targets)[ui.p_target])
+        self.ws.manifest["languages"] = dict(
+            source=list(self.Languages.sources)[ui.p_source],
+            target=list(self.Languages.targets)[ui.p_target],
+        )
         self.store_prompt()
         self.show_info()
         self.update_preview()
         self.recheck()
 
     def batch_settings(self):
-        return prompts.BATCH | {key: value for key, value in self.ws.manifest.get("translation", {}).items()
-                                if key in prompts.BATCH}
+        return prompts.BATCH | {
+            key: value
+            for key, value in self.ws.manifest.get("translation", {}).items()
+            if key in prompts.BATCH
+        }
 
     def update_preview(self):
         ui = self.ui
@@ -940,42 +1168,90 @@ class Window(UI.AppWindow):
             ui.preview_system = ui.preview_user = ""
             ui.preview_stats = f"Replacement rules: {exc}"
             return
-        selected = self.model.indices[ui.current] if 0 <= ui.current < len(self.model.indices) else 0
-        candidates = list(islice((i for i in range(selected, len(self.rows)) if self.rows[i].kind != "speaker"),
-                                 settings["batch_lines"]))
+        selected = (
+            self.model.indices[ui.current]
+            if 0 <= ui.current < len(self.model.indices)
+            else 0
+        )
+        candidates = list(
+            islice(
+                (
+                    i
+                    for i in range(selected, len(self.rows))
+                    if self.rows[i].kind != "speaker"
+                ),
+                settings["batch_lines"],
+            )
+        )
         if not candidates:
             ui.preview_system = ui.preview_user = ui.preview_stats = ""
             return
-        batch = prompts.plan(self.rows, candidates, lines=settings["batch_lines"], tokens=settings["batch_tokens"])[0]
-        prompt = prompts.build(self.sections, self.ws.manifest["languages"], self.rows, batch, terms=self.terms,
-                               before=settings["context_before"], after=settings["context_after"],
-                               pre=rules.pre, formats=self.ws.formats)
+        batch = prompts.plan(
+            self.rows,
+            candidates,
+            lines=settings["batch_lines"],
+            tokens=settings["batch_tokens"],
+        )[0]
+        prompt = prompts.build(
+            self.sections,
+            self.ws.manifest["languages"],
+            self.rows,
+            batch,
+            terms=self.terms,
+            before=settings["context_before"],
+            after=settings["context_after"],
+            pre=rules.pre,
+            formats=self.ws.formats,
+        )
         ui.preview_system, ui.preview_user = prompt.system, prompt.user
-        ui.preview_stats = (f"~{prompt.tokens:,} tokens (estimate) · {len(prompt.rows)} records from "
-                            f"{prompt.rows[0].file} · {len(prompt.terms)} glossary hits · prompt {prompt.version}")
+        ui.preview_stats = (
+            f"~{prompt.tokens:,} tokens (estimate) · {len(prompt.rows)} records from "
+            f"{prompt.rows[0].file} · {len(prompt.terms)} glossary hits · prompt {prompt.version}"
+        )
 
     def show_profiles(self):
         self.ui.profiles = slint.ListModel(
-            dict(name=profile.name, detail=f"{PROVIDERS[profile.provider].label} · {profile.model or 'no model'}")
-            for profile in self.profiles)
-        self.ui.profile_names = slint.ListModel(profile.name for profile in self.profiles)
+            dict(
+                name=profile.name,
+                detail=f"{PROVIDERS[profile.provider].label} · {profile.model or 'no model'}",
+            )
+            for profile in self.profiles
+        )
+        self.ui.profile_names = slint.ListModel(
+            profile.name for profile in self.profiles
+        )
         self.show_parallel()
 
     def form_profile(self) -> Profile:
         ui = self.ui
-        return Profile(ui.pf_name.strip(), list(PROVIDERS)[ui.pf_provider], ui.pf_model.strip(),
-                       [key.strip() for key in re.split(r"[,\s]+", ui.pf_keys) if key.strip()],
-                       round(ui.pf_temperature, 2), ui.pf_max_tokens, REASONING[ui.pf_reasoning], ui.pf_timeout,
-                       ui.pf_thinking)
+        return Profile(
+            ui.pf_name.strip(),
+            list(PROVIDERS)[ui.pf_provider],
+            ui.pf_model.strip(),
+            [key.strip() for key in re.split(r"[,\s]+", ui.pf_keys) if key.strip()],
+            round(ui.pf_temperature, 2),
+            ui.pf_max_tokens,
+            REASONING[ui.pf_reasoning],
+            ui.pf_timeout,
+            ui.pf_thinking,
+        )
 
     @slint.callback(global_name="App")
     def profile_select(self, index):
         profile = self.profiles[index]
         ui = self.ui
         ui.profile_current = index
-        ui.pf_name, ui.pf_model, ui.pf_keys = profile.name, profile.model, "\n".join(profile.keys)
+        ui.pf_name, ui.pf_model, ui.pf_keys = (
+            profile.name,
+            profile.model,
+            "\n".join(profile.keys),
+        )
         ui.pf_provider = list(PROVIDERS).index(profile.provider)
-        ui.pf_temperature, ui.pf_max_tokens, ui.pf_timeout = profile.temperature, profile.max_output_tokens, profile.timeout
+        ui.pf_temperature, ui.pf_max_tokens, ui.pf_timeout = (
+            profile.temperature,
+            profile.max_output_tokens,
+            profile.timeout,
+        )
         ui.pf_reasoning = REASONING.index(profile.reasoning)
         ui.pf_thinking = profile.show_thinking
         ui.pf_models = slint.ListModel([])
@@ -988,7 +1264,11 @@ class Window(UI.AppWindow):
         ui.profile_current = -1
         ui.pf_name = ui.pf_model = ui.pf_keys = ui.pf_status = ""
         ui.pf_provider = 0
-        ui.pf_temperature, ui.pf_max_tokens, ui.pf_timeout = defaults.temperature, defaults.max_output_tokens, defaults.timeout
+        ui.pf_temperature, ui.pf_max_tokens, ui.pf_timeout = (
+            defaults.temperature,
+            defaults.max_output_tokens,
+            defaults.timeout,
+        )
         ui.pf_reasoning = 0
         ui.pf_thinking = defaults.show_thinking
         ui.pf_models = slint.ListModel([])
@@ -1001,7 +1281,11 @@ class Window(UI.AppWindow):
     def profile_save(self):
         profile = self.form_profile()
         current = self.ui.profile_current
-        if any(other.name == profile.name for i, other in enumerate(self.profiles) if i != current):
+        if any(
+            other.name == profile.name
+            for i, other in enumerate(self.profiles)
+            if i != current
+        ):
             self.profile_status("A profile with this name exists", error=True)
             return
         if current >= 0:
@@ -1027,14 +1311,18 @@ class Window(UI.AppWindow):
         profile = self.form_profile()
         self.ui.pf_working = "fetch"
         try:
-            models = await jobs.thread(PROVIDERS[profile.provider].models, profile, profile.api_keys()[0])
+            models = await jobs.thread(
+                PROVIDERS[profile.provider].models, profile, profile.api_keys()[0]
+            )
         except (ProviderError, IndexError) as exc:
             self.profile_status(str(exc) or "No API key", error=True)
             return
         finally:
             self.ui.pf_working = ""
         self.ui.pf_models = slint.ListModel(models)
-        self.ui.pf_model_index = models.index(self.ui.pf_model) if self.ui.pf_model in models else -1
+        self.ui.pf_model_index = (
+            models.index(self.ui.pf_model) if self.ui.pf_model in models else -1
+        )
         self.profile_status(f"{len(models)} models")
 
     @slint.callback(global_name="App")
@@ -1045,8 +1333,13 @@ class Window(UI.AppWindow):
         self.profile_status("")
         started = time.monotonic()
         try:
-            reply = await jobs.thread(PROVIDERS[profile.provider].complete, profile, profile.api_keys()[0],
-                                            prompts.CONTRACT, user)
+            reply = await jobs.thread(
+                PROVIDERS[profile.provider].complete,
+                profile,
+                profile.api_keys()[0],
+                prompts.CONTRACT,
+                user,
+            )
             text = runner.decode(reply.text)[0].get(1, "")
         except (ProviderError, ValueError, IndexError) as exc:
             self.profile_status(str(exc) or "No API key", error=True)
@@ -1059,22 +1352,44 @@ class Window(UI.AppWindow):
         ui = self.ui
         settings = runner.SETTINGS | self.ws.manifest.get("translation", {})
         names = [profile.name for profile in self.profiles]
-        ui.run_profile = names.index(settings.get("profile")) if settings.get("profile") in names else 0
+        ui.run_profile = (
+            names.index(settings.get("profile"))
+            if settings.get("profile") in names
+            else 0
+        )
         ui.run_lines, ui.run_tokens = settings["batch_lines"], settings["batch_tokens"]
-        ui.run_before, ui.run_after = settings["context_before"], settings["context_after"]
+        ui.run_before, ui.run_after = (
+            settings["context_before"],
+            settings["context_after"],
+        )
         ui.run_concurrency, ui.run_rpm = settings["concurrency"], settings["rpm"]
         self.parallel = set(settings.get("parallel", []))
         self.show_parallel()
 
     def helpers(self) -> list:
         """Profiles chosen to run alongside the main one, in profile order."""
-        main = self.profiles[self.ui.run_profile].name if 0 <= self.ui.run_profile < len(self.profiles) else None
-        return [profile for profile in self.profiles if profile.name in self.parallel and profile.name != main]
+        main = (
+            self.profiles[self.ui.run_profile].name
+            if 0 <= self.ui.run_profile < len(self.profiles)
+            else None
+        )
+        return [
+            profile
+            for profile in self.profiles
+            if profile.name in self.parallel and profile.name != main
+        ]
 
     def show_parallel(self):
-        main = self.profiles[self.ui.run_profile].name if 0 <= self.ui.run_profile < len(self.profiles) else None
-        self.ui.run_parallel = slint.ListModel(dict(name=profile.name, on=profile.name in self.parallel)
-                                               for profile in self.profiles if profile.name != main)
+        main = (
+            self.profiles[self.ui.run_profile].name
+            if 0 <= self.ui.run_profile < len(self.profiles)
+            else None
+        )
+        self.ui.run_parallel = slint.ListModel(
+            dict(name=profile.name, on=profile.name in self.parallel)
+            for profile in self.profiles
+            if profile.name != main
+        )
 
     @slint.callback(global_name="App")
     def run_parallel_toggled(self, name):
@@ -1085,8 +1400,14 @@ class Window(UI.AppWindow):
 
     def run_settings(self) -> dict:
         ui = self.ui
-        return dict(batch_lines=ui.run_lines, batch_tokens=ui.run_tokens, context_before=ui.run_before,
-                    context_after=ui.run_after, concurrency=ui.run_concurrency, rpm=ui.run_rpm)
+        return dict(
+            batch_lines=ui.run_lines,
+            batch_tokens=ui.run_tokens,
+            context_before=ui.run_before,
+            context_after=ui.run_after,
+            concurrency=ui.run_concurrency,
+            rpm=ui.run_rpm,
+        )
 
     @slint.callback(global_name="App")
     def run_settings_changed(self):
@@ -1102,7 +1423,9 @@ class Window(UI.AppWindow):
             self.fail(exc)
 
     def log_event(self, kind, text):
-        self.log.insert(0, dict(time=f"{datetime.now():%H:%M:%S}", kind=kind, text=text))
+        self.log.insert(
+            0, dict(time=f"{datetime.now():%H:%M:%S}", kind=kind, text=text)
+        )
         if len(self.log) > 500:
             del self.log[500]
 
@@ -1125,20 +1448,42 @@ class Window(UI.AppWindow):
         ui.run_total, ui.run_done, ui.run_failed = stats.total, stats.done, stats.failed
         elapsed = time.monotonic() - stats.started
         finished = stats.done + stats.failed
-        left = elapsed / finished * (stats.total - finished) if finished and ui.running else None
-        ui.run_meta = " + ".join(worker.label for worker in self.run.workers) + f" · {duration(elapsed)} elapsed"
+        left = (
+            elapsed / finished * (stats.total - finished)
+            if finished and ui.running
+            else None
+        )
+        ui.run_meta = (
+            " + ".join(worker.label for worker in self.run.workers)
+            + f" · {duration(elapsed)} elapsed"
+        )
         ui.m_percent = f"{100 * finished / stats.total:.0f}%" if stats.total else "—"
         ui.m_progress = finished / stats.total if stats.total else 0
-        ui.m_progress_detail = f"{stats.done:,} done · {stats.failed:,} failed · {stats.total:,} total"
-        ui.m_eta = f"~{duration(left)} left" if left is not None else "" if ui.running else f"took {duration(elapsed)}"
+        ui.m_progress_detail = (
+            f"{stats.done:,} done · {stats.failed:,} failed · {stats.total:,} total"
+        )
+        ui.m_eta = (
+            f"~{duration(left)} left"
+            if left is not None
+            else ""
+            if ui.running
+            else f"took {duration(elapsed)}"
+        )
         rate = stats.rate() if ui.running else 0.0
         self.rate_samples.append(rate)
         ui.m_rate = f"{rate:,.0f}"
         ui.m_spark = slint.ListModel(bars(self.rate_samples))
-        ui.m_rate_detail = (f"peak {max(self.rate_samples):,.0f} · {stats.latency / stats.replies:.1f} s avg reply"
-                            if stats.replies else "waiting for the first reply" if ui.running else "no replies")
+        ui.m_rate_detail = (
+            f"peak {max(self.rate_samples):,.0f} · {stats.latency / stats.replies:.1f} s avg reply"
+            if stats.replies
+            else "waiting for the first reply"
+            if ui.running
+            else "no replies"
+        )
         ui.m_active = stats.active
-        busy = [f"{stats.queued:,} queued"] + ([f"{stats.cooling} cooling down"] if stats.cooling else [])
+        busy = [f"{stats.queued:,} queued"] + (
+            [f"{stats.cooling} cooling down"] if stats.cooling else []
+        )
         ui.m_active_detail = " · ".join(busy) if ui.running else "idle"
         ui.m_usage = f"{compact(stats.tokens_in)} / {compact(stats.tokens_out)}"
         ui.m_usage_detail = f"{stats.requests:,} requests · {stats.replies:,} replies"
@@ -1149,14 +1494,30 @@ class Window(UI.AppWindow):
         del self.batch_views[200:]
         accepted = sum(record[3] in ("ok", "changed") for record in batch.records)
         failed = sum(record[3] == "failed" for record in batch.records)
-        outcome = "failed" if batch.error or (failed and not accepted) else "partial" if failed else "ok"
+        outcome = (
+            "failed"
+            if batch.error or (failed and not accepted)
+            else "partial"
+            if failed
+            else "ok"
+        )
         rate = batch.tokens_out / batch.latency if batch.latency else 0
-        detail = batch.error or f"{len(batch.records)} lines · {batch.latency:.1f} s · {rate:,.0f} tok/s"
+        detail = (
+            batch.error
+            or f"{len(batch.records)} lines · {batch.latency:.1f} s · {rate:,.0f} tok/s"
+        )
         if self.run and len(self.run.workers) > 1:
             detail = f"{batch.worker.split(' · ')[0]} · {detail}"
-        self.batches.insert(0, dict(number=batch.number, outcome=outcome, detail=detail,
-                                    title=f"#{batch.number} · {Path(batch.file).name}"
-                                    + (f" · retry {batch.attempt}" if batch.attempt else "")))
+        self.batches.insert(
+            0,
+            dict(
+                number=batch.number,
+                outcome=outcome,
+                detail=detail,
+                title=f"#{batch.number} · {Path(batch.file).name}"
+                + (f" · retry {batch.attempt}" if batch.attempt else ""),
+            ),
+        )
         if len(self.batches) > 200:
             del self.batches[200]
         if self.ui.batch_follow or self.ui.batch_current < 0:
@@ -1170,11 +1531,20 @@ class Window(UI.AppWindow):
             return
         ui, batch = self.ui, self.batch_views[index]
         ui.batch_current = index
-        task = dict(translate="Translation", review="Review", discover="Term discovery")[batch.task]
-        meta = [task, batch.worker, f"{len(batch.records)} {'terms' if batch.task == 'discover' else 'lines'}"]
+        task = dict(
+            translate="Translation", review="Review", discover="Term discovery"
+        )[batch.task]
+        meta = [
+            task,
+            batch.worker,
+            f"{len(batch.records)} {'terms' if batch.task == 'discover' else 'lines'}",
+        ]
         if batch.latency:
-            meta += [f"{batch.latency:.1f} s", f"{batch.tokens_out / batch.latency:,.0f} tok/s",
-                     f"{batch.tokens_in:,} in / {batch.tokens_out:,} out"]
+            meta += [
+                f"{batch.latency:.1f} s",
+                f"{batch.tokens_out / batch.latency:,.0f} tok/s",
+                f"{batch.tokens_in:,} in / {batch.tokens_out:,} out",
+            ]
         if batch.context:
             meta.append(f"{batch.context} context lines")
         if batch.attempt:
@@ -1182,15 +1552,35 @@ class Window(UI.AppWindow):
         ui.insp_title = f"Batch {batch.number} · {batch.file}"
         ui.insp_meta = " · ".join(meta)
         ui.insp_error = batch.error
-        ui.insp_records = slint.ListModel(dict(speaker=speaker, source=source, output=output, outcome=outcome, note=note)
-                                          for speaker, source, output, outcome, note in batch.records)
+        ui.insp_records = slint.ListModel(
+            dict(
+                speaker=speaker,
+                source=source,
+                output=output,
+                outcome=outcome,
+                note=note,
+            )
+            for speaker, source, output, outcome, note in batch.records
+        )
         ui.insp_thinking = batch.thinking
         outcomes = Counter(record[3] for record in batch.records)
-        checks = {"translate": [f"{outcomes['ok']} accepted and saved"],
-                  "review": [f"{outcomes['changed']} suggestions", f"{outcomes['ok']} left as they are"],
-                  "discover": [f"{outcomes['ok']} new draft terms", f"{outcomes['skipped']} skipped"]}[batch.task]
-        checks += [f"{count} failed: {reason}" for reason, count in
-                   Counter(record[4] for record in batch.records if record[3] == "failed").most_common()]
+        checks = {
+            "translate": [f"{outcomes['ok']} accepted and saved"],
+            "review": [
+                f"{outcomes['changed']} suggestions",
+                f"{outcomes['ok']} left as they are",
+            ],
+            "discover": [
+                f"{outcomes['ok']} new draft terms",
+                f"{outcomes['skipped']} skipped",
+            ],
+        }[batch.task]
+        checks += [
+            f"{count} failed: {reason}"
+            for reason, count in Counter(
+                record[4] for record in batch.records if record[3] == "failed"
+            ).most_common()
+        ]
         if batch.task == "translate" and not batch.thinking and not batch.error:
             checks.append("The model returned no thinking")
         ui.insp_checks = slint.ListModel(checks)
@@ -1207,7 +1597,12 @@ class Window(UI.AppWindow):
             wanted = ("new",) if ui.run_scope == 0 else ("new", "machine")
             indices = [i for i in pool if self.rows[i].status in wanted]
         elif task == "review":
-            indices = [i for i in pool if self.rows[i].translation is not None and self.rows[i].status != "excluded"]
+            indices = [
+                i
+                for i in pool
+                if self.rows[i].translation is not None
+                and self.rows[i].status != "excluded"
+            ]
         else:
             indices = list(pool)
         await self.start_run(task, indices)
@@ -1223,11 +1618,25 @@ class Window(UI.AppWindow):
             return
         try:
             profile = self.profiles[ui.run_profile]
-            self.run = runner.Run(self.ws, self.rows, indices, profile=profile, provider=PROVIDERS[profile.provider],
-                                  sections=self.sections, terms=self.terms, settings=self.run_settings(), task=task,
-                                  rules=rules, on_event=self.log_event, on_commit=self.row_committed,
-                                  on_batch=self.batch_done, offload=jobs.thread,
-                                  parallel=[(other, PROVIDERS[other.provider]) for other in self.helpers()])
+            self.run = runner.Run(
+                self.ws,
+                self.rows,
+                indices,
+                profile=profile,
+                provider=PROVIDERS[profile.provider],
+                sections=self.sections,
+                terms=self.terms,
+                settings=self.run_settings(),
+                task=task,
+                rules=rules,
+                on_event=self.log_event,
+                on_commit=self.row_committed,
+                on_batch=self.batch_done,
+                offload=jobs.thread,
+                parallel=[
+                    (other, PROVIDERS[other.provider]) for other in self.helpers()
+                ],
+            )
         except (VnTransError, IndexError) as exc:
             self.log_event("error", str(exc) or "Choose a profile")
             return
@@ -1240,12 +1649,22 @@ class Window(UI.AppWindow):
         ui.batch_follow = True
         self.rate_samples.clear()
         ui.m_slots = self.run.slots
-        self.log_event("info", "Started with " + ", ".join(f"{worker.profile.name} ({worker.profile.model})"
-                                                           for worker in self.run.workers))
-        self.run_timer.start(slint.TimerMode.Repeated, timedelta(milliseconds=500), self.show_run)
+        self.log_event(
+            "info",
+            "Started with "
+            + ", ".join(
+                f"{worker.profile.name} ({worker.profile.model})"
+                for worker in self.run.workers
+            ),
+        )
+        self.run_timer.start(
+            slint.TimerMode.Repeated, timedelta(milliseconds=500), self.show_run
+        )
         try:
             await self.run.run()
-        except Exception as exc:  # keep the window alive; accepted work is already committed
+        except (
+            Exception
+        ) as exc:  # keep the window alive; accepted work is already committed
             self.log_event("error", f"Run failed: {exc!r}")
         finally:
             self.run_timer.stop()
@@ -1293,22 +1712,32 @@ class Window(UI.AppWindow):
         ws, texts = self.ws, self.texts
         suggestions = dict(self.suggestions)
         if accept:
+
             def prepare():
                 entries = []
                 for key, (text, _) in suggestions.items():
                     if key not in texts.index_of:
                         continue
                     row = texts.views[texts.index_of[key]]
-                    entries.append(replace(row, translation=text, error=None,
-                                           status="excluded" if row.status == "excluded" else "edited"))
+                    entries.append(
+                        replace(
+                            row,
+                            translation=text,
+                            error=None,
+                            status="excluded" if row.status == "excluded" else "edited",
+                        )
+                    )
                 return entries
+
             entries = await self.edit("suggestions", prepare, dismiss=True)
             if entries is not None:
                 self.say(f"Accepted {len(entries):,} suggestions")
             return
+
         def discard():
             with closing(workspace.Workspace(ws.root)) as worker:
                 worker.dismiss()
+
         self.editing = True
         self.last_action = time.monotonic()
         try:
@@ -1333,7 +1762,10 @@ class Window(UI.AppWindow):
     async def replace_all(self):
         ui = self.ui
         try:
-            pattern = re.compile(ui.query if ui.regex else re.escape(ui.query), 0 if ui.match_case else re.IGNORECASE)
+            pattern = re.compile(
+                ui.query if ui.regex else re.escape(ui.query),
+                0 if ui.match_case else re.IGNORECASE,
+            )
             replace_with = ui.replace_with
             replacement = replace_with if ui.regex else (lambda match: replace_with)
         except re.error as exc:
@@ -1342,6 +1774,7 @@ class Window(UI.AppWindow):
         rows = [self.texts.views[index] for index in self.model.indices]
         ws = self.ws
         skipped = 0
+
         def prepare():
             nonlocal skipped
             entries = []
@@ -1352,18 +1785,31 @@ class Window(UI.AppWindow):
                 if text == row.translation:
                     continue
                 try:
-                    entries.append(replace(row, translation=ws.check(row, text), status="edited", error=None))
+                    entries.append(
+                        replace(
+                            row,
+                            translation=ws.check(row, text),
+                            status="edited",
+                            error=None,
+                        )
+                    )
                 except VnTransError:
                     skipped += 1
             return entries
+
         entries = await self.edit("replace", prepare)
         if entries is not None:
-            self.say(f"Replaced in {len(entries)} units" + (f", {skipped} skipped (checks failed)" if skipped else ""))
+            self.say(
+                f"Replaced in {len(entries)} units"
+                + (f", {skipped} skipped (checks failed)" if skipped else "")
+            )
 
     @slint.callback(global_name="App")
     def rules_edited(self, text):
         self.ui.rules_text = text
-        self.rules_timer.start(slint.TimerMode.SingleShot, timedelta(milliseconds=400), self.store_rules)
+        self.rules_timer.start(
+            slint.TimerMode.SingleShot, timedelta(milliseconds=400), self.store_rules
+        )
 
     def check_rules(self):
         try:
@@ -1401,9 +1847,16 @@ class Window(UI.AppWindow):
         ui = self.ui
         ui.sel_count = len(rows)
         ui.sel_has_translation = any(row.translation is not None for row in rows)
-        ui.sel_has_suggestion = any((row.file, row.id) in self.suggestions for row in rows)
-        ui.sel_all_excluded = bool(rows) and all(row.status == "excluded" for row in rows)
-        ui.sel_fixable = any(self.tags.get(index, set()) & {"speaker", "ruby", "quote"} for index in self.targets())
+        ui.sel_has_suggestion = any(
+            (row.file, row.id) in self.suggestions for row in rows
+        )
+        ui.sel_all_excluded = bool(rows) and all(
+            row.status == "excluded" for row in rows
+        )
+        ui.sel_fixable = any(
+            self.tags.get(index, set()) & {"speaker", "ruby", "quote"}
+            for index in self.targets()
+        )
 
     @slint.callback(global_name="App")
     def row_pressed(self, position, toggle, extend):
@@ -1418,7 +1871,7 @@ class Window(UI.AppWindow):
             low, high = sorted((anchor, position))
             if not toggle:
                 self.picked.clear()
-            self.picked.update(indices[low:high + 1])
+            self.picked.update(indices[low : high + 1])
             self.anchor = anchor
         elif toggle:
             if not self.picked and 0 <= current < len(indices):
@@ -1469,8 +1922,12 @@ class Window(UI.AppWindow):
             # Replies may finish during an edit; accept them after the manual changes are visible.
             run.writes_ready.clear()
         before = texts.snapshot()
+
         def store():
-            return workspace.store_rows(ws.root, prepare(), check=check, dismiss=dismiss)
+            return workspace.store_rows(
+                ws.root, prepare(), check=check, dismiss=dismiss
+            )
+
         try:
             with self.overlay("Saving changes…"):
                 entries = await jobs.thread(store)
@@ -1478,18 +1935,22 @@ class Window(UI.AppWindow):
                     return None
                 undo = []
                 for start in range(0, len(entries), 250):
-                    for entry in entries[start:start + 250]:
+                    for entry in entries[start : start + 250]:
                         index = self.index_of[(entry.file, entry.id)]
                         row, old = self.rows[index], before[index]
                         undo.append((row, old.translation, old.status, old.error))
-                        row.translation, row.status, row.error = entry.translation, entry.status, entry.error
+                        row.translation, row.status, row.error = (
+                            entry.translation,
+                            entry.status,
+                            entry.error,
+                        )
                         if dismiss:
                             self.suggestions.pop((row.file, row.id), None)
                         texts.changed(index, entry)
                         position = self.positions.get(index)
                         if position is not None:
                             self.model.notify_row_changed(position)
-                    await asyncio.sleep(.001)
+                    await asyncio.sleep(0.001)
                 if label:
                     self.undo_entry = label, undo
                     self.ui.can_undo, self.ui.undo_text = True, f"Undo {label}"
@@ -1515,8 +1976,17 @@ class Window(UI.AppWindow):
         if self.undo_entry is None:
             return
         label, snapshot = self.undo_entry
-        if await self.edit(None, lambda: [replace(row, translation=text, status=status, error=error)
-                                         for row, text, status, error in snapshot], check=False) is not None:
+        if (
+            await self.edit(
+                None,
+                lambda: [
+                    replace(row, translation=text, status=status, error=error)
+                    for row, text, status, error in snapshot
+                ],
+                check=False,
+            )
+            is not None
+        ):
             self.say(f"Undid {label}")
 
     @slint.callback(global_name="App")
@@ -1529,47 +1999,105 @@ class Window(UI.AppWindow):
         if action == "open":
             self.ui.editor_open = True
         elif action in ("copy-source", "copy-translation"):
-            texts = [row.source if action == "copy-source" else row.translation or "" for row in rows]
+            texts = [
+                row.source if action == "copy-source" else row.translation or ""
+                for row in rows
+            ]
             self.copy_text("\n".join(texts))
             self.say(f"Copied {count}")
         elif action == "clear":
             rows = [row for row in rows if row.translation is not None]
-            if await self.edit("clear", lambda: [replace(row, translation=None, status="new", error=None)
-                                                  for row in rows]) is None:
+            if (
+                await self.edit(
+                    "clear",
+                    lambda: [
+                        replace(row, translation=None, status="new", error=None)
+                        for row in rows
+                    ],
+                )
+                is None
+            ):
                 return
             self.say(f"Cleared {len(rows):,} translation{'s' * (len(rows) != 1)}")
         elif action == "exclude":
             excluded = not all(row.status == "excluded" for row in rows)
-            if await self.edit("exclude" if excluded else "include", lambda: [
-                    replace(row, status="excluded" if excluded else ("new" if row.translation is None else "edited"))
-                    for row in rows], check=False) is None:
+            if (
+                await self.edit(
+                    "exclude" if excluded else "include",
+                    lambda: [
+                        replace(
+                            row,
+                            status="excluded"
+                            if excluded
+                            else ("new" if row.translation is None else "edited"),
+                        )
+                        for row in rows
+                    ],
+                    check=False,
+                )
+                is None
+            ):
                 return
             self.say(f"{'Excluded' if excluded else 'Included'} {count}")
         elif action == "tidy":
-            names = self.checker.names if self.checker else quality.speaker_names(self.rows, self.terms)
+            names = (
+                self.checker.names
+                if self.checker
+                else quality.speaker_names(self.rows, self.terms)
+            )
             formats = self.ws.formats
+
             def prepare():
-                return [replace(row, translation=text, error=None) for row in rows if row.translation is not None
-                        and (text := quality.tidy(row.translation, row, names, formats)) != row.translation]
+                return [
+                    replace(row, translation=text, error=None)
+                    for row in rows
+                    if row.translation is not None
+                    and (text := quality.tidy(row.translation, row, names, formats))
+                    != row.translation
+                ]
+
             entries = await self.edit("fixes", prepare)
             if entries is None:
                 return
             self.say(f"Fixed {len(entries):,} translation{'s' * (len(entries) != 1)}")
         elif action == "suggest":
-            pairs = [(row, self.suggestions[(row.file, row.id)][0]) for row in rows if (row.file, row.id) in self.suggestions]
-            if await self.edit("suggestions", lambda: [replace(row, translation=text, status="edited", error=None)
-                                                       for row, text in pairs], dismiss=True) is None:
+            pairs = [
+                (row, self.suggestions[(row.file, row.id)][0])
+                for row in rows
+                if (row.file, row.id) in self.suggestions
+            ]
+            if (
+                await self.edit(
+                    "suggestions",
+                    lambda: [
+                        replace(row, translation=text, status="edited", error=None)
+                        for row, text in pairs
+                    ],
+                    dismiss=True,
+                )
+                is None
+            ):
                 return
             self.say(f"Applied {len(pairs):,} suggestion{'s' * (len(pairs) != 1)}")
         elif action in ("translate", "review"):
             if action == "translate":
-                chosen = [i for i in indices if self.rows[i].status in ("new", "machine")]
+                chosen = [
+                    i for i in indices if self.rows[i].status in ("new", "machine")
+                ]
                 skipped = len(indices) - len(chosen)
             else:
-                chosen = [i for i in indices if self.rows[i].translation is not None and self.rows[i].status != "excluded"]
+                chosen = [
+                    i
+                    for i in indices
+                    if self.rows[i].translation is not None
+                    and self.rows[i].status != "excluded"
+                ]
                 skipped = 0
             self.ui.run_task = TASKS.index(action)
             self.navigate("translate")
             if skipped:
-                self.log_event("info", f"Skipped {skipped:,} edited or excluded units; manual edits are never overwritten")
+                self.log_event(
+                    "info",
+                    f"Skipped {skipped:,} edited or excluded units; manual edits are never overwritten",
+                )
             asyncio.ensure_future(self.start_run(action, chosen))

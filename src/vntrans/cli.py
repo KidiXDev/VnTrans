@@ -7,7 +7,9 @@ from .progress import Progress
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="vntrans", description="Extract and rebuild visual novel scripts")
+    parser = argparse.ArgumentParser(
+        prog="vntrans", description="Extract and rebuild visual novel scripts"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     extract = commands.add_parser("extract", help="export translation JSON")
     extract.add_argument("input")

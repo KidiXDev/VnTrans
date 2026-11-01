@@ -1,26 +1,25 @@
 import asyncio
 import json
-from pathlib import Path
 import re
 import sqlite3
 import tempfile
 import threading
-from types import SimpleNamespace
-import unittest
-from unittest.mock import AsyncMock, Mock, patch
-
-from vntrans import config
-from vntrans.text import make_unit
-from vntrans.translation import prompts
-from vntrans.gui.geometry import normalize, place
-from vntrans.workspace import Row
-from vntrans.gui.texts import TextState
-from vntrans.gui.jobs import Cancelled, Latest, Progress, build, run
-from vntrans.gui import jobs
 import time
+import unittest
 from contextlib import nullcontext
 from dataclasses import replace
-from vntrans import workspace
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
+
+from vntrans import config, workspace
+from vntrans.gui import jobs
+from vntrans.gui.geometry import normalize, place
+from vntrans.gui.jobs import Cancelled, Latest, Progress, build, run
+from vntrans.gui.texts import TextState
+from vntrans.text import make_unit
+from vntrans.translation import prompts
+from vntrans.workspace import Row
 
 try:
     from vntrans.gui.app import Window, bars, compact, duration, filter_rows
@@ -29,7 +28,18 @@ except ImportError:
 
 
 def row(file, kind, source, translation=None, status="new", error=None, speaker=""):
-    return Row(file, f"{file}/{source}", kind, source, speaker, "", "{}", translation, status, error)
+    return Row(
+        file,
+        f"{file}/{source}",
+        kind,
+        source,
+        speaker,
+        "",
+        "{}",
+        translation,
+        status,
+        error,
+    )
 
 
 @unittest.skipIf(filter_rows is None, "gui extra not installed")
@@ -44,21 +54,38 @@ class FilterTests(unittest.TestCase):
     def test_counts_ignore_state_filter(self):
         indices, counts = filter_rows(self.rows, status="new")
         self.assertEqual(indices, [1])
-        self.assertEqual(counts, dict(all=4, untranslated=2, new=1, machine=0, edited=1, failed=1, excluded=1,
-                                      issues=0, review=0))
+        self.assertEqual(
+            counts,
+            dict(
+                all=4,
+                untranslated=2,
+                new=1,
+                machine=0,
+                edited=1,
+                failed=1,
+                excluded=1,
+                issues=0,
+                review=0,
+            ),
+        )
         self.assertEqual(filter_rows(self.rows, status="untranslated")[0], [1, 2])
 
     def test_issue_and_review_tags(self):
         tags = {0: {"residue", "review"}, 3: {"lines"}}
         indices, counts = filter_rows(self.rows, status="issues", tags=tags)
         self.assertEqual((indices, counts["issues"], counts["review"]), ([0, 3], 2, 1))
-        self.assertEqual(filter_rows(self.rows, status="issues", tags=tags, issue="lines")[0], [3])
+        self.assertEqual(
+            filter_rows(self.rows, status="issues", tags=tags, issue="lines")[0], [3]
+        )
         self.assertEqual(filter_rows(self.rows, status="review", tags=tags)[0], [0])
 
     def test_search_scope_case_and_regex(self):
         self.assertEqual(filter_rows(self.rows, query="hello")[0], [0, 2])
         self.assertEqual(filter_rows(self.rows, query="hello", case=True)[0], [2])
-        self.assertEqual(filter_rows(self.rows, query="^h.*o$", regex=True, scope="translation")[0], [0])
+        self.assertEqual(
+            filter_rows(self.rows, query="^h.*o$", regex=True, scope="translation")[0],
+            [0],
+        )
         self.assertEqual(filter_rows(self.rows, query="a.", scope="source")[0], [])
         self.assertEqual(filter_rows(self.rows, query="alice", scope="speaker")[0], [1])
         with self.assertRaises(re.error):
@@ -66,7 +93,9 @@ class FilterTests(unittest.TestCase):
 
     def test_file_and_kind(self):
         self.assertEqual(filter_rows(self.rows, file="b.ks")[0], [2, 3])
-        self.assertEqual(filter_rows(self.rows, kind="dialogue", status="failed")[0], [2])
+        self.assertEqual(
+            filter_rows(self.rows, kind="dialogue", status="failed")[0], [2]
+        )
         self.assertEqual(filter_rows(self.rows, kind="lines")[0], [0, 2, 3])
         self.assertEqual(filter_rows(self.rows, kind="")[0], [0, 1, 2, 3])
 
@@ -77,7 +106,10 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(bars([], count=3), [0.0, 0.0, 0.0])
         self.assertEqual(bars([0, 10, 5], count=4), [0.0, 0.0, 1.0, 0.5])
         self.assertEqual(bars(range(10), count=2), [8 / 9, 1.0])
-        self.assertEqual((compact(999), compact(12_345), compact(2_500_000)), ("999", "12.3k", "2.5M"))
+        self.assertEqual(
+            (compact(999), compact(12_345), compact(2_500_000)),
+            ("999", "12.3k", "2.5M"),
+        )
         self.assertEqual((duration(75), duration(3725)), ("1:15", "1:02:05"))
 
 
@@ -85,25 +117,57 @@ class FormatTests(unittest.TestCase):
 class EditingTests(unittest.TestCase):
     def test_twins_require_matching_controls_and_literal_handling(self):
         rows = []
-        for index, (text, context) in enumerate([
-                ('Go [ruby text=x char=5]Tokyo', {}), ('Go [ruby text=y char=5]Osaka', {}),
-                ('Go [l]', {}), ('Go [ruby text=x char=5]Tokyo', {"line": 4}),
-                ('Hello', {}), ('Hello', {"literal": True})]):
+        for index, (text, context) in enumerate(
+            [
+                ("Go [ruby text=x char=5]Tokyo", {}),
+                ("Go [ruby text=y char=5]Osaka", {}),
+                ("Go [l]", {}),
+                ("Go [ruby text=x char=5]Tokyo", {"line": 4}),
+                ("Hello", {}),
+                ("Hello", {"literal": True}),
+            ]
+        ):
             unit = make_unit(str(index), "dialogue", text, "ks", **context)
-            rows.append(Row("a.ks", unit.id, unit.kind, unit.source, "", "", json.dumps(unit.context),
-                            None, "new", None))
-        window = SimpleNamespace(rows=rows, ws=SimpleNamespace(formats={"a.ks": "ks"}),
-                                 texts=TextState(rows, {"a.ks": "ks"}))
+            rows.append(
+                Row(
+                    "a.ks",
+                    unit.id,
+                    unit.kind,
+                    unit.source,
+                    "",
+                    "",
+                    json.dumps(unit.context),
+                    None,
+                    "new",
+                    None,
+                )
+            )
+        window = SimpleNamespace(
+            rows=rows,
+            ws=SimpleNamespace(formats={"a.ks": "ks"}),
+            texts=TextState(rows, {"a.ks": "ks"}),
+        )
         self.assertEqual(Window.twins(window, rows[0]), [rows[3]])
         self.assertEqual(Window.twins(window, rows[4]), [])
 
     def test_prompt_preview_applies_source_replacement_rules(self):
         ui = SimpleNamespace(current=0)
-        ws = SimpleNamespace(manifest={"languages": dict(source="English", target="Indonesian"),
-                                       "replacements": "pre Hello => Goodbye"}, formats={"a.ks": "ks"})
-        window = SimpleNamespace(ui=ui, ws=ws, rows=[row("a.ks", "dialogue", "Hello")],
-                                 model=SimpleNamespace(indices=[0]), batch_settings=lambda: prompts.BATCH,
-                                 sections=prompts.chain({}), terms=[])
+        ws = SimpleNamespace(
+            manifest={
+                "languages": dict(source="English", target="Indonesian"),
+                "replacements": "pre Hello => Goodbye",
+            },
+            formats={"a.ks": "ks"},
+        )
+        window = SimpleNamespace(
+            ui=ui,
+            ws=ws,
+            rows=[row("a.ks", "dialogue", "Hello")],
+            model=SimpleNamespace(indices=[0]),
+            batch_settings=lambda: prompts.BATCH,
+            sections=prompts.chain({}),
+            terms=[],
+        )
         Window.update_preview(window)
         self.assertIn('"text": "Goodbye"', ui.preview_user)
         self.assertNotIn('"text": "Hello"', ui.preview_user)
@@ -116,9 +180,13 @@ class EditingTests(unittest.TestCase):
 @unittest.skipIf(filter_rows is None, "gui extra not installed")
 class RecentWorkspaceTests(unittest.TestCase):
     def window(self, recent):
-        window = SimpleNamespace(settings={"recent": recent, "other": "keep"},
-                                 ui=SimpleNamespace(missing_workspace=""), open=AsyncMock(),
-                                 say=Mock(), fail=Mock())
+        window = SimpleNamespace(
+            settings={"recent": recent, "other": "keep"},
+            ui=SimpleNamespace(missing_workspace=""),
+            open=AsyncMock(),
+            say=Mock(),
+            fail=Mock(),
+        )
         window.show_recent = Mock(side_effect=lambda: Window.show_recent(window))
         return window
 
@@ -127,6 +195,7 @@ class RecentWorkspaceTests(unittest.TestCase):
             pending = asyncio.all_tasks()
             Window.open_workspace(window, path)
             await asyncio.gather(*(asyncio.all_tasks() - pending))
+
         asyncio.run(click())
 
     def test_removal_persists_history_and_keeps_workspace_files(self):
@@ -136,7 +205,10 @@ class RecentWorkspaceTests(unittest.TestCase):
             workspace.mkdir()
             marker = workspace / "keep.txt"
             marker.write_text("Keep this workspace", encoding="utf-8")
-            recent = [dict(name="Remove me", path=str(workspace)), dict(name="Keep me", path="other")]
+            recent = [
+                dict(name="Remove me", path=str(workspace)),
+                dict(name="Keep me", path="other"),
+            ]
             window = self.window(recent)
             with patch("vntrans.config.config_dir", return_value=root / "config"):
                 Window.remove_recent(window, str(workspace))
@@ -198,7 +270,10 @@ class RecentWorkspaceTests(unittest.TestCase):
 
 class ConfigTests(unittest.TestCase):
     def test_repeated_invalid_configs_keep_all_recovery_copies(self):
-        with tempfile.TemporaryDirectory() as folder, patch("vntrans.config.config_dir", return_value=Path(folder)):
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch("vntrans.config.config_dir", return_value=Path(folder)),
+        ):
             directory = Path(folder)
             original = "{first invalid config}"
             (directory / "config.json.bad").write_text(original, encoding="utf-8")
@@ -206,13 +281,23 @@ class ConfigTests(unittest.TestCase):
                 text = f"{{invalid config {number}}}"
                 (directory / "config.json").write_text(text, encoding="utf-8")
                 self.assertEqual(config.load(), {})
-                self.assertEqual((directory / f"config.json.bad.{number}").read_text(encoding="utf-8"), text)
-            self.assertEqual((directory / "config.json.bad").read_text(encoding="utf-8"), original)
+                self.assertEqual(
+                    (directory / f"config.json.bad.{number}").read_text(
+                        encoding="utf-8"
+                    ),
+                    text,
+                )
+            self.assertEqual(
+                (directory / "config.json.bad").read_text(encoding="utf-8"), original
+            )
 
 
 class TextStateTests(unittest.TestCase):
     def test_snapshots_and_incremental_counts(self):
-        rows = [row("a.ks", "dialogue", "Hello"), row("b.ks", "choice", "Go", status="excluded")]
+        rows = [
+            row("a.ks", "dialogue", "Hello"),
+            row("b.ks", "choice", "Go", status="excluded"),
+        ]
         texts = TextState(rows, {"a.ks": "ks", "b.ks": "ks"})
         snapshot = texts.snapshot()
         rows[0].translation, rows[0].status = "Halo", "edited"
@@ -233,19 +318,31 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_slower_workspace_open_cannot_replace_a_newer_one(self):
         started, release = threading.Event(), threading.Event()
         opened = {}
+
         def workspace_for(path):
             ws = SimpleNamespace(root=path, close=Mock())
             opened[path.name] = ws
             return ws
+
         def load_workspace(path, filters):
             if path.name == "old":
                 started.set()
                 release.wait(5)
             return path.name
-        window = SimpleNamespace(run=None, open_serial=0, settings={}, overlay=lambda text: nullcontext(),
-                                 show_workspace=Mock(), fail=Mock(), filters=lambda: {})
-        with patch("vntrans.gui.app.workspace.Workspace", side_effect=workspace_for), \
-                patch("vntrans.gui.app.load", side_effect=load_workspace):
+
+        window = SimpleNamespace(
+            run=None,
+            open_serial=0,
+            settings={},
+            overlay=lambda text: nullcontext(),
+            show_workspace=Mock(),
+            fail=Mock(),
+            filters=lambda: {},
+        )
+        with (
+            patch("vntrans.gui.app.workspace.Workspace", side_effect=workspace_for),
+            patch("vntrans.gui.app.load", side_effect=load_workspace),
+        ):
             old = asyncio.create_task(Window.open(window, "old"))
             await asyncio.to_thread(started.wait, 5)
             await Window.open(window, "new")
@@ -257,12 +354,19 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_worker_handoff_does_not_call_the_native_threadsafe_bridge(self):
         loop = asyncio.get_running_loop()
+
         def work():
-            time.sleep(.02)
+            time.sleep(0.02)
             return 42
+
         def fail():
             raise ValueError("worker error")
-        with patch.object(loop, "call_soon_threadsafe", side_effect=AssertionError("off-thread UI callback")):
+
+        with patch.object(
+            loop,
+            "call_soon_threadsafe",
+            side_effect=AssertionError("off-thread UI callback"),
+        ):
             result = await jobs.thread(work)
         self.assertEqual(result, 42)
         with self.assertRaisesRegex(ValueError, "worker error"):
@@ -270,7 +374,9 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_worker_pool_preserves_parallel_provider_capacity(self):
         barrier = threading.Barrier(4)
-        results = await asyncio.gather(*(jobs.thread(barrier.wait, 2) for _ in range(4)))
+        results = await asyncio.gather(
+            *(jobs.thread(barrier.wait, 2) for _ in range(4))
+        )
         self.assertEqual(set(results), {0, 1, 2, 3})
 
     async def test_spawned_build_and_cooperative_cancellation(self):
@@ -282,24 +388,47 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
             for index in range(32):
                 (source / f"fast-{index}.ks").write_bytes(b"Hello\n")
             updates, cancel = [], threading.Event()
-            await run(workspace.create, source, root / "work", name="Test", cancel=cancel,
-                      progress=lambda *args: updates.append(args))
+            await run(
+                workspace.create,
+                source,
+                root / "work",
+                name="Test",
+                cancel=cancel,
+                progress=lambda *args: updates.append(args),
+            )
             self.assertEqual(updates[-1], ("Extracting", 33, 33, ""))
-            ratios = [completed / total if total else 0 for _, completed, total, _ in updates]
+            ratios = [
+                completed / total if total else 0 for _, completed, total, _ in updates
+            ]
             self.assertEqual(ratios, sorted(ratios))
             updates.clear()
-            target, report = await run(build, root / "work", cancel=cancel, progress=lambda *args: updates.append(args))
+            target, report = await run(
+                build,
+                root / "work",
+                cancel=cancel,
+                progress=lambda *args: updates.append(args),
+            )
             self.assertTrue((target / "patch/a.ks").is_file())
             self.assertEqual(report.files, 33)
             self.assertEqual(updates[-1], ("Writing output", 33, 33, ""))
-            ratios = [completed / total if total else 0 for _, completed, total, _ in updates]
+            ratios = [
+                completed / total if total else 0 for _, completed, total, _ in updates
+            ]
             self.assertEqual(ratios, sorted(ratios))
-            self.assertLessEqual({phase for phase, *_ in updates},
-                                 {"Scanning translations", "Rebuilding", "Writing output"})
+            self.assertLessEqual(
+                {phase for phase, *_ in updates},
+                {"Scanning translations", "Rebuilding", "Writing output"},
+            )
             cancel.set()
             with self.assertRaises(Cancelled):
-                await run(workspace.create, source, root / "cancelled", name="Test", cancel=cancel,
-                          progress=lambda *args: None)
+                await run(
+                    workspace.create,
+                    source,
+                    root / "cancelled",
+                    name="Test",
+                    cancel=cancel,
+                    progress=lambda *args: None,
+                )
             self.assertFalse((root / "cancelled").exists())
             self.assertFalse(list(root.glob(".vntrans-*")))
 
@@ -308,11 +437,13 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
         applied, called = [], []
         errors = []
         jobs = Latest(errors.append)
+
         def old():
             called.append("old")
             started.set()
             release.wait(5)
             return "old"
+
         jobs.submit(old, applied.append)
         await asyncio.to_thread(started.wait, 5)
         jobs.submit(lambda: called.append("discarded"), applied.append)
@@ -330,7 +461,9 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
     async def test_progress_coalesces_and_delivers_final_update(self):
         shown, cancel = [], threading.Event()
         progress = Progress(lambda *value: shown.append(value), cancel)
-        await asyncio.to_thread(lambda: [progress("Working", i, 10000, "a.ks") for i in range(10001)])
+        await asyncio.to_thread(
+            lambda: [progress("Working", i, 10000, "a.ks") for i in range(10001)]
+        )
         progress.close()
         await asyncio.sleep(0)
         self.assertLessEqual(len(shown), 3)
@@ -344,14 +477,23 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
         rows = [row("a.ks", "dialogue", "Hello")]
         texts = TextState(rows, {"a.ks": "ks"})
         started, release = threading.Event(), threading.Event()
-        window = SimpleNamespace(ws=object(), texts=texts, tags={}, filter_reset=False,
-                                 filters=lambda: dict(query="Halo"), filtered=Mock(), show_counts=Mock())
+        window = SimpleNamespace(
+            ws=object(),
+            texts=texts,
+            tags={},
+            filter_reset=False,
+            filters=lambda: dict(query="Halo"),
+            filtered=Mock(),
+            show_counts=Mock(),
+        )
         window.queue_filter = lambda reset=False: Window.queue_filter(window, reset)
         window.filter_job = Latest(lambda exc: self.fail(str(exc)))
+
         def delayed(snapshot, **options):
             started.set()
             release.wait(5)
             return filter_rows(snapshot, **options)
+
         with patch("vntrans.gui.app.filter_snapshot", side_effect=delayed):
             window.queue_filter(True)
             await asyncio.to_thread(started.wait, 5)
@@ -376,23 +518,46 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
                 texts = TextState(rows, ws.formats)
                 ready = asyncio.Event()
                 ready.set()
-                window = SimpleNamespace(ws=ws, texts=texts, rows=rows, index_of=texts.index_of, editing=False,
-                                         positions={0: 0},
-                                         run=SimpleNamespace(writes_ready=ready), ui=SimpleNamespace(current=0),
-                                         overlay=lambda text: nullcontext(), model=Mock(indices=[0]),
-                                         update_stats=Mock(), refresh_counts=Mock(), recheck=Mock(),
-                                         select=Mock(), show_selection=Mock(), forget_undo=Mock(), fail=Mock())
+                window = SimpleNamespace(
+                    ws=ws,
+                    texts=texts,
+                    rows=rows,
+                    index_of=texts.index_of,
+                    editing=False,
+                    positions={0: 0},
+                    run=SimpleNamespace(writes_ready=ready),
+                    ui=SimpleNamespace(current=0),
+                    overlay=lambda text: nullcontext(),
+                    model=Mock(indices=[0]),
+                    update_stats=Mock(),
+                    refresh_counts=Mock(),
+                    recheck=Mock(),
+                    select=Mock(),
+                    show_selection=Mock(),
+                    forget_undo=Mock(),
+                    fail=Mock(),
+                )
+
                 def prepare():
                     self.assertFalse(ready.is_set())
                     self.assertIsNone(rows[0].translation)
-                    return [replace(rows[0], translation="Halo⟦0⟧dunia", status="edited")]
+                    return [
+                        replace(rows[0], translation="Halo⟦0⟧dunia", status="edited")
+                    ]
+
                 await Window.edit(window, "edit", prepare)
                 self.assertEqual(rows[0].translation, "Halo⟦0⟧dunia")
-                self.assertEqual(ws.translations()[(rows[0].file, rows[0].id)], rows[0].translation)
+                self.assertEqual(
+                    ws.translations()[(rows[0].file, rows[0].id)], rows[0].translation
+                )
                 self.assertIsNone(window.undo_entry[1][0][1])
                 self.assertTrue(ready.is_set())
                 window.fail.assert_not_called()
-                await Window.edit(window, "invalid", lambda: [replace(rows[0], translation="missing control")])
+                await Window.edit(
+                    window,
+                    "invalid",
+                    lambda: [replace(rows[0], translation="missing control")],
+                )
                 self.assertEqual(rows[0].translation, "Halo⟦0⟧dunia")
                 self.assertTrue(ready.is_set())
                 self.assertEqual(window.fail.call_count, 1)
@@ -414,19 +579,38 @@ class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
         self.ws = workspace.Workspace(root / "work")
         self.addCleanup(self.ws.close)
         rows = self.ws.rows()
-        for row, text in zip(rows, ("Old⟦0⟧one", "Leave⟦0⟧alone", "Old goodbye"), strict=True):
+        for row, text in zip(
+            rows, ("Old⟦0⟧one", "Leave⟦0⟧alone", "Old goodbye"), strict=True
+        ):
             self.ws.save(row, text, "machine")
         self.ws.exclude_many([rows[2]], True)
         self.ws.suggest(rows[0], "Halo⟦0⟧dunia", "Correction")
         self.ws.suggest(rows[2], "Selamat tinggal", "Correction")
         texts = TextState(rows, self.ws.formats)
         self.window = SimpleNamespace(
-            ws=self.ws, rows=rows, texts=texts, index_of=texts.index_of, editing=False, run=None,
-            suggestions=self.ws.suggestions(), ui=SimpleNamespace(current=0, suggestion_count=2, can_undo=False),
-            positions={0: 0}, model=Mock(indices=[0]), overlay=lambda text: nullcontext(), undo_entry=None,
-            update_stats=Mock(), refresh_counts=Mock(), recheck=Mock(), select=Mock(), show_selection=Mock(),
-            say=Mock(), fail=Mock())
-        self.window.edit = lambda *args, **options: Window.edit(self.window, *args, **options)
+            ws=self.ws,
+            rows=rows,
+            texts=texts,
+            index_of=texts.index_of,
+            editing=False,
+            run=None,
+            suggestions=self.ws.suggestions(),
+            ui=SimpleNamespace(current=0, suggestion_count=2, can_undo=False),
+            positions={0: 0},
+            model=Mock(indices=[0]),
+            overlay=lambda text: nullcontext(),
+            undo_entry=None,
+            update_stats=Mock(),
+            refresh_counts=Mock(),
+            recheck=Mock(),
+            select=Mock(),
+            show_selection=Mock(),
+            say=Mock(),
+            fail=Mock(),
+        )
+        self.window.edit = lambda *args, **options: Window.edit(
+            self.window, *args, **options
+        )
         self.window.forget_undo = lambda: Window.forget_undo(self.window)
         self.original = [replace(row) for row in rows]
 
@@ -435,10 +619,14 @@ class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
         callback(self.window, *args)
         await asyncio.gather(*(asyncio.all_tasks() - before))
 
-    async def test_accept_all_includes_hidden_files_preserves_exclusion_and_supports_undo(self):
+    async def test_accept_all_includes_hidden_files_preserves_exclusion_and_supports_undo(
+        self,
+    ):
         await self.invoke(Window.suggestions_action, True)
-        self.assertEqual([row.translation for row in self.ws.rows()],
-                         ["Halo⟦0⟧dunia", "Leave⟦0⟧alone", "Selamat tinggal"])
+        self.assertEqual(
+            [row.translation for row in self.ws.rows()],
+            ["Halo⟦0⟧dunia", "Leave⟦0⟧alone", "Selamat tinggal"],
+        )
         self.assertEqual(self.window.rows[2].status, "excluded")
         self.assertEqual(self.window.rows[0].status, "edited")
         self.assertEqual(self.window.suggestions, {})
@@ -476,7 +664,10 @@ class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
         self.window.fail.assert_called_once()
 
     async def test_failed_rejection_keeps_suggestions_visible(self):
-        with patch("vntrans.workspace.Workspace.dismiss", side_effect=sqlite3.OperationalError("write failed")):
+        with patch(
+            "vntrans.workspace.Workspace.dismiss",
+            side_effect=sqlite3.OperationalError("write failed"),
+        ):
             await self.invoke(Window.suggestions_action, False)
         self.assertEqual(self.window.suggestions, self.ws.suggestions())
         self.assertEqual(self.window.ui.suggestion_count, 2)
@@ -495,9 +686,11 @@ class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_old_rejection_cannot_clear_a_new_workspaces_suggestions(self):
         newer = {("new.ks", "line/0"): ("New suggestion", "New reason")}
+
         async def change_workspace(function):
             self.window.ws = SimpleNamespace()
             self.window.suggestions = newer
+
         with patch("vntrans.gui.app.jobs.thread", side_effect=change_workspace):
             await self.invoke(Window.suggestions_action, False)
         self.assertEqual(self.window.suggestions, newer)
@@ -509,22 +702,42 @@ class GeometryTests(unittest.TestCase):
     def test_normalize_keeps_only_valid_fields(self):
         self.assertEqual(normalize(None), dict(maximized=False))
         self.assertEqual(normalize("garbage"), dict(maximized=False))
-        self.assertEqual(normalize(dict(width=1500, height=900.5, maximized=True, position=[-1920, 40])),
-                         dict(maximized=True, width=1500.0, height=900.5, position=[-1920, 40]))
-        malformed = dict(width=True, height=float("nan"), maximized="yes", position=[1.5, 2])
+        self.assertEqual(
+            normalize(
+                dict(width=1500, height=900.5, maximized=True, position=[-1920, 40])
+            ),
+            dict(maximized=True, width=1500.0, height=900.5, position=[-1920, 40]),
+        )
+        malformed = dict(
+            width=True, height=float("nan"), maximized="yes", position=[1.5, 2]
+        )
         self.assertEqual(normalize(malformed), dict(maximized=False))
-        self.assertEqual(normalize(dict(width=0, height=10**9, position=[1, 2, 3])), dict(maximized=False))
-        self.assertEqual(normalize(dict(width=float("inf"), position=[10**7, 0])), dict(maximized=False))
+        self.assertEqual(
+            normalize(dict(width=0, height=10**9, position=[1, 2, 3])),
+            dict(maximized=False),
+        )
+        self.assertEqual(
+            normalize(dict(width=float("inf"), position=[10**7, 0])),
+            dict(maximized=False),
+        )
 
     def test_place_keeps_reachable_windows_and_rescues_lost_ones(self):
         primary, left = (0, 0, 1920, 1040), (-1920, 0, 0, 1040)
         on_left = (-1800, 50, -400, 850)
-        self.assertEqual(place((100, 100, 1500, 900), [primary, left]), ((100, 100, 1500, 900), True))
+        self.assertEqual(
+            place((100, 100, 1500, 900), [primary, left]), ((100, 100, 1500, 900), True)
+        )
         self.assertEqual(place(on_left, [primary, left]), (on_left, True))
         self.assertEqual(place(on_left, [primary]), ((0, 50, 1400, 850), True))
-        self.assertEqual(place((100, -500, 1500, 300), [primary]), ((100, 0, 1500, 800), True))
-        self.assertEqual(place((1880, 100, 3280, 900), [primary]), ((520, 100, 1920, 900), True))
-        self.assertEqual(place((50, 50, 2650, 1490), [primary]), ((0, 0, 2600, 1440), False))
+        self.assertEqual(
+            place((100, -500, 1500, 300), [primary]), ((100, 0, 1500, 800), True)
+        )
+        self.assertEqual(
+            place((1880, 100, 3280, 900), [primary]), ((520, 100, 1920, 900), True)
+        )
+        self.assertEqual(
+            place((50, 50, 2650, 1490), [primary]), ((0, 0, 2600, 1440), False)
+        )
 
 
 if __name__ == "__main__":

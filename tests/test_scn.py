@@ -1,16 +1,16 @@
-from pathlib import Path
+import gc
 import struct
 import unittest
-import zlib
-import gc
 import weakref
+import zlib
+from pathlib import Path
 from unittest.mock import patch
 
 from fixtures import make_psb, scenario
-from vntrans import VnTransError
+
+from vntrans import VnTransError, text
 from vntrans.engines.kirikiri.psb import PSB
 from vntrans.engines.kirikiri.scn import ScnScript
-from vntrans import text
 
 
 def plain(node):
@@ -52,15 +52,19 @@ class ScnTests(unittest.TestCase):
         translated = "Longer Unicode translation café 世界 " * 20
         result = script.rebuild({unit.id: translated})
         before, after = PSB(original), PSB(result)
-        old_message = before.root.value["scenes"].value[0].value["texts"].value[0].value[2]
-        new_message = after.root.value["scenes"].value[0].value["texts"].value[0].value[2]
+        old_message = (
+            before.root.value["scenes"].value[0].value["texts"].value[0].value[2]
+        )
+        new_message = (
+            after.root.value["scenes"].value[0].value["texts"].value[0].value[2]
+        )
         self.assertEqual((old_message.tag, new_message.tag), (21, 22))
         expected = plain(before.root)
         expected["scenes"][0]["texts"][0][2] = translated
         self.assertEqual(plain(after.root), expected)
         self.assertEqual(before.resource_data, after.resource_data)
         self.assertEqual(before.resource_offsets, after.resource_offsets)
-        self.assertEqual(before.strings, after.strings[:len(before.strings)])
+        self.assertEqual(before.strings, after.strings[: len(before.strings)])
         self.assertEqual(script.rebuild({unit.id: translated}), result)
 
     def test_display_override_keeps_identifier(self):
@@ -74,10 +78,16 @@ class ScnTests(unittest.TestCase):
         units = {u.kind: u for u in script.units}
         self.assertEqual(units["dialogue"].source, "EN text")
         self.assertEqual(units["choice"].source, "EN choice")
-        changed = script.rebuild({units["dialogue"].id: "New text", units["choice"].id: "New choice"})
+        changed = script.rebuild(
+            {units["dialogue"].id: "New text", units["choice"].id: "New choice"}
+        )
         obj = plain(PSB(changed).root)["scenes"][0]
-        self.assertEqual(obj["texts"][0][1][0], ["JP name", "JP text", "speech", "search"])
-        self.assertEqual(obj["texts"][0][1][1], ["EN name", "New text", "speech", "search"])
+        self.assertEqual(
+            obj["texts"][0][1][0], ["JP name", "JP text", "speech", "search"]
+        )
+        self.assertEqual(
+            obj["texts"][0][1][1], ["EN name", "New text", "speech", "search"]
+        )
         self.assertEqual(obj["selects"][0]["text"], "Same text")
         self.assertEqual(obj["selects"][0]["language"][1]["text"], "New choice")
 
@@ -88,7 +98,12 @@ class ScnTests(unittest.TestCase):
         self.assertEqual(changed["scenes"][0]["texts"][0][2], "")
 
     def test_wrap_and_controls(self):
-        data = make_psb({"name": "test", "scenes": [{"texts": [[None, None, r"Hello %Bworld%r\nBye"]]}]})
+        data = make_psb(
+            {
+                "name": "test",
+                "scenes": [{"texts": [[None, None, r"Hello %Bworld%r\nBye"]]}],
+            }
+        )
         script = ScnScript(data, 0)
         unit = script.units[0]
         self.assertEqual(unit.source, "Hello ⟦0⟧world⟦1⟧\nBye")
@@ -102,18 +117,30 @@ class ScnTests(unittest.TestCase):
     def test_ruby_readings_may_be_left_out(self):
         unit = text.make_unit("u", "dialogue", "%D$vl1;「本当の[ざ]座[す]主様」", "scn")
         self.assertEqual(unit.source, "⟦0⟧「本当の⟦1⟧座⟦2⟧主様」")
-        self.assertEqual(text.plain(unit.source, unit.context["controls"], "scn"), "⟦0⟧「本当の座主様」")
-        self.assertEqual(text.render(unit, "⟦0⟧\"Zasu-sama\"", "scn"), "%D$vl1;\"Zasu-sama\"")
-        self.assertEqual(text.render(unit, "⟦0⟧⟦1⟧Za⟦2⟧su", "scn"), "%D$vl1;[ざ]Za[す]su")
+        self.assertEqual(
+            text.plain(unit.source, unit.context["controls"], "scn"),
+            "⟦0⟧「本当の座主様」",
+        )
+        self.assertEqual(
+            text.render(unit, '⟦0⟧"Zasu-sama"', "scn"), '%D$vl1;"Zasu-sama"'
+        )
+        self.assertEqual(
+            text.render(unit, "⟦0⟧⟦1⟧Za⟦2⟧su", "scn"), "%D$vl1;[ざ]Za[す]su"
+        )
         self.assertEqual(text.render(unit, "⟦0⟧Za⟦2⟧su", "scn"), "%D$vl1;Za[す]su")
-        for broken in ("\"Zasu-sama\"", "⟦0⟧⟦2⟧Za⟦1⟧su", "⟦0⟧⟦1⟧⟦1⟧Zasu"):
+        for broken in ('"Zasu-sama"', "⟦0⟧⟦2⟧Za⟦1⟧su", "⟦0⟧⟦1⟧⟦1⟧Zasu"):
             with self.assertRaisesRegex(VnTransError, "placeholders"):
                 text.render(unit, broken, "scn")
 
     def test_invalid_binaries_and_layouts(self):
         data = scenario()
-        for invalid in (b"PSB", data[:100], b"mdf\0", data[:4] + b"\x04" + data[5:],
-                        data[:6] + b"\x01" + data[7:]):
+        for invalid in (
+            b"PSB",
+            data[:100],
+            b"mdf\0",
+            data[:4] + b"\x04" + data[5:],
+            data[:6] + b"\x01" + data[7:],
+        ):
             with self.subTest(length=len(invalid)), self.assertRaises(VnTransError):
                 PSB(invalid)
         with self.assertRaises(VnTransError):
@@ -122,7 +149,7 @@ class ScnTests(unittest.TestCase):
             ScnScript(scenario(multilingual=True), 9)
         damaged = bytearray(data)
         entries = struct.unpack_from("<I", damaged, 36)[0]
-        damaged[entries] = 0xff
+        damaged[entries] = 0xFF
         with self.assertRaisesRegex(VnTransError, "tag"):
             PSB(bytes(damaged))
 
@@ -130,7 +157,9 @@ class ScnTests(unittest.TestCase):
         script = ScnScript(scenario(), 0)
         unit = next(u for u in script.units if u.kind == "dialogue")
         data = script.rebuild({unit.id: "Translated"})
-        self.assertEqual(struct.unpack_from("<I", data, 40)[0], zlib.adler32(data[8:40]))
+        self.assertEqual(
+            struct.unpack_from("<I", data, 40)[0], zlib.adler32(data[8:40])
+        )
 
     def test_scalar_types_and_three_byte_string_offsets(self):
         script = ScnScript(scenario(), 0)

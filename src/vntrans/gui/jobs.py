@@ -2,10 +2,11 @@
 
 import asyncio
 import multiprocessing
-from concurrent.futures import ThreadPoolExecutor
-from queue import Empty, Full
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
+from queue import Empty, Full
 
 from .. import workspace
 
@@ -19,7 +20,7 @@ async def thread(function, *args, **options):
         _threads = ThreadPoolExecutor(thread_name_prefix="vntrans")
     future = _threads.submit(function, *args, **options)
     while not future.done():
-        await asyncio.sleep(.005)
+        await asyncio.sleep(0.005)
     return future.result()
 
 
@@ -40,6 +41,7 @@ def build(root, **options):
 
 def _worker(function, args, options, cancel, updates, result):
     last = None
+
     def progress(*value):
         nonlocal last
         if cancel.is_set():
@@ -48,14 +50,11 @@ def _worker(function, args, options, cancel, updates, result):
         try:
             updates.put_nowait(value)
         except Full:
-            try:
+            with suppress(Empty):
                 updates.get_nowait()
-            except Empty:
-                pass
-            try:
+            with suppress(Full):
                 updates.put_nowait(value)
-            except Full:
-                pass
+
     try:
         value = function(*args, **options, progress=progress)
         result.send((True, value, last))
@@ -72,7 +71,9 @@ async def run(function, *args, cancel, progress, **options):
     stop = context.Event()
     updates = context.Queue(maxsize=1)
     receive, send = context.Pipe(duplex=False)
-    process = context.Process(target=_worker, args=(function, args, options, stop, updates, send))
+    process = context.Process(
+        target=_worker, args=(function, args, options, stop, updates, send)
+    )
     process.start()
     send.close()
     try:
@@ -97,8 +98,10 @@ async def run(function, *args, cancel, progress, **options):
                     raise value
                 return value
             if not process.is_alive():
-                raise OSError(f"background worker exited with status {process.exitcode}")
-            await asyncio.sleep(.02)
+                raise OSError(
+                    f"background worker exited with status {process.exitcode}"
+                )
+            await asyncio.sleep(0.02)
     finally:
         stop.set()
         receive.close()
@@ -114,6 +117,7 @@ class Cancelled(Exception):
 
 class Latest:
     """One running worker and one replaceable pending request; only the latest result applies."""
+
     def __init__(self, on_error):
         self.on_error = on_error
         self.serial = 0
@@ -144,7 +148,7 @@ class Latest:
 
 
 class Progress:
-    def __init__(self, show, cancel, *, interval=.1):
+    def __init__(self, show, cancel, *, interval=0.1):
         self.loop = asyncio.get_running_loop()
         self.show = show
         self.cancel = cancel

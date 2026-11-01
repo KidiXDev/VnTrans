@@ -59,6 +59,33 @@ VnTrans does not unpack archives, decode encrypted scripts, repack games or patc
 fonts. These steps depend on the game and require external tools. Keep a backup
 and test the rebuilt scripts in the target game.
 
+## Development
+
+Ruff handles Python linting, import sorting, and formatting. It is included in
+the default `uv` development dependencies and configured in `pyproject.toml`.
+The configuration targets Python 3.13 and enables style, import ordering,
+modernization, common bug, simplification, and unused suppression checks.
+Formatting uses Ruff's defaults with an 88-character line length. The linter's
+line-length rule is disabled because the formatter leaves some strings intact.
+
+```sh
+uv run ruff check .
+uv run ruff format --check .
+```
+
+To apply automatic lint fixes and formatting:
+
+```sh
+uv run ruff check --fix .
+uv run ruff format .
+```
+
+Run the test suite with the optional GUI dependency installed:
+
+```sh
+uv run --extra gui python -m unittest discover -s tests
+```
+
 ## License
 
 [MIT](LICENSE). Third-party attributions are in
