@@ -16,7 +16,7 @@ async def thread(function, *args, **options):
     """Poll completion on the UI thread; Slint's native thread-safe callbacks can drop UI objects off-thread."""
     global _threads
     if _threads is None:
-        _threads = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vntrans")
+        _threads = ThreadPoolExecutor(thread_name_prefix="vntrans")
     future = _threads.submit(function, *args, **options)
     while not future.done():
         await asyncio.sleep(.005)

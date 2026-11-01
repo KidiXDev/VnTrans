@@ -20,16 +20,21 @@ def state(row):
     return "failed" if row.error and row.status == "new" else row.status
 
 
+def cooperative(rows, batch=250):
+    for index, row in enumerate(rows):
+        yield row
+        if index % batch == batch - 1:
+            time.sleep(.001)  # Yield the GIL long enough for Slint to render and handle input.
+
+
 def check_rows(checker, rows, suggestions):
     tags = {}
-    for index, row in enumerate(rows):
+    for index, row in enumerate(cooperative(rows)):
         marks = set(checker.issues(row))
         if (row.file, row.id) in suggestions:
             marks.add("review")
         if marks:
             tags[index] = marks
-        if index % 250 == 249:
-            time.sleep(.001)  # Let the UI acquire the GIL during long quality scans.
     return tags
 
 
@@ -50,7 +55,7 @@ def filter_rows(rows, *, file=None, query="", scope="both", regex=False, case=Fa
             continue
         current = state(row)
         marks = tags.get(index, ())
-        flagged = any(mark != "review" for mark in marks)
+        flagged = bool(marks) and any(mark != "review" for mark in marks)
         untranslated = current in ("new", "failed")
         counts["all"] += 1
         counts[current] += 1
@@ -64,6 +69,10 @@ def filter_rows(rows, *, file=None, query="", scope="both", regex=False, case=Fa
     return indices, counts
 
 
+def filter_snapshot(rows, **options):
+    return filter_rows(cooperative(rows, 4000), **options)
+
+
 class TextState:
     def __init__(self, rows, formats):
         self.rows = rows
@@ -74,15 +83,13 @@ class TextState:
         self.files = {file: [0, 0, 0] for file in formats}
         self.totals = [0, 0, 0]
         self.revision = 0
-        for index, row in enumerate(rows):
+        for index, row in enumerate(cooperative(rows)):
             self.index_of[(row.file, row.id)] = index
             self.views.append(replace(row))
             key = row.translation_key(formats[row.file])
             self.keys.append(key)
             self.groups.setdefault(key, []).append(index)
             self._count(row, 1)
-            if index % 250 == 249:
-                time.sleep(.001)
 
     def _count(self, row, direction):
         values = (row.status != "excluded", row.status != "excluded" and row.translation is not None,
@@ -116,17 +123,14 @@ class Loaded:
     terms: list
     suggestions: dict
     undo: list
+    initial: tuple
 
 
-def load(root):
+def load(root, filters=None):
     """Read and prepare a workspace entirely on the worker connection."""
     ws = workspace.Workspace(root)
     try:
-        rows = []
-        for index, values in enumerate(ws.db.execute(workspace.ROWS)):
-            rows.append(workspace.Row(*values))
-            if index % 250 == 249:
-                time.sleep(.001)
+        rows = [workspace.Row(*values) for values in cooperative(ws.db.execute(workspace.ROWS))]
         undo = []
         if not ws.manifest.get("prefiltered"):
             skipped = ws.untranslatable(rows)
@@ -134,6 +138,7 @@ def load(root):
             ws.exclude_many(skipped, True)
             ws.manifest["prefiltered"] = True
             ws.save_manifest()
-        return Loaded(rows, TextState(rows, ws.formats), ws.manifest, ws.terms(), ws.suggestions(), undo)
+        return Loaded(rows, TextState(rows, ws.formats), ws.manifest, ws.terms(), ws.suggestions(), undo,
+                      filter_snapshot(rows, **(filters if filters is not None else dict(kind="lines"))))
     finally:
         ws.close()

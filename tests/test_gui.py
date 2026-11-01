@@ -228,13 +228,49 @@ class TextStateTests(unittest.TestCase):
 
 
 class JobTests(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipIf(filter_rows is None, "gui extra not installed")
+    async def test_a_slower_workspace_open_cannot_replace_a_newer_one(self):
+        started, release = threading.Event(), threading.Event()
+        opened = {}
+        def workspace_for(path):
+            ws = SimpleNamespace(root=path, close=Mock())
+            opened[path.name] = ws
+            return ws
+        def load_workspace(path, filters):
+            if path.name == "old":
+                started.set()
+                release.wait(5)
+            return path.name
+        window = SimpleNamespace(run=None, open_serial=0, settings={}, overlay=lambda text: nullcontext(),
+                                 show_workspace=Mock(), fail=Mock(), filters=lambda: {})
+        with patch("vntrans.gui.app.workspace.Workspace", side_effect=workspace_for), \
+                patch("vntrans.gui.app.load", side_effect=load_workspace):
+            old = asyncio.create_task(Window.open(window, "old"))
+            await asyncio.to_thread(started.wait, 5)
+            await Window.open(window, "new")
+            release.set()
+            await old
+        window.show_workspace.assert_called_once_with(opened["new"], "new")
+        opened["old"].close.assert_called_once()
+        window.fail.assert_not_called()
+
     async def test_worker_handoff_does_not_call_the_native_threadsafe_bridge(self):
         loop = asyncio.get_running_loop()
+        def work():
+            time.sleep(.02)
+            return 42
+        def fail():
+            raise ValueError("worker error")
         with patch.object(loop, "call_soon_threadsafe", side_effect=AssertionError("off-thread UI callback")):
-            result = await jobs.thread(lambda: (time.sleep(.02), 42)[1])
+            result = await jobs.thread(work)
         self.assertEqual(result, 42)
         with self.assertRaisesRegex(ValueError, "worker error"):
-            await jobs.thread(lambda: (_ for _ in ()).throw(ValueError("worker error")))
+            await jobs.thread(fail)
+
+    async def test_worker_pool_preserves_parallel_provider_capacity(self):
+        barrier = threading.Barrier(4)
+        results = await asyncio.gather(*(jobs.thread(barrier.wait, 2) for _ in range(4)))
+        self.assertEqual(set(results), {0, 1, 2, 3})
     async def test_spawned_build_and_cooperative_cancellation(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -303,7 +339,7 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
             started.set()
             release.wait(5)
             return filter_rows(snapshot, **options)
-        with patch("vntrans.gui.app.filter_rows", side_effect=delayed):
+        with patch("vntrans.gui.app.filter_snapshot", side_effect=delayed):
             window.queue_filter(True)
             await asyncio.to_thread(started.wait, 5)
             rows[0].translation = "Halo"

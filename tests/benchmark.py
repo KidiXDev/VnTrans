@@ -16,7 +16,7 @@ import tracemalloc
 from fixtures import make_psb
 from vntrans import pipeline, workspace
 from vntrans.engines.kirikiri.ks import KsScript
-from vntrans.gui.texts import TextState, check_rows, filter_rows, load
+from vntrans.gui.texts import TextState, check_rows, filter_snapshot, load
 from vntrans.translation.quality import Checker
 from vntrans.workspace import Row
 
@@ -43,7 +43,7 @@ def workload(args, case, source=None, prepared=None):
             texts = TextState(rows, formats)
             snapshot = texts.snapshot()
             if case == "gui-filter":
-                yield lambda: filter_rows(snapshot, query="Original", kind="lines")
+                yield lambda: filter_snapshot(snapshot, query="Original", kind="lines")
             elif case == "gui-duplicates":
                 yield lambda: texts.twins(rows[0])
             elif case == "gui-stats":

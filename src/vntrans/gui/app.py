@@ -26,7 +26,7 @@ from ..translation.providers import PROVIDERS, REASONING, Profile, ProviderError
 from . import geometry, jobs
 from .dialogs import pick
 from .jobs import Cancelled, Latest, Progress
-from .texts import STATES, TextState, check_rows, filter_rows, load, state
+from .texts import STATES, TextState, check_rows, filter_rows, filter_snapshot, load, state
 
 UI = slint.load_file(Path(__file__).parent / "ui" / "main.slint", style="fluent-dark")
 ISSUES = ("",) + tuple(quality.LABELS)
@@ -120,6 +120,9 @@ class Window(UI.AppWindow):
         self.filter_reset = False
         self.progress_updates = []
         self.editing = False
+        self.loading_depth = 0
+        self.open_serial = 0
+        self.last_action = time.monotonic()
         self.run = None
         self.parallel = set()
         self.cancel = threading.Event()
@@ -150,8 +153,9 @@ class Window(UI.AppWindow):
         return self.App
 
     def collect(self):
-        if not (self.ui.loading or self.ui.busy or self.editing or self.run) \
-                and all(job.task is None or job.task.done() for job in (self.filter_job, self.check_job)):
+        if time.monotonic() - self.last_action < 2 or self.ui.loading or self.ui.busy or self.editing or self.run:
+            return
+        if all(job.task is None or job.task.done() for job in (self.filter_job, self.check_job)):
             gc.collect(0)
 
     def save_config(self):
@@ -328,14 +332,20 @@ class Window(UI.AppWindow):
     def overlay(self, text):
         """Block input behind the loading overlay until the block ends; its spinner fades in after a moment."""
         self.ui.loading_text = text
+        self.loading_depth += 1
         self.ui.loading = True
         try:
             yield
         finally:
-            self.ui.loading = False
+            self.loading_depth -= 1
+            self.ui.loading = self.loading_depth > 0
 
     async def open(self, path):
         """Read the workspace's rows on a worker thread behind the loading overlay, then show it."""
+        if self.run:
+            return
+        self.open_serial += 1
+        serial = self.open_serial
         path = Path(path).expanduser()
         name = next((item.get("name") for item in self.settings.get("recent", [])
                      if item.get("path") == str(path.absolute())), None) or path.name
@@ -343,18 +353,25 @@ class Window(UI.AppWindow):
             try:
                 ws = workspace.Workspace(path)
                 try:
-                    data = await jobs.thread(load, ws.root)
+                    filters = self.filters() | dict(file=None, query="", status="all", tags={})
+                    data = await jobs.thread(load, ws.root, filters)
                 except BaseException:
                     ws.close()
                     raise
             except (VnTransError, OSError, ValueError, sqlite3.Error) as exc:
-                self.fail(exc)
+                if serial == self.open_serial:
+                    self.fail(exc)
                 return
-            self.show_workspace(ws, data)
+            if serial == self.open_serial:
+                self.show_workspace(ws, data)
+                self.last_action = time.monotonic()
+            else:
+                ws.close()
 
     def show_workspace(self, ws, data):
         self.filter_job.invalidate()
         self.check_job.invalidate()
+        self.filter_reset = False
         if self.ws:
             self.ws.close()
         self.ws, self.rows = ws, data.rows
@@ -362,6 +379,8 @@ class Window(UI.AppWindow):
         self.texts = data.texts
         self.index_of = data.texts.index_of
         self.tags = {}
+        self.terms = data.terms
+        self.suggestions = data.suggestions
         self.forget_undo()
         skipped = len(data.undo)
         if skipped:
@@ -387,9 +406,7 @@ class Window(UI.AppWindow):
         ui.current = -1
         self.show_builds()
         self.update_stats()
-        self.apply_filter()
-        self.terms = data.terms
-        self.suggestions = data.suggestions
+        self.filtered(*data.initial)
         self.recheck()
         ui.rules_text = ws.manifest.get("replacements", "")
         self.check_rules()
@@ -404,6 +421,7 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     def navigate(self, page):
+        self.last_action = time.monotonic()
         self.ui.page = page
         if page == "prompt":
             self.update_preview()
@@ -412,6 +430,7 @@ class Window(UI.AppWindow):
     def close_project(self):
         if self.run:
             return
+        self.open_serial += 1
         if self.ws:
             self.ws.close()
         self.ws, self.rows = None, []
@@ -454,12 +473,14 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     def query_edited(self, text):
+        self.last_action = time.monotonic()
         self.ui.query = text
         self.filter_job.invalidate()
         self.debounce.start(slint.TimerMode.SingleShot, timedelta(milliseconds=200), self.apply_filter)
 
     @slint.callback(global_name="App")
     def filter_changed(self):
+        self.last_action = time.monotonic()
         self.apply_filter()
 
     def apply_filter(self):
@@ -491,7 +512,7 @@ class Window(UI.AppWindow):
                 self.filter_reset = False
             else:
                 self.show_counts(counts)
-        self.filter_job.submit(lambda: filter_rows(rows, **options), apply)
+        self.filter_job.submit(lambda: filter_snapshot(rows, **options), apply)
 
     def filtered(self, indices, counts):
         ui = self.ui
@@ -1341,6 +1362,7 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     def row_pressed(self, position, toggle, extend):
+        self.last_action = time.monotonic()
         indices = self.model.indices
         if not 0 <= position < len(indices):
             return
@@ -1396,6 +1418,7 @@ class Window(UI.AppWindow):
         if self.editing:
             return None
         self.editing = True
+        self.last_action = time.monotonic()
         ws, texts, run = self.ws, self.texts, self.run
         if run:
             # Replies may finish during an edit; accept them after the manual changes are visible.
@@ -1438,6 +1461,7 @@ class Window(UI.AppWindow):
             return None
         finally:
             self.editing = False
+            self.last_action = time.monotonic()
             if run:
                 run.writes_ready.set()
 
