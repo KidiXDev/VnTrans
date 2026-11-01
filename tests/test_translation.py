@@ -1264,6 +1264,17 @@ class ReviewTests(WorkspaceCase):
                 asyncio.run(run.run())
                 self.assertEqual(bool(self.ws.suggestions()), kept)
 
+    def test_review_remembers_lines_without_suggestions_as_passed(self):
+        run = self.review_run(lambda recs, user: dict(translations=[]))
+        asyncio.run(run.run())
+        self.assertEqual(
+            self.ws.reviews(),
+            {
+                ("a.ks", self.rows[index].id): (self.natural[index], "passed")
+                for index in (0, 1)
+            },
+        )
+
     def test_failed_review_preserves_previous_suggestions(self):
         self.ws.suggest(self.rows[0], "Previous suggestion", "Previous reason")
         run = self.review_run(lambda recs, user: {}, indices=[0])
@@ -1357,6 +1368,10 @@ class ReviewTests(WorkspaceCase):
         asyncio.run(run.run())
         self.assertEqual(len(users), runner.SIDE_RETRIES + 1)
         self.assertEqual(self.ws.suggestions(), {})
+        self.assertEqual(
+            self.ws.reviews(),
+            {("a.ks", self.rows[1].id): (self.natural[1], "passed")},
+        )
         self.assertEqual((run.stats.done, run.stats.failed), (1, 1))
 
 

@@ -16,7 +16,15 @@ from vntrans import config, workspace
 from vntrans.gui import jobs
 from vntrans.gui.geometry import normalize, place
 from vntrans.gui.jobs import Cancelled, Latest, Progress, build, run
-from vntrans.gui.texts import TextState, diff_markdown
+from vntrans.gui.texts import (
+    TextState,
+    category,
+    diff_markdown,
+    review_files,
+    review_queue,
+    review_targets,
+    reviewed,
+)
 from vntrans.text import make_unit
 from vntrans.translation import prompts
 from vntrans.workspace import Row
@@ -312,6 +320,53 @@ class DiffTests(unittest.TestCase):
             import slint
 
             slint.StyledText.from_markdown(markdown)
+
+
+class ReviewStateTests(unittest.TestCase):
+    def setUp(self):
+        self.rows = [
+            row("a.ks", "dialogue", "one", "One", "machine"),
+            row("a.ks", "dialogue", "two", "Two", "machine"),
+            row("a.ks", "dialogue", "three"),
+            row("a.ks", "dialogue", "four", "Four", "excluded"),
+            row("b.ks", "dialogue", "five", "Five", "edited"),
+        ]
+        keys = [(r.file, r.id) for r in self.rows]
+        self.index_of = {key: index for index, key in enumerate(keys)}
+        self.reviews = {keys[0]: ("One", "passed"), keys[4]: ("Old five", "accepted")}
+        self.suggestions = {keys[1]: ("Two!", "Grammar: missing mark")}
+
+    def test_reviewed_follows_the_current_translation(self):
+        self.assertTrue(reviewed(self.rows[0], self.reviews))
+        self.assertFalse(reviewed(self.rows[4], self.reviews))
+        self.assertFalse(reviewed(self.rows[2], self.reviews))
+
+    def test_targets_skip_reviewed_pending_excluded_and_untranslated(self):
+        args = self.rows, self.reviews, self.suggestions
+        self.assertEqual(review_targets(*args), [4])
+        self.assertEqual(review_targets(*args, "a.ks"), [])
+        self.assertEqual(review_targets(*args, everything=True), [0, 4])
+
+    def test_files_and_queue(self):
+        self.assertEqual(
+            review_files(self.rows, self.reviews, self.suggestions, ["a.ks", "b.ks"]),
+            [
+                dict(name="a.ks", total=2, done=1, pending=1),
+                dict(name="b.ks", total=1, done=0, pending=0),
+            ],
+        )
+        args = self.rows, self.suggestions, self.index_of
+        self.assertEqual(review_queue(*args), [1])
+        self.assertEqual(review_queue(*args, "b.ks"), [])
+        self.assertEqual(review_queue(*args, label="Grammar"), [1])
+        self.assertEqual(review_queue(*args, label="Honorific"), [])
+
+    def test_category_reads_the_label_of_a_reason(self):
+        self.assertEqual(
+            category("Honorific: お兄ちゃん is a form of address"), "Honorific"
+        )
+        self.assertEqual(category("Correction"), "Other")
+        self.assertEqual(category("Note: unlabelled"), "Other")
 
 
 class TextStateTests(unittest.TestCase):
@@ -617,7 +672,10 @@ class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
             editing=False,
             run=None,
             suggestions=self.ws.suggestions(),
-            ui=SimpleNamespace(current=0, suggestion_count=2, can_undo=False),
+            reviews={},
+            ui=SimpleNamespace(
+                current=0, suggestion_count=2, can_undo=False, page="texts"
+            ),
             positions={0: 0},
             model=Mock(indices=[0]),
             overlay=lambda text: nullcontext(),
@@ -634,6 +692,7 @@ class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
             self.window, *args, **options
         )
         self.window.forget_undo = lambda: Window.forget_undo(self.window)
+        self.window.resolve = lambda *args: Window.resolve(self.window, *args)
         self.original = [replace(row) for row in rows]
 
     async def invoke(self, callback, *args):
@@ -710,7 +769,8 @@ class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
         window = self.window
         window.model.indices = [0, 1, 2]
         window.row_changed = Mock()
-        for name in ("current_row", "drop_suggestion", "next_suggestion"):
+        window.row_committed = Mock()
+        for name in ("current_row", "settle", "next_suggestion"):
             setattr(window, name, getattr(Window, name).__get__(window))
         Window.accept_suggestion(window)
         self.assertEqual(self.ws.rows()[0].translation, "Halo⟦0⟧dunia")
@@ -720,6 +780,36 @@ class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ws.suggestions(), {})
         self.assertEqual(self.ws.rows()[2].translation, "Old goodbye")
         window.select.assert_called_with(2)
+        self.assertEqual(
+            self.ws.reviews(),
+            {
+                (self.ws.rows()[0].file, self.ws.rows()[0].id): (
+                    "Halo⟦0⟧dunia",
+                    "accepted",
+                ),
+                (self.ws.rows()[2].file, self.ws.rows()[2].id): (
+                    "Old goodbye",
+                    "rejected",
+                ),
+            },
+        )
+        self.assertEqual(window.reviews, self.ws.reviews())
+
+    async def test_resolving_some_suggestions_leaves_the_rest_waiting(self):
+        first, _, third = self.window.rows
+        await self.window.resolve([(third.file, third.id)], False)
+        self.assertEqual(list(self.ws.suggestions()), [(first.file, first.id)])
+        self.assertEqual(list(self.window.suggestions), [(first.file, first.id)])
+        self.assertEqual(
+            self.ws.reviews(), {(third.file, third.id): ("Old goodbye", "rejected")}
+        )
+        self.assertEqual(self.window.reviews, self.ws.reviews())
+        await self.window.resolve([(first.file, first.id)], True)
+        self.assertEqual(self.ws.suggestions(), {})
+        self.assertEqual(
+            self.ws.reviews()[(first.file, first.id)], ("Halo⟦0⟧dunia", "accepted")
+        )
+        self.assertEqual(self.window.reviews, self.ws.reviews())
 
     async def test_old_rejection_cannot_clear_a_new_workspaces_suggestions(self):
         newer = {("new.ks", "line/0"): ("New suggestion", "New reason")}

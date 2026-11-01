@@ -1,0 +1,518 @@
+import { ComboBox, ListView, ScrollView, TextEdit } from "../widgets.slint";
+import { Theme, Card, AppButton, Chip, Label, Meter, Divider, EmptyState, Badge, Field } from "../theme.slint";
+import { App, ContextRow } from "../app.slint";
+import { FileItem } from "texts.slint";
+import { RunSettings } from "translate.slint";
+
+global Tones {
+    public pure function of(label: string) -> color {
+        if (label == "Mistranslation") { return Theme.danger; }
+        if (label == "Missing content" || label == "Added content") { return Theme.warning; }
+        if (label == "Name or term") { return Theme.info; }
+        if (label == "Honorific") { return Theme.violet; }
+        if (label == "Grammar") { return Theme.accent-light; }
+        return Theme.dim;
+    }
+}
+
+component Section inherits VerticalLayout {
+    in property <string> title;
+    spacing: 6px;
+    Label { text: root.title; }
+    @children
+}
+
+component ContextLine inherits VerticalLayout {
+    in property <ContextRow> line;
+    spacing: 2px;
+    Text {
+        text: (root.line.speaker != "" ? "[" + root.line.speaker + "] " : "") + root.line.source;
+        color: Theme.faint;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+    if root.line.translation != "": Text {
+        text: "→ " + root.line.translation;
+        color: Theme.dim;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
+
+component QueueItem inherits Rectangle {
+    in property <string> label;
+    in property <string> speaker;
+    in property <string> translation;
+    in property <bool> selected;
+    callback clicked;
+    height: 60px;
+    border-radius: 8px;
+    background: root.selected ? Theme.selected : touch.has-hover ? Theme.raised : transparent;
+    animate background { duration: 120ms; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: Tones.of(root.label);
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0;
+            alignment: center;
+            spacing: 3px;
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: root.label;
+                    color: Tones.of(root.label);
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.speaker == "" ? "" : "· " + root.speaker;
+                    color: Theme.faint;
+                    font-size: 11px;
+                    overflow: elide;
+                }
+            }
+            Text {
+                text: root.translation;
+                color: root.selected ? Theme.text : Theme.dim;
+                overflow: elide;
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component ReviewPage inherits Rectangle {
+    property <length> item-height: 60px;
+    property <int> current: App.rv-current;
+    property <bool> reviewing: App.running && App.run-kind == "review";
+    property <bool> settings-open;
+    changed current => { root.reveal(); }
+
+    function reveal() {
+        if (App.rv-current < 0 || App.rv-items.length == 0) {
+            return;
+        }
+        if (App.rv-current * root.item-height < -queue.content-y) {
+            queue.content-y = -App.rv-current * root.item-height;
+        } else if ((App.rv-current + 1) * root.item-height > -queue.content-y + queue.visible-height) {
+            queue.content-y = -((App.rv-current + 1) * root.item-height - queue.visible-height);
+        }
+    }
+
+    function accept-current() {
+        App.review-accept(App.rv-editing ? App.rv-text : App.rv-suggestion);
+    }
+
+    function start-edit() {
+        App.rv-text = App.rv-suggestion;
+        App.rv-editing = true;
+    }
+
+    background: Theme.bg;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        Card {
+            vertical-stretch: 0;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 14px;
+                HorizontalLayout {
+                    spacing: 16px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        min-width: 0;
+                        alignment: center;
+                        spacing: 4px;
+                        Text {
+                            text: "AI Review";
+                            color: Theme.text;
+                            font-size: 18px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: App.rv-summary;
+                            color: Theme.dim;
+                            overflow: elide;
+                        }
+                    }
+                    Field {
+                        width: 220px;
+                        label: "AI PROFILE";
+                        if App.profile-names.length > 0: ComboBox {
+                            enabled: !App.running;
+                            model: App.profile-names;
+                            current-index <=> App.run-profile;
+                            selected => { App.run-settings-changed(); }
+                        }
+                        if App.profile-names.length == 0: ComboBox {
+                            enabled: false;
+                            model: ["No profiles configured"];
+                        }
+                    }
+                    Field {
+                        width: 200px;
+                        label: "LINES";
+                        ComboBox {
+                            enabled: !App.running;
+                            model: ["Not yet reviewed", "All translated lines"];
+                            current-index <=> App.rv-scope;
+                            selected => { App.review-scope-changed(); }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: end;
+                        if App.profile-names.length == 0: AppButton {
+                            primary: true;
+                            icon: @image-url("../icons/plus.svg");
+                            text: "Add Profile";
+                            clicked => { App.navigate("settings"); }
+                        }
+                        if !App.running && App.profile-names.length > 0: AppButton {
+                            primary: true;
+                            icon: @image-url("../icons/play.svg");
+                            text: App.rv-targets > 0 ? "Review " + App.rv-targets + " lines" : "All reviewed";
+                            enabled: !App.busy && App.rv-targets > 0;
+                            clicked => { App.review-start(); }
+                        }
+                        if App.running: AppButton {
+                            danger: root.reviewing;
+                            icon: @image-url("../icons/square.svg");
+                            text: !root.reviewing ? "Translation running…" : App.stopping ? "Stopping…" : "Stop Review";
+                            enabled: root.reviewing;
+                            loading: App.stopping;
+                            clicked => { App.run-stop(); }
+                        }
+                    }
+                }
+                if root.reviewing: VerticalLayout {
+                    spacing: 6px;
+                    Meter {
+                        height: 6px;
+                        value: App.m-progress;
+                        fill: App.run-failed > 0 ? Theme.warning : Theme.violet;
+                    }
+                    Text {
+                        text: App.m-progress-detail + (App.m-eta == "" ? "" : " · " + App.m-eta);
+                        color: Theme.faint;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "Lines you accept, reject or the AI passes are skipped next time, until their translation changes.";
+                        color: Theme.faint;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                    }
+                    AppButton {
+                        ghost: true;
+                        height: 28px;
+                        checked: root.settings-open;
+                        icon: @image-url("../icons/settings.svg");
+                        text: root.settings-open ? "Hide run settings" : App.run-lines + " lines / batch · " + App.run-concurrency + " concurrent · " + (App.run-rpm == 0 ? "no RPM limit" : App.run-rpm + " RPM");
+                        clicked => { root.settings-open = !root.settings-open; }
+                    }
+                }
+                if root.settings-open: RunSettings { }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+            vertical-stretch: 1;
+            Card {
+                width: 240px;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 6px;
+                    HorizontalLayout {
+                        padding-left: 4px;
+                        Label {
+                            text: "FILES";
+                            height: 24px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    ListView {
+                        for file[i] in App.rv-files: FileItem {
+                            name: file.name;
+                            total: file.total;
+                            done: file.done;
+                            pending: file.pending;
+                            active: App.rv-file == i;
+                            clicked => { App.review-file(i); }
+                        }
+                    }
+                }
+            }
+
+            Card {
+                width: 340px;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        Label {
+                            text: "SUGGESTIONS";
+                            height: 24px;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: App.rv-items.length + "";
+                            color: Theme.faint;
+                            font-size: 11px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    if App.rv-categories.length > 1: Flickable {
+                        height: 28px;
+                        content-width: max(self.width, chips.preferred-width);
+                        chips := HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            for entry[i] in App.rv-categories: Chip {
+                                text: entry.label;
+                                count: entry.count;
+                                checked: App.rv-category == i;
+                                dot: i == 0 ? transparent : Tones.of(entry.label);
+                                clicked => { App.review-category(i); }
+                            }
+                        }
+                    }
+                    keys := FocusScope {
+                        vertical-stretch: 1;
+                        key-pressed(event) => {
+                            if (event.text == Key.UpArrow && App.rv-current > 0) {
+                                App.review-select(App.rv-current - 1);
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow && App.rv-current + 1 < App.rv-items.length) {
+                                App.review-select(App.rv-current + 1);
+                                return accept;
+                            }
+                            if (event.text == "a" || event.text == "A") {
+                                root.accept-current();
+                                return accept;
+                            }
+                            if (event.text == "r" || event.text == "R") {
+                                App.review-reject();
+                                return accept;
+                            }
+                            if (event.text == "e" || event.text == "E") {
+                                root.start-edit();
+                                return accept;
+                            }
+                            reject
+                        }
+                        queue := ListView {
+                            width: parent.width;
+                            height: parent.height;
+                            for item[i] in App.rv-items: QueueItem {
+                                label: item.category;
+                                speaker: item.speaker;
+                                translation: item.translation;
+                                selected: App.rv-current == i;
+                                clicked => {
+                                    keys.focus();
+                                    App.review-select(i);
+                                }
+                            }
+                        }
+                        if App.rv-items.length == 0: EmptyState {
+                            width: parent.width;
+                            height: parent.height;
+                            text: App.rv-targets > 0 ? "No suggestions waiting.\n" + App.rv-targets + " lines are not reviewed yet." : "No suggestions waiting.";
+                        }
+                    }
+                    if App.rv-items.length > 0: HorizontalLayout {
+                        spacing: 8px;
+                        AppButton {
+                            horizontal-stretch: 1;
+                            icon: @image-url("../icons/x.svg");
+                            text: "Reject all";
+                            enabled: !App.running;
+                            clicked => { App.review-bulk(false); }
+                        }
+                        AppButton {
+                            horizontal-stretch: 1;
+                            primary: true;
+                            icon: @image-url("../icons/check.svg");
+                            text: "Accept all";
+                            enabled: !App.running;
+                            clicked => { App.review-bulk(true); }
+                        }
+                    }
+                }
+            }
+
+            Card {
+                horizontal-stretch: 1;
+                if App.rv-current < 0: EmptyState {
+                    width: parent.width;
+                    height: parent.height;
+                    text: "Pick a suggestion to compare the current translation with the fix";
+                }
+                if App.rv-current >= 0: VerticalLayout {
+                    padding: 16px;
+                    padding-right: 6px;
+                    spacing: 12px;
+                    HorizontalLayout {
+                        padding-right: 10px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            min-width: 0;
+                            spacing: 3px;
+                            Text {
+                                text: App.rv-speaker != "" ? App.rv-speaker : "Narration";
+                                color: App.rv-speaker != "" ? Theme.violet : Theme.text;
+                                font-size: 15px;
+                                font-weight: 700;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: App.rv-meta;
+                                color: Theme.faint;
+                                font-size: 12px;
+                                overflow: elide;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Badge {
+                                text: App.rv-label;
+                                tint: Tones.of(App.rv-label);
+                            }
+                        }
+                    }
+                    detail := ScrollView {
+                        content-width: self.visible-width;
+                        content-height: body.preferred-height + 8px;
+                        body := VerticalLayout {
+                            width: detail.visible-width - 6px;
+                            spacing: 14px;
+                            if App.rv-before.length > 0: Section {
+                                title: "BEFORE";
+                                for line in App.rv-before: ContextLine { line: line; }
+                            }
+                            Section {
+                                title: "SOURCE";
+                                Text {
+                                    text: App.rv-source;
+                                    color: Theme.text;
+                                    font-size: 14px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            Section {
+                                title: "CURRENT TRANSLATION";
+                                Text {
+                                    text: App.rv-translation;
+                                    color: Theme.dim;
+                                    font-size: 14px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            Rectangle {
+                                border-radius: 8px;
+                                background: Theme.violet-soft;
+                                border-width: 1px;
+                                border-color: Theme.violet.transparentize(0.5);
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 8px;
+                                    Label { text: "SUGGESTED FIX"; }
+                                    Text {
+                                        text: App.rv-reason;
+                                        color: Theme.violet;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                    }
+                                    StyledText {
+                                        text: App.rv-diff;
+                                        default-color: Theme.text;
+                                        default-font-size: 14px;
+                                    }
+                                    if App.rv-editing: TextEdit {
+                                        height: 96px;
+                                        vertical-stretch: 0;
+                                        font-size: 14px;
+                                        text <=> App.rv-text;
+                                        init => { self.focus(); }
+                                    }
+                                }
+                            }
+                            if App.rv-error != "": Text {
+                                text: App.rv-error;
+                                color: Theme.danger;
+                                wrap: word-wrap;
+                            }
+                            if App.rv-after.length > 0: Section {
+                                title: "AFTER";
+                                for line in App.rv-after: ContextLine { line: line; }
+                            }
+                        }
+                    }
+                    Divider { }
+                    HorizontalLayout {
+                        padding-right: 10px;
+                        spacing: 8px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: "A accept · R keep current · E edit · ↑↓ move";
+                            color: Theme.faint;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        AppButton {
+                            icon: @image-url("../icons/x.svg");
+                            text: "Keep current";
+                            clicked => { App.review-reject(); }
+                        }
+                        AppButton {
+                            text: App.rv-editing ? "Cancel edit" : "Edit";
+                            clicked => {
+                                if (App.rv-editing) {
+                                    App.rv-editing = false;
+                                } else {
+                                    root.start-edit();
+                                }
+                            }
+                        }
+                        AppButton {
+                            primary: true;
+                            icon: @image-url("../icons/check.svg");
+                            text: App.rv-editing ? "Save edit" : "Accept";
+                            clicked => { root.accept-current(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

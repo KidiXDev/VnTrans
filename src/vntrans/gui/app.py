@@ -29,17 +29,39 @@ from .jobs import Cancelled, Latest, Progress
 from .texts import (
     STATES,
     TextState,
+    category,
     check_rows,
     diff_markdown,
     filter_rows,
     filter_snapshot,
     load,
+    review_files,
+    review_queue,
+    review_targets,
     state,
 )
 
 UI = slint.load_file(Path(__file__).parent / "ui" / "main.slint", style="fluent-dark")
 ISSUES = ("",) + tuple(quality.LABELS)
-TASKS = ("translate", "review", "discover")
+TASKS = ("translate", "discover")
+REVIEW_CATEGORIES = (*prompts.REVIEW_ERRORS.values(), "Other")
+
+
+def styled_diff(old, new):
+    try:
+        return slint.StyledText.from_markdown(diff_markdown(old, new))
+    except ValueError:
+        return slint.StyledText.from_plain_text(new)
+
+
+def context_row(row):
+    return dict(
+        speaker=row.speaker if row.kind != "speaker" else "",
+        source=row.source,
+        translation=row.translation or "",
+    )
+
+
 SCOPES = ("source", "translation", "both", "speaker", "id")
 KINDS = ("lines", "dialogue", "speaker", "choice", "title")
 ABOUT = {
@@ -47,8 +69,9 @@ ABOUT = {
     "glossary": "Approved terms that appear in the batch.",
     "context": "Nearby lines from the same scene, with existing translations, as read-only reference.",
     "thinking": "Strengthens instruction following by having the model write brief structured reasoning (context, "
-    "then decisions) before its translations. Turning it off saves a few output tokens per batch but "
-    "noticeably lowers quality. On by default.",
+    "then decisions) before its translations. In reviews it checks every line against the source and "
+    "argues for the current wording before suggesting a fix. Turning it off saves output tokens per batch "
+    "but noticeably lowers quality. On by default.",
     "contract": "Fixed. VnTrans relies on this format to read and check replies.",
 }
 
@@ -133,6 +156,11 @@ class Window(UI.AppWindow):
         self.undo_entry = None
         self.tags = {}
         self.suggestions = {}
+        self.reviews = {}
+        self.review_file_name = None
+        self.review_label = "All"
+        self.review_labels = ["All"]
+        self.review_keys = []
         self.checker = None
         self.texts = TextState([], {})
         self.filter_job = Latest(self.filter_error)
@@ -445,6 +473,8 @@ class Window(UI.AppWindow):
         self.tags = {}
         self.terms = data.terms
         self.suggestions = data.suggestions
+        self.reviews = data.reviews
+        self.review_file_name, self.review_label, self.review_keys = None, "All", []
         self.forget_undo()
         skipped = len(data.undo)
         if skipped:
@@ -495,6 +525,8 @@ class Window(UI.AppWindow):
         self.ui.page = page
         if page == "prompt":
             self.update_preview()
+        elif page == "review":
+            self.show_review()
 
     @slint.callback(global_name="App")
     def close_project(self):
@@ -673,12 +705,7 @@ class Window(UI.AppWindow):
         )
         suggestion, ui.cur_reason = self.suggestions.get((row.file, row.id), ("", ""))
         if suggestion:
-            try:
-                ui.cur_diff = slint.StyledText.from_markdown(
-                    diff_markdown(row.translation or "", suggestion)
-                )
-            except ValueError:
-                ui.cur_diff = slint.StyledText.from_plain_text(suggestion)
+            ui.cur_diff = styled_diff(row.translation or "", suggestion)
         ui.cur_suggestion = suggestion
 
     def retag(self, index):
@@ -762,7 +789,7 @@ class Window(UI.AppWindow):
                 )
                 for other in (row, *twins)
             ],
-            dismiss=True,
+            dismiss="edited",
         )
         if entries is None:
             return
@@ -1508,6 +1535,10 @@ class Window(UI.AppWindow):
         self.update_stats()
 
     def batch_done(self, batch):
+        if batch.task == "review":
+            self.suggestions = self.ws.suggestions()
+            if self.ui.page == "review":
+                self.show_review()
         self.batch_views.insert(0, batch)
         del self.batch_views[200:]
         accepted = sum(record[3] in ("ok", "changed") for record in batch.records)
@@ -1599,7 +1630,7 @@ class Window(UI.AppWindow):
                 record[4] for record in batch.records if record[3] == "failed"
             ).most_common()
         ]
-        if batch.task == "translate" and not batch.thinking and not batch.error:
+        if batch.task != "discover" and not batch.thinking and not batch.error:
             checks.append("The model returned no thinking")
         ui.insp_checks = slint.ListModel(checks)
         ui.insp_terms = slint.ListModel(batch.terms)
@@ -1614,13 +1645,6 @@ class Window(UI.AppWindow):
         if task == "translate":
             wanted = ("new",) if ui.run_scope == 0 else ("new", "machine")
             indices = [i for i in pool if self.rows[i].status in wanted]
-        elif task == "review":
-            indices = [
-                i
-                for i in pool
-                if self.rows[i].translation is not None
-                and self.rows[i].status != "excluded"
-            ]
         else:
             indices = list(pool)
         await self.start_run(task, indices)
@@ -1660,6 +1684,7 @@ class Window(UI.AppWindow):
             return
         ui.running = True
         ui.stopping = False
+        ui.run_kind = task
         self.batch_views.clear()
         self.batches = slint.ListModel([])
         ui.batches = self.batches
@@ -1691,9 +1716,12 @@ class Window(UI.AppWindow):
             self.run = None
             self.terms = self.ws.terms()
             self.suggestions = self.ws.suggestions()
+            self.reviews = self.ws.reviews()
             ui.suggestion_count = len(self.suggestions)
             self.show_terms()
             self.recheck()
+            if ui.page == "review":
+                self.show_review()
 
     @slint.callback(global_name="App")
     def run_stop(self):
@@ -1707,25 +1735,39 @@ class Window(UI.AppWindow):
         row = self.current_row()
         if row is None or (row.file, row.id) not in self.suggestions:
             return
-        text, _ = self.suggestions[(row.file, row.id)]
-        try:
-            self.ws.save(row, text)
-        except VnTransError as exc:
-            self.ui.cur_error = str(exc).removeprefix(f"{row.id}: ")
-            return
-        self.drop_suggestion(row)
+        error = self.settle(row, "accepted", self.suggestions[(row.file, row.id)][0])
+        if error:
+            self.ui.cur_error = error
+        else:
+            self.next_suggestion()
 
     @slint.callback(global_name="App")
     def dismiss_suggestion(self):
         row = self.current_row()
         if row is not None and (row.file, row.id) in self.suggestions:
-            self.drop_suggestion(row)
+            self.settle(row, "rejected")
+            self.next_suggestion()
 
-    def drop_suggestion(self, row):
-        del self.suggestions[(row.file, row.id)]
-        self.ws.dismiss(row)
-        self.row_changed(row)
-        self.next_suggestion()
+    def settle(self, row, verdict, text=None) -> str:
+        """Resolve the row's suggestion with `verdict`, saving `text` first when given. Returns an error message."""
+        key = (row.file, row.id)
+        try:
+            if text is not None:
+                self.ws.save(row, text)
+            self.ws.dismiss([key], verdict)
+        except VnTransError as exc:
+            return str(exc).removeprefix(f"{row.id}: ")
+        self.suggestions.pop(key, None)
+        if row.translation is not None:
+            self.reviews[key] = (row.translation, verdict)
+        self.row_committed(self.index_of[key])
+        if self.current_row() is row:
+            self.ui.cur_translation = row.translation or ""
+        self.update_stats()
+        self.refresh_counts()
+        if self.ui.page == "review":
+            self.show_review()
+        return ""
 
     def next_suggestion(self):
         """Select the next listed row with a suggestion, wrapping around; stay on the current row when none is left."""
@@ -1740,10 +1782,18 @@ class Window(UI.AppWindow):
 
     @slint.callback(global_name="App")
     async def suggestions_action(self, accept):
-        if not self.ws or self.run or self.editing or not self.suggestions:
+        await self.resolve(list(self.suggestions), accept)
+
+    async def resolve(self, keys, accept):
+        """Accept or reject the suggestions of `keys` together, remembering the rows as reviewed."""
+        if not self.ws or self.run or self.editing:
             return
         ws, texts = self.ws, self.texts
-        suggestions = dict(self.suggestions)
+        suggestions = {
+            key: self.suggestions[key] for key in keys if key in self.suggestions
+        }
+        if not suggestions:
+            return
         if accept:
 
             def prepare():
@@ -1762,14 +1812,16 @@ class Window(UI.AppWindow):
                     )
                 return entries
 
-            entries = await self.edit("suggestions", prepare, dismiss=True)
+            entries = await self.edit("suggestions", prepare, dismiss="accepted")
             if entries is not None:
                 self.say(f"Accepted {len(entries):,} suggestions")
+                if self.ui.page == "review":
+                    self.show_review()
             return
 
         def discard():
             with closing(workspace.Workspace(ws.root)) as worker:
-                worker.dismiss()
+                worker.dismiss(list(suggestions), "rejected")
 
         self.editing = True
         self.last_action = time.monotonic()
@@ -1778,8 +1830,14 @@ class Window(UI.AppWindow):
                 await jobs.thread(discard)
                 if ws is not self.ws:
                     return
-                self.suggestions.clear()
-                self.ui.suggestion_count = 0
+                for key in suggestions:
+                    self.suggestions.pop(key, None)
+                    index = self.index_of.get(key)
+                    if index is not None and self.rows[index].translation is not None:
+                        self.reviews[key] = (self.rows[index].translation, "rejected")
+                self.ui.suggestion_count = len(self.suggestions)
+                if self.ui.page == "review":
+                    self.show_review()
                 self.recheck()
                 self.select(self.ui.current)
                 self.show_selection()
@@ -1790,6 +1848,169 @@ class Window(UI.AppWindow):
         finally:
             self.editing = False
             self.last_action = time.monotonic()
+
+    # Review page
+    def show_review(self):
+        """Rebuild the Review page: file progress, category filters and the suggestion queue."""
+        if self.ws is None:
+            return
+        ui = self.ui
+        files = review_files(self.rows, self.reviews, self.suggestions, self.file_names)
+        overall = {
+            field: sum(file[field] for file in files)
+            for field in ("total", "done", "pending")
+        }
+        ui.rv_files = slint.ListModel([dict(name="All files", **overall), *files])
+        if self.review_file_name not in self.file_names:
+            self.review_file_name = None
+        ui.rv_file = (
+            self.file_names.index(self.review_file_name) + 1
+            if self.review_file_name
+            else 0
+        )
+        scope = files[ui.rv_file - 1] if self.review_file_name else overall
+        ui.rv_summary = (
+            f"{scope['done']:,} of {scope['total']:,} lines reviewed"
+            f" · {scope['pending']:,} suggestion{'s' * (scope['pending'] != 1)} waiting"
+        )
+        ui.rv_targets = len(
+            review_targets(
+                self.rows,
+                self.reviews,
+                self.suggestions,
+                self.review_file_name,
+                ui.rv_scope == 1,
+            )
+        )
+        queue = review_queue(
+            self.rows, self.suggestions, self.index_of, self.review_file_name
+        )
+        labels = {
+            index: category(self.suggestions[self.key_of(index)][1]) for index in queue
+        }
+        counts = Counter(labels.values())
+        self.review_labels = [
+            "All",
+            *(name for name in REVIEW_CATEGORIES if counts[name]),
+        ]
+        if self.review_label not in self.review_labels:
+            self.review_label = "All"
+        ui.rv_categories = slint.ListModel(
+            dict(label=name, count=len(queue) if name == "All" else counts[name])
+            for name in self.review_labels
+        )
+        ui.rv_category = self.review_labels.index(self.review_label)
+        if self.review_label != "All":
+            queue = [index for index in queue if labels[index] == self.review_label]
+        selected = (
+            self.review_keys[ui.rv_current]
+            if 0 <= ui.rv_current < len(self.review_keys)
+            else None
+        )
+        self.review_keys = [self.key_of(index) for index in queue]
+        ui.rv_items = slint.ListModel(
+            dict(
+                category=labels[index],
+                speaker=self.rows[index].speaker,
+                translation=self.rows[index].translation or "",
+            )
+            for index in queue
+        )
+        self.review_select(
+            self.review_keys.index(selected)
+            if selected in self.review_keys
+            else min(max(ui.rv_current, 0), len(self.review_keys) - 1)
+        )
+
+    def key_of(self, index):
+        return self.rows[index].file, self.rows[index].id
+
+    def review_row(self):
+        position = self.ui.rv_current
+        if 0 <= position < len(self.review_keys):
+            key = self.review_keys[position]
+            if key in self.suggestions:
+                return self.rows[self.index_of[key]]
+        return None
+
+    @slint.callback(global_name="App")
+    def review_select(self, position):
+        ui = self.ui
+        ui.rv_current = position if 0 <= position < len(self.review_keys) else -1
+        ui.rv_editing = False
+        ui.rv_error = ""
+        row = self.review_row()
+        if row is None:
+            return
+        index = self.index_of[(row.file, row.id)]
+        text, reason = self.suggestions[(row.file, row.id)]
+        ui.rv_source = row.source
+        ui.rv_speaker = row.speaker if row.kind != "speaker" else ""
+        ui.rv_meta = f"{row.file} · Unit {index + 1:,} · {row.kind}"
+        ui.rv_translation = row.translation or ""
+        ui.rv_suggestion = ui.rv_text = text
+        ui.rv_label = category(reason)
+        ui.rv_reason = (
+            reason if ui.rv_label == "Other" else reason.split(": ", 1)[1].strip()
+        )
+        ui.rv_diff = styled_diff(row.translation or "", text)
+        before, after = prompts.neighbours(self.rows, [index], 2, 2)
+        ui.rv_before = slint.ListModel(context_row(other) for other in before)
+        ui.rv_after = slint.ListModel(context_row(other) for other in after)
+
+    @slint.callback(global_name="App")
+    def review_file(self, position):
+        self.review_file_name = self.file_names[position - 1] if position > 0 else None
+        self.review_label, self.review_keys = "All", []
+        self.ui.rv_current = 0
+        self.show_review()
+
+    @slint.callback(global_name="App")
+    def review_category(self, position):
+        if 0 <= position < len(self.review_labels):
+            self.review_label, self.review_keys = self.review_labels[position], []
+            self.ui.rv_current = 0
+            self.show_review()
+
+    @slint.callback(global_name="App")
+    def review_scope_changed(self):
+        self.show_review()
+
+    @slint.callback(global_name="App")
+    def review_accept(self, text):
+        row = self.review_row()
+        if row is None or self.editing:
+            return
+        suggestion = self.suggestions[(row.file, row.id)][0]
+        error = self.settle(row, "accepted" if text == suggestion else "edited", text)
+        if error:
+            self.ui.rv_error = error
+
+    @slint.callback(global_name="App")
+    def review_reject(self):
+        row = self.review_row()
+        if row is not None and not self.editing:
+            self.settle(row, "rejected")
+
+    @slint.callback(global_name="App")
+    async def review_bulk(self, accept):
+        await self.resolve(list(self.review_keys), accept)
+
+    @slint.callback(global_name="App")
+    async def review_start(self):
+        if self.run or self.ws is None:
+            return
+        indices = review_targets(
+            self.rows,
+            self.reviews,
+            self.suggestions,
+            self.review_file_name,
+            self.ui.rv_scope == 1,
+        )
+        if not indices:
+            self.say(f"Nothing left to review in {self.review_file_name or 'any file'}")
+            return
+        await self.start_run("review", indices)
 
     @slint.callback(global_name="App")
     async def replace_all(self):
@@ -1944,8 +2165,10 @@ class Window(UI.AppWindow):
         self.undo_entry = None
         self.ui.can_undo = False
 
-    async def edit(self, label, prepare, *, check=True, dismiss=False):
-        """Validate and commit detached rows, then apply them on the UI thread after the transaction."""
+    async def edit(self, label, prepare, *, check=True, dismiss=None):
+        """Validate and commit detached rows, then apply them on the UI thread after the transaction.
+
+        `dismiss` is the review verdict that resolves the rows' suggestions, if any."""
         if self.editing:
             return None
         self.editing = True
@@ -1977,8 +2200,15 @@ class Window(UI.AppWindow):
                             entry.status,
                             entry.error,
                         )
-                        if dismiss:
-                            self.suggestions.pop((row.file, row.id), None)
+                        if (
+                            dismiss
+                            and self.suggestions.pop((row.file, row.id), None)
+                            and row.translation is not None
+                        ):
+                            self.reviews[(row.file, row.id)] = (
+                                row.translation,
+                                dismiss,
+                            )
                         texts.changed(index, entry)
                         position = self.positions.get(index)
                         if position is not None:
@@ -2106,7 +2336,7 @@ class Window(UI.AppWindow):
                         replace(row, translation=text, status="edited", error=None)
                         for row, text in pairs
                     ],
-                    dismiss=True,
+                    dismiss="accepted",
                 )
                 is None
             ):
@@ -2126,8 +2356,9 @@ class Window(UI.AppWindow):
                     and self.rows[i].status != "excluded"
                 ]
                 skipped = 0
-            self.ui.run_task = TASKS.index(action)
-            self.navigate("translate")
+            if action == "translate":
+                self.ui.run_task = TASKS.index(action)
+            self.navigate(action)
             if skipped:
                 self.log_event(
                     "info",

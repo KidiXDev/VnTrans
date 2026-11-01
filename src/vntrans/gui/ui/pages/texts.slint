@@ -2,10 +2,11 @@ import { LineEdit, ComboBox, ListView, TextEdit } from "../widgets.slint";
 import { Theme, Card, AppButton, Toggle, Chip, Label, Meter, Divider, EmptyState, FadeIn, Badge } from "../theme.slint";
 import { App, UnitRow } from "../app.slint";
 
-component FileItem inherits Rectangle {
+export component FileItem inherits Rectangle {
     in property <string> name;
     in property <int> total;
     in property <int> done;
+    in property <int> pending;
     in property <bool> active;
     callback clicked;
     height: 48px;
@@ -29,6 +30,10 @@ component FileItem inherits Rectangle {
                 overflow: elide;
                 horizontal-stretch: 1;
                 animate color { duration: 120ms; }
+            }
+            if root.pending > 0: Badge {
+                text: root.pending + "";
+                tint: Theme.violet;
             }
             Text {
                 text: root.total == 0 ? "" : floor(100 * root.done / root.total) + "%";
@@ -649,15 +654,12 @@ export component TextsPage inherits Rectangle {
                         vertical-alignment: center;
                         overflow: elide;
                     }
-                    if App.status-filter != "review": VerticalLayout {
+                    VerticalLayout {
                         alignment: center;
                         AppButton {
-                            text: "Review one by one";
+                            text: "Open Review";
                             icon: @image-url("../icons/eye.svg");
-                            clicked => {
-                                App.status-filter = "review";
-                                App.filter-changed();
-                            }
+                            clicked => { App.navigate("review"); }
                         }
                     }
                     VerticalLayout {

@@ -6,7 +6,9 @@ from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 
 from .. import workspace
+from ..translation.prompts import REVIEW_ERRORS
 
+REVIEW_LABELS = frozenset(REVIEW_ERRORS.values())
 TOKENS = re.compile(r"\s+|\w+|[^\w\s]")
 MARKDOWN = re.compile(r"([\\`*_{}\[\]()#+\-.!|~<>&])")
 EDGE_SPACE = re.compile(r"(\s*)(.*?)(\s*)", re.S)
@@ -64,6 +66,64 @@ def diff_markdown(old: str, new: str) -> str:
         else:
             parts.append(_marked(removed, REMOVED, "~~") + _marked(added, ADDED, "**"))
     return "".join(parts)
+
+
+# Review state
+def reviewed(row, reviews) -> bool:
+    """True when the row's current translation is the one that was reviewed."""
+    stored = reviews.get((row.file, row.id))
+    return stored is not None and stored[0] == row.translation
+
+
+def reviewable(row) -> bool:
+    return row.translation is not None and row.status != "excluded"
+
+
+def category(reason: str) -> str:
+    label = reason.split(": ", 1)[0]
+    return label if label in REVIEW_LABELS else "Other"
+
+
+def review_files(rows, reviews, suggestions, names) -> list[dict]:
+    """Per file: reviewable lines, lines reviewed with their current translation, and suggestions waiting."""
+    stats = {name: [0, 0, 0] for name in names}
+    for row in rows:
+        if not reviewable(row):
+            continue
+        counts = stats[row.file]
+        counts[0] += 1
+        if (row.file, row.id) in suggestions:
+            counts[2] += 1
+        elif reviewed(row, reviews):
+            counts[1] += 1
+    return [
+        dict(name=name, total=total, done=done, pending=pending)
+        for name, (total, done, pending) in stats.items()
+    ]
+
+
+def review_targets(rows, reviews, suggestions, file=None, everything=False):
+    """Rows to send for review: translated and included, no suggestion waiting, and not yet reviewed
+    unless `everything`."""
+    return [
+        index
+        for index, row in enumerate(rows)
+        if (file is None or row.file == file)
+        and reviewable(row)
+        and (row.file, row.id) not in suggestions
+        and (everything or not reviewed(row, reviews))
+    ]
+
+
+def review_queue(rows, suggestions, index_of, file=None, label="All"):
+    """Row indices with a waiting suggestion in `file` and category `label`, in script order."""
+    return sorted(
+        index_of[key]
+        for key, (_, reason) in suggestions.items()
+        if key in index_of
+        and (file is None or key[0] == file)
+        and label in ("All", category(reason))
+    )
 
 
 def cooperative(rows, batch=250):
@@ -201,6 +261,7 @@ class Loaded:
     manifest: dict
     terms: list
     suggestions: dict
+    reviews: dict
     undo: list
     initial: tuple
 
@@ -226,6 +287,7 @@ def load(root, filters=None):
             ws.manifest,
             ws.terms(),
             ws.suggestions(),
+            ws.reviews(),
             undo,
             filter_snapshot(
                 rows, **(filters if filters is not None else dict(kind="lines"))

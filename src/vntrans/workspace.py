@@ -33,7 +33,14 @@ CREATE TABLE IF NOT EXISTS attempts(
     units INTEGER NOT NULL, outcome TEXT NOT NULL, error TEXT, tokens_in INTEGER, tokens_out INTEGER);
 CREATE TABLE IF NOT EXISTS suggestions(
     file TEXT NOT NULL, id TEXT NOT NULL, text TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(file, id));
+CREATE TABLE IF NOT EXISTS reviews(
+    file TEXT NOT NULL, id TEXT NOT NULL, translation TEXT NOT NULL, verdict TEXT NOT NULL, PRIMARY KEY(file, id));
 """
+SETTLE = (
+    "INSERT OR REPLACE INTO reviews SELECT s.file, s.id, u.translation, ? "
+    "FROM suggestions s JOIN units u ON u.file = s.file AND u.id = s.id "
+    "WHERE u.translation IS NOT NULL"
+)
 ROWS = (
     "SELECT file, id, kind, source, speaker, scene, context, translation, status, error "
     "FROM units ORDER BY file, ord"
@@ -96,8 +103,25 @@ def write_json(path: Path, value):
     os.replace(temporary, path)
 
 
-def store_rows(root, entries, *, check=True, dismiss=False):
-    """Commit detached GUI edits on a private connection; publish their row values only after success."""
+def settle(db, keys, verdict):
+    """Resolve the suggestions of `keys` (all when None), remembering each unit's current translation as
+    reviewed with `verdict`. Runs inside the caller's transaction."""
+    if keys is None:
+        db.execute(SETTLE, (verdict,))
+        db.execute("DELETE FROM suggestions")
+        return
+    keys = list(keys)
+    db.executemany(
+        SETTLE + " AND s.file = ? AND s.id = ?",
+        ((verdict, file, id) for file, id in keys),
+    )
+    db.executemany("DELETE FROM suggestions WHERE file = ? AND id = ?", keys)
+
+
+def store_rows(root, entries, *, check=True, dismiss=None):
+    """Commit detached GUI edits on a private connection; publish their row values only after success.
+
+    `dismiss` is the review verdict that resolves the rows' suggestions, if any."""
     ws = Workspace(root)
 
     def cooperative():
@@ -122,10 +146,7 @@ def store_rows(root, entries, *, check=True, dismiss=False):
                 ),
             )
             if dismiss:
-                ws.db.executemany(
-                    "DELETE FROM suggestions WHERE file = ? AND id = ?",
-                    ((r.file, r.id) for r in cooperative()),
-                )
+                settle(ws.db, ((r.file, r.id) for r in cooperative()), dismiss)
         return entries
     finally:
         ws.close()
@@ -370,7 +391,10 @@ class Workspace:
             )
 
     def replace_suggestions(self, rows, suggestions):
-        """Publish a successful review batch together, including removal of outdated suggestions."""
+        """Publish a successful review batch together, including removal of outdated suggestions.
+
+        Reviewed rows without a suggestion are remembered as passed; suggested rows wait for a verdict."""
+        suggested = {(row.file, row.id) for row, _, _ in suggestions}
         with self.db:
             self.db.executemany(
                 "DELETE FROM suggestions WHERE file = ? AND id = ?",
@@ -380,16 +404,31 @@ class Workspace:
                 "INSERT INTO suggestions VALUES (?, ?, ?, ?)",
                 ((row.file, row.id, text, reason) for row, text, reason in suggestions),
             )
+            self.db.executemany(
+                "DELETE FROM reviews WHERE file = ? AND id = ?", suggested
+            )
+            self.db.executemany(
+                "INSERT OR REPLACE INTO reviews VALUES (?, ?, ?, 'passed')",
+                (
+                    (row.file, row.id, row.translation)
+                    for row in rows
+                    if (row.file, row.id) not in suggested
+                    and row.translation is not None
+                ),
+            )
 
-    def dismiss(self, row: Row | None = None):
+    def reviews(self) -> dict[tuple[str, str], tuple[str, str]]:
+        return {
+            (file, id): (translation, verdict)
+            for file, id, translation, verdict in self.db.execute(
+                "SELECT file, id, translation, verdict FROM reviews"
+            )
+        }
+
+    def dismiss(self, keys=None, verdict="rejected"):
+        """Resolve the suggestions of `keys` (all when None) and remember the rows as reviewed."""
         with self.db:
-            if row is None:
-                self.db.execute("DELETE FROM suggestions")
-            else:
-                self.db.execute(
-                    "DELETE FROM suggestions WHERE file = ? AND id = ?",
-                    (row.file, row.id),
-                )
+            settle(self.db, keys, verdict)
 
     def snapshot(self, rows) -> list[tuple]:
         return [(row, row.translation, row.status, row.error) for row in rows]

@@ -271,6 +271,25 @@ class WorkspaceTests(unittest.TestCase):
             ws.suggestions(), {(row.file, row.id): ("Previous", "Previous reason")}
         )
 
+    def test_review_verdicts_remember_the_reviewed_translation(self):
+        ws = self.create()
+        first, second = [row for row in ws.rows() if "⟦" not in row.source][:2]
+        ws.save_many([(first, "One"), (second, "Two")])
+        ws.replace_suggestions([first, second], [(second, "Two!", "Grammar: mark")])
+        self.assertEqual(ws.reviews(), {(first.file, first.id): ("One", "passed")})
+        ws.dismiss([(second.file, second.id)], "rejected")
+        self.assertEqual(ws.suggestions(), {})
+        self.assertEqual(ws.reviews()[(second.file, second.id)], ("Two", "rejected"))
+        ws.replace_suggestions([first], [(first, "Uno", "Mistranslation: wrong")])
+        self.assertNotIn((first.file, first.id), ws.reviews())
+        workspace.store_rows(
+            self.ws_root,
+            [replace(first, translation="Uno", status="edited")],
+            dismiss="accepted",
+        )
+        self.assertEqual(ws.suggestions(), {})
+        self.assertEqual(ws.reviews()[(first.file, first.id)], ("Uno", "accepted"))
+
     def test_cancelled_build_leaves_nothing_behind(self):
         ws = self.create()
 

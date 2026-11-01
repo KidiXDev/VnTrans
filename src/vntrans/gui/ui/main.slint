@@ -6,13 +6,14 @@ import { BuildPage, Encodings } from "pages/build.slint";
 import { GlossaryPage } from "pages/glossary.slint";
 import { PromptPage } from "pages/prompt.slint";
 import { TranslatePage } from "pages/translate.slint";
+import { ReviewPage } from "pages/review.slint";
 import { SettingsPage, Providers } from "pages/settings.slint";
 
 export { App, Languages, Encodings, Providers }
 
 component Sidebar inherits Rectangle {
     property <int> index: App.page == "texts" ? 0 : App.page == "glossary" ? 1 : App.page == "prompt" ? 2
-        : App.page == "translate" ? 3 : App.page == "build" ? 4 : -1;
+        : App.page == "translate" ? 3 : App.page == "review" ? 4 : App.page == "build" ? 5 : -1;
     // Last main-page slot, so the indicator fades in place instead of jumping while Settings is open.
     property <int> slot: max(0, root.index);
     changed index => {
@@ -88,7 +89,7 @@ component Sidebar inherits Rectangle {
             }
         }
         Rectangle {
-            height: 5 * 38px + 4 * 4px;
+            height: 6 * 38px + 5 * 4px;
             Rectangle {
                 y: root.slot * 42px;
                 height: 38px;
@@ -130,15 +131,22 @@ component Sidebar inherits Rectangle {
                 }
                 NavItem {
                     icon: @image-url("icons/play.svg");
-                    text: App.running ? "Translating…" : "Translate";
-                    loading: App.running;
+                    text: App.running && App.run-kind != "review" ? "Translating…" : "Translate";
+                    loading: App.running && App.run-kind != "review";
                     active: root.index == 3;
                     clicked => { App.navigate("translate"); }
                 }
                 NavItem {
+                    icon: @image-url("icons/check.svg");
+                    text: App.running && App.run-kind == "review" ? "Reviewing…" : "Review";
+                    loading: App.running && App.run-kind == "review";
+                    active: root.index == 4;
+                    clicked => { App.navigate("review"); }
+                }
+                NavItem {
                     icon: @image-url("icons/package.svg");
                     text: "Build";
-                    active: root.index == 4;
+                    active: root.index == 5;
                     clicked => { App.navigate("build"); }
                 }
             }
@@ -607,6 +615,9 @@ export component AppWindow inherits Window {
                     }
                     if App.page == "translate": FadeIn {
                         TranslatePage { }
+                    }
+                    if App.page == "review": FadeIn {
+                        ReviewPage { }
                     }
                     if App.page == "build": FadeIn {
                         BuildPage { }

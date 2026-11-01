@@ -74,6 +74,30 @@ export struct RecordRow {
     note: string,
 }
 
+export struct ReviewFileRow {
+    name: string,
+    total: int,
+    done: int,
+    pending: int,
+}
+
+export struct ReviewItem {
+    category: string,
+    speaker: string,
+    translation: string,
+}
+
+export struct ContextRow {
+    speaker: string,
+    source: string,
+    translation: string,
+}
+
+export struct CountRow {
+    label: string,
+    count: int,
+}
+
 export global App {
     in-out property <string> page: "texts";
     in property <bool> has-project;
@@ -260,6 +284,7 @@ export global App {
     in-out property <int> run-rpm: 0;
     in property <bool> running;
     in property <bool> stopping;
+    in property <string> run-kind;
     in property <int> run-total;
     in property <int> run-done;
     in property <int> run-failed;
@@ -293,4 +318,35 @@ export global App {
     in property <[string]> insp-checks;
     in property <[string]> insp-terms;
     callback batch-select(int);
+
+    in property <[ReviewFileRow]> rv-files;
+    in property <int> rv-file;
+    in property <[CountRow]> rv-categories;
+    in property <int> rv-category;
+    in property <[ReviewItem]> rv-items;
+    in-out property <int> rv-current: -1;
+    in-out property <int> rv-scope;
+    in property <string> rv-summary;
+    in property <int> rv-targets;
+    in property <string> rv-source;
+    in property <string> rv-speaker;
+    in property <string> rv-meta;
+    in property <string> rv-translation;
+    in property <string> rv-suggestion;
+    in property <string> rv-label;
+    in property <string> rv-reason;
+    in property <styled-text> rv-diff;
+    in property <[ContextRow]> rv-before;
+    in property <[ContextRow]> rv-after;
+    in property <string> rv-error;
+    in-out property <string> rv-text;
+    in-out property <bool> rv-editing;
+    callback review-file(int);
+    callback review-category(int);
+    callback review-select(int);
+    callback review-scope-changed();
+    callback review-accept(string);
+    callback review-reject();
+    callback review-bulk(bool);
+    callback review-start();
 }
