@@ -15,6 +15,8 @@ KS_CONTROL = re.compile(
     r"""\[\[|\[(?:[^\]"']|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')*\]"""
 )
 KS_RUBY = re.compile(r"\[ruby(?:\s|\])", re.I)
+# The SCN engine reads &, # and $ as the start of an inline command even without a closing ;.
+SCN_LITERALS = str.maketrans("&#$", "＆＃＄")
 
 
 def make_unit(id: str, kind: str, raw: str, format: str, **context) -> Unit:
@@ -142,6 +144,8 @@ def render(unit: Unit, translated: str, format: str, columns: int | None = None)
         translated.encode("utf-8")
     except UnicodeError as exc:
         raise VnTransError(f"{unit.id}: invalid Unicode translation") from exc
+    if format == "scn":
+        translated = translated.translate(SCN_LITERALS)
     controls = unit.context["controls"]
     found = MARKER.findall(translated)
     kept = [

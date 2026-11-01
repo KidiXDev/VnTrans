@@ -114,6 +114,14 @@ class ScnTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(VnTransError):
                 script.rebuild({unit.id: value})
 
+    def test_command_characters_in_translations_become_literal_text(self):
+        unit = text.make_unit("u", "dialogue", "&face01;よろしく#ff0000;ね", "scn")
+        self.assertEqual(unit.source, "⟦0⟧よろしく⟦1⟧ね")
+        self.assertEqual(
+            text.render(unit, "⟦0⟧Riku & Sayu; #1 $5⟦1⟧!", "scn"),
+            "&face01;Riku ＆ Sayu; ＃1 ＄5#ff0000;!",
+        )
+
     def test_ruby_readings_may_be_left_out(self):
         unit = text.make_unit("u", "dialogue", "%D$vl1;「本当の[ざ]座[す]主様」", "scn")
         self.assertEqual(unit.source, "⟦0⟧「本当の⟦1⟧座⟦2⟧主様」")
