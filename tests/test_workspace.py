@@ -184,6 +184,14 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(stored[dialogue.id], ("Halo⟦0⟧dunia", "edited"))
         self.assertTrue(all(value == (None, "new") for key, value in stored.items() if key != dialogue.id))
 
+    def test_review_suggestions_are_replaced_atomically(self):
+        ws = self.create()
+        row = next(row for row in ws.rows() if row.kind == "dialogue")
+        ws.suggest(row, "Previous", "Previous reason")
+        with self.assertRaises(sqlite3.IntegrityError):
+            ws.replace_suggestions([row], [(row, "New", "New reason"), (row, "Duplicate", "Duplicate reason")])
+        self.assertEqual(ws.suggestions(), {(row.file, row.id): ("Previous", "Previous reason")})
+
     def test_cancelled_build_leaves_nothing_behind(self):
         ws = self.create()
 

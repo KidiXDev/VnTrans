@@ -18,7 +18,7 @@ LABELS = {
 }
 LABEL = re.compile(r"\s*([^\s:：⟦]+(?: [^\s:：⟦]+){0,2})\s*[:：]\s*")
 QUOTE = re.compile(r"[「『“\"'‘（(]")
-SPEECH = re.compile(r"(?:\s|⟦\d+⟧)*「[^「」]*」(?:\s|⟦\d+⟧)*")
+SPEECH = re.compile(r"(?:\s|⟦\d+⟧)*(?:「[^「」]*」|『[^『』]*』)(?:\s|⟦\d+⟧)*")
 EDGES = re.compile(r"((?:\s|⟦\d+⟧)*)(.*?)((?:\s|⟦\d+⟧)*)", re.S)
 MARKS = "\"“”„«»「」『』"
 KANA = re.compile(r"[぀-ヿｦ-ﾟ]")
@@ -69,7 +69,7 @@ def unruby(text: str, row, formats) -> str:
 
 
 def requote(text: str, source: str) -> str:
-    """`text` inside “ ” when `source` is one 「…」 quote, replacing wrong or missing outer quote marks.
+    """`text` inside “ ” when `source` is one 「…」 or 『…』 quote, replacing wrong or missing outer marks.
 
     Single quotes are left alone (apostrophes), and an odd mark at both ends is ambiguous, so it stays."""
     head, core, tail = EDGES.fullmatch(text).groups()
@@ -87,10 +87,26 @@ def requote(text: str, source: str) -> str:
 
 
 def tidy(text: str, row, names, formats) -> str:
-    """The automatic fixes for a translation of `row`: no added speaker label, no furigana, “ ” for 「」."""
+    """The automatic fixes for a translation of `row`: no added speaker label, no furigana, “ ” for source quotes."""
     if row.kind != "speaker":
         text = unprefix(text, row.source, names)
     return requote(unruby(text, row, formats), row.source)
+
+
+def _unquote(text: str) -> str:
+    head, core, tail = EDGES.fullmatch(text).groups()
+    if len(core) >= 2 and core[0] + core[-1] in ('""', "“”", "„“", "„”", "«»", "「」", "『』"):
+        return head + core[1:-1] + tail
+    return text
+
+
+def review_text(text: str, row, names, formats) -> str:
+    """Normalize a revision without introducing outer quotes absent from both source and current text."""
+    text = tidy(text, row, names, formats)
+    current = row.translation or ""
+    if _unquote(row.source) == row.source and _unquote(current) == current:
+        text = _unquote(text)
+    return text
 
 
 def residue(target: str):

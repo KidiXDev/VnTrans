@@ -82,7 +82,7 @@ class WorkspaceCase(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         (self.root / "game").mkdir()
-        (self.root / "game/a.ks").write_text(self.script)
+        (self.root / "game/a.ks").write_text(self.script, encoding="cp932")
         workspace.create(self.root / "game", self.root / "work", name="T")
         self.ws = workspace.Workspace(self.root / "work")
         self.addCleanup(self.ws.close)
@@ -119,6 +119,35 @@ class PromptBuildTests(WorkspaceCase):
         plain = prompts.build([dict(item, enabled=item["key"] != "thinking") for item in chain], *args)
         self.assertFalse(plain.thinking)
         self.assertNotIn(prompts.THINKING, plain.system)
+
+    def test_review_uses_proofreading_role_and_keeps_custom_instructions(self):
+        chain = prompts.chain({"sections": [{"key": "instructions", "text": "Use conversational {target}."}]})
+        index = self.find("How are you?")
+        self.ws.save(self.rows[index], "Apa kabar?")
+        prompt = prompts.build(chain, dict(source="Japanese", target="Indonesian"), self.rows, [index], task="review")
+        self.assertIn("You proofread existing Indonesian translations", prompt.system)
+        self.assertNotIn("Lines must fit the game's text box", prompt.system)
+        self.assertIn("Use conversational Indonesian.", prompt.system)
+        self.assertIn("Keep acceptable translations exactly as written", prompt.system)
+        self.assertIn("do not wrap the whole narration in quotes", prompt.system)
+        self.assertIn("a sentence beginning with a name is not itself an error", prompt.system)
+        self.assertIn("point of view", prompt.system)
+        self.assertEqual(records(prompt.user)[0]["translation"], "Apa kabar?")
+        custom = prompts.chain({"sections": [{"key": "role", "text": "Project-specific role."}]})
+        self.assertIn("Project-specific role.", prompts.build(custom, self.ws.manifest["languages"], self.rows,
+                                                              [index], task="review").system)
+
+    def test_quote_rules_use_curly_marks_with_or_without_the_style_section(self):
+        for enabled in (True, False):
+            chain = [dict(item, enabled=enabled if item["key"] == "style" else item["enabled"])
+                     for item in prompts.chain({})]
+            for task in ("translate", "review"):
+                with self.subTest(style=enabled, task=task):
+                    prompt = prompts.build(chain, self.ws.manifest["languages"], self.rows,
+                                           [self.find("How are you?")], task=task)
+                    self.assertIn("“ (opening) and ” (closing)", prompt.system)
+        for preset in prompts.STYLE_PRESETS.values():
+            self.assertIn("“ (opening) and ” (closing)", preset)
 
     def test_plan_splits_on_scene_and_size(self):
         lines = [i for i, row in enumerate(self.rows) if row.kind != "speaker"]
@@ -558,6 +587,84 @@ class DuplicateTests(WorkspaceCase):
         self.assertIn("1 filled", events[0][1])
 
 
+class ReviewTests(WorkspaceCase):
+    first = "いつもと同じなんだけど、とてもいいなって感じる。"
+    second = "いつも自分にとっての節目を見ていてくれたのは晶穂だった。"
+    script = first + "\n" + second + "\n「うん」\n"
+    natural = ("Rasanya sama seperti biasanya, tapi entah kenapa terasa sangat menyenangkan.",
+               "Akiho-lah yang selalu memperhatikan momen-momen penting dalam hidupku.")
+
+    def setUp(self):
+        super().setUp()
+        self.ws.manifest["languages"]["target"] = "Indonesian"
+        self.ws.save_many([(self.rows[index], text) for index, text in enumerate((*self.natural, "Ya"))])
+
+    def review_run(self, reply, indices=(0, 1), **settings):
+        return runner.Run(self.ws, self.rows, list(indices), profile=Profile("p", model="m", keys=["k"]),
+                          provider=FakeProvider(reply=reply), sections=prompts.chain({}), terms=[],
+                          settings=settings, task="review")
+
+    def test_quote_only_advice_is_discarded_and_old_suggestions_are_replaced(self):
+        self.ws.suggest(self.rows[0], "Old bad rewrite", "old reason")
+        self.ws.suggest(self.rows[2], "“Ya”", "missing source quotation marks")
+        run = self.review_run(lambda recs, user: dict(translations=[
+            dict(i=r["i"], t="“" + r["translation"] + "”", r="Added quotes to match dialogue format.") for r in recs]))
+        asyncio.run(run.run())
+        self.assertEqual(self.ws.suggestions(), {("a.ks", self.rows[2].id): ("“Ya”", "missing source quotation marks")})
+        self.assertEqual([row.translation for row in self.ws.rows()][:2], list(self.natural))
+        self.assertEqual(run.found, 0)
+        checker = quality.Checker(self.ws.check, "Indonesian", [])
+        self.assertNotIn("quote", checker.issues(self.rows[0]))
+        self.assertNotIn("quote", checker.issues(self.rows[1]))
+
+    def test_genuinely_quoted_source_still_produces_quote_correction(self):
+        run = self.review_run(lambda recs, user: dict(translations=[
+            dict(i=1, t="Ya", r="Source 「うん」 encloses the speech in quotes.")]), indices=[2])
+        asyncio.run(run.run())
+        self.assertEqual(self.ws.suggestions()[("a.ks", self.rows[2].id)][0], "“Ya”")
+        self.assertEqual(self.rows[2].translation, "Ya")
+        self.assertEqual(run.found, 1)
+
+    def test_review_has_nearby_context_and_retains_real_corrections(self):
+        self.ws.save(self.rows[1], "Akio-lah yang selalu memperhatikan momen-momen penting dalam hidupku.")
+        messages = []
+        def reply(recs, user):
+            messages.append(user)
+            return dict(translations=[dict(i=1, t="“" + self.natural[1] + "”",
+                                           r="The source 晶穂 names Akiho, not Akio.")])
+        run = self.review_run(reply, indices=[1], context_before=1, context_after=1)
+        asyncio.run(run.run())
+        self.assertIn(self.first, messages[0])
+        self.assertIn("「うん」", messages[0])
+        self.assertIn("Earlier lines (reference only)", messages[0])
+        self.assertEqual(self.ws.suggestions()[("a.ks", self.rows[1].id)][0], self.natural[1])
+
+    def test_empty_or_unexplained_rewrites_are_not_suggestions(self):
+        for text, reason in (("", "Clear the translation."), ("  ", "Clear it."), ("Different wording", "  ")):
+            with self.subTest(text=text, reason=reason):
+                run = self.review_run(lambda recs, user: dict(translations=[dict(i=1, t=text, r=reason)]), indices=[0])
+                asyncio.run(run.run())
+                self.assertEqual(self.ws.suggestions(), {})
+                self.assertEqual(self.rows[0].translation, self.natural[0])
+
+    def test_failed_review_preserves_previous_suggestions(self):
+        self.ws.suggest(self.rows[0], "Previous suggestion", "Previous reason")
+        run = self.review_run(lambda recs, user: {}, indices=[0])
+        asyncio.run(run.run())
+        self.assertEqual(run.stats.failed, 1)
+        self.assertEqual(self.ws.suggestions()[("a.ks", self.rows[0].id)], ("Previous suggestion", "Previous reason"))
+
+    def test_review_reply_for_an_edited_row_is_ignored(self):
+        run = self.review_run(lambda recs, user: {}, indices=[0])
+        self.ws.save(self.rows[0], "My manual edit")
+        self.ws.suggest(self.rows[0], "Newer suggestion", "Newer reason")
+        result = run.review([0], Reply(json.dumps(dict(translations=[dict(i=1, t="Old rewrite", r="old reason")])), "stop"))
+        self.assertEqual(self.ws.suggestions()[("a.ks", self.rows[0].id)], ("Newer suggestion", "Newer reason"))
+        self.assertEqual(self.rows[0].translation, "My manual edit")
+        self.assertEqual(result[0][3], "ok")
+        self.assertEqual(run.found, 0)
+
+
 class ProtectedDuplicateTests(WorkspaceCase):
     script = ('Go [ruby text=x char=5]Tokyo\nGo [ruby text=y char=5]Osaka\n'
               'Go [l]\nGo [ruby text=x char=5]Tokyo\n[ruby text=x char=5]Tokyo\n')
@@ -620,6 +727,23 @@ class RubyTests(unittest.TestCase):
 
 
 class QuoteTests(unittest.TestCase):
+    def test_review_removes_only_new_outer_quotes_on_unquoted_lines(self):
+        cases = [
+            ("うん", "Ya", "“Ya”", "Ya"),
+            ("うん", "Ya", '"Ya"', "Ya"),
+            ("うん", "Ya", "「Ya」", "Ya"),
+            ("「うん」", "Ya", "Ya", "“Ya”"),
+            ("⟦0⟧うん⟦1⟧", "⟦0⟧Ya⟦1⟧", "⟦0⟧“Ya”⟦1⟧", "⟦0⟧Ya⟦1⟧"),
+            ("平気", "I'm fine", '“I\'m fine”', "I'm fine"),
+            ("「うん」と言った。", '"Ya," katanya.', '“"Ya," katanya.”', '"Ya," katanya.'),
+            ("うん", "“Ya”", "“Iya”", "“Iya”"),
+            ("『うん』", "“Ya”", "“Iya”", "“Iya”"),
+        ]
+        for source, current, candidate, expected in cases:
+            with self.subTest(source=source, candidate=candidate):
+                row = workspace.Row("a.ks", "line/0", "dialogue", source, "Alice", "", "{}", current, "machine", None)
+                self.assertEqual(quality.review_text(candidate, row, {"alice"}, {}), expected)
+
     def test_requote_fixes_outer_marks_only_for_quoted_sources(self):
         cases = [
             ("Ya, bagus sekali!", "「うん、いい感じっ！」", "“Ya, bagus sekali!”"),
@@ -628,6 +752,9 @@ class QuoteTests(unittest.TestCase):
             ("“Ya, bagus sekali!", "「うん、いい感じっ！」", "“Ya, bagus sekali!”"),
             ('Ya, bagus sekali!"', "「うん、いい感じっ！」", "“Ya, bagus sekali!”"),
             ("“Ya, bagus sekali!”", "「うん、いい感じっ！」", "“Ya, bagus sekali!”"),
+            ('"Ya"', "『うん』", "“Ya”"),
+            ("Ya", "『うん』", "“Ya”"),
+            ('⟦0⟧"Ya"⟦1⟧', "⟦0⟧『うん』⟦1⟧", "⟦0⟧“Ya”⟦1⟧"),
             ('⟦0⟧"Ya."\n', "⟦0⟧「おう」\n", "⟦0⟧“Ya.”\n"),
             ("Baris satu,\nbaris dua.", "「一行目、\n二行目」", "“Baris satu,\nbaris dua.”"),
             ('Dia bilang "bodoh"', "「バカって言った」", '“Dia bilang "bodoh"”'),
@@ -636,6 +763,7 @@ class QuoteTests(unittest.TestCase):
             ('“Dia bilang "bodoh"', "「バカって言った」", '“Dia bilang "bodoh"'),
             ("Ya, bagus sekali!", "うん、いい感じっ！", "Ya, bagus sekali!"),
             ('"Ya" katanya.', "「うん」と言った。", '"Ya" katanya.'),
+            ('"Ya" katanya.', "『うん』と言った。", '"Ya" katanya.'),
             ('"Ya." "Tidak."', "「うん」「いや」", '"Ya." "Tidak."'),
             ("", "「うん」", ""),
         ]

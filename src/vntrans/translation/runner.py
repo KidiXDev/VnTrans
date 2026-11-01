@@ -314,7 +314,8 @@ class Run:
                 return
             if self.task == "review":
                 prompt = prompts.build(self.sections, self.languages, self.rows, batch, terms=self.terms,
-                                       before=0, after=0, task="review", pre=self.rules.pre, formats=self.ws.formats)
+                                       before=self.settings["context_before"], after=self.settings["context_after"],
+                                       task="review", pre=self.rules.pre, formats=self.ws.formats)
                 schema = REVIEW_SCHEMA
             else:
                 prompt, schema = prompts.discovery(self.languages, self.rows, batch, self.ws.formats), TERMS_SCHEMA
@@ -350,19 +351,27 @@ class Run:
         for item in listed(reply.text, "translations"):
             number, text, reason = item.get("i"), item.get("t"), item.get("r", "")
             if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= len(batch) \
-                    or not isinstance(text, str) or not isinstance(reason, str):
+                    or not isinstance(text, str) or not isinstance(reason, str) or not reason.strip():
                 continue
-            row = self.rows[batch[number - 1]]
+            index = batch[number - 1]
+            row = self.rows[index]
+            if not self.pending(index):
+                continue
             try:
-                text = self.ws.check(row, quality.tidy(Rules.apply(self.rules.post, text), row, self.names,
-                                                       self.ws.formats))
+                text = quality.review_text(Rules.apply(self.rules.post, text), row, self.names, self.ws.formats)
+                if not text.strip() and MARKER.sub("", prompts.shown(row, self.ws.formats)).strip():
+                    continue
+                text = self.ws.check(row, text)
             except VnTransError:
                 continue
             if row.translation is not None and text != row.translation:
-                self.ws.suggest(row, text, reason.strip())
-                suggested[batch[number - 1]] = (text, reason.strip())
-                self.found += 1
-                self.on_commit(batch[number - 1])
+                suggested[index] = (text, reason.strip())
+        reviewed = [index for index in batch if self.pending(index)]
+        self.ws.replace_suggestions([self.rows[index] for index in reviewed],
+                                    [(self.rows[index], *value) for index, value in suggested.items()])
+        self.found += len(suggested)
+        for index in suggested:
+            self.on_commit(index)
         return [(row.speaker if row.kind != "speaker" else "", row.source,
                  suggested[index][0] if index in suggested else row.translation or "",
                  "changed" if index in suggested else "ok", suggested[index][1] if index in suggested else "")

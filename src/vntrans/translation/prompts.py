@@ -33,13 +33,13 @@ STYLE_PRESETS = {
     "Keep honorifics": (
         "- Keep Japanese honorifics (-san, -kun, -chan, -sama, -senpai) attached to names, romanized.\n"
         "- Keep name order as written in the source.\n"
-        "- Turn 「」 and 『』 into regular quotation marks.\n"
+        "- Use “ (opening) and ” (closing) for source 「…」 and 『…』; keep unquoted narration unquoted.\n"
         "- Keep ellipses, dashes and stammering where they show hesitation or emotion.\n"
         "- Write sound effects and interjections the way a {target} reader would hear them."),
     "Localize": (
         "- Drop honorifics and convey the relationship through word choice instead.\n"
         "- Adapt jokes, idioms and wordplay to natural {target} equivalents.\n"
-        "- Turn 「」 and 『』 into regular quotation marks.\n"
+        "- Use “ (opening) and ” (closing) for source 「…」 and 『…』; keep unquoted narration unquoted.\n"
         "- Keep ellipses, dashes and stammering where they show hesitation or emotion.\n"
         "- Write sound effects and interjections the way a {target} reader would hear them."),
 }
@@ -63,6 +63,8 @@ CONTRACT = (
     '- Translate only each record\'s "text". Context, glossary and character notes are reference material.\n'
     '- Each translation is only the line itself. Never add the speaker\'s name, a label or a "Name:" prefix; '
     '"speaker" only tells you who is talking.\n'
+    "- Use “ (opening) and ” (closing) when converting source 「…」 or 『…』 quotation marks. "
+    "Leave unquoted narration unquoted.\n"
     "- Keep every placeholder such as ⟦0⟧ exactly once and in the same order. Placeholders stand for game "
     "commands: never translate, remove or add them.\n"
     "- Use \\n for a line break inside a translation. Speaker names, titles and choices stay on one line.\n"
@@ -74,16 +76,32 @@ THINKING = (
     "- Context: context, references, tone and who is speaking to whom that affect the meaning\n"
     "- Decisions: how these instructions apply to the key constraints, ambiguities or difficult lines")
 
+REVIEW_ROLE = (
+    "You proofread existing {target} translations of {source} visual novel scripts.\n"
+    "Preserve fluent wording and make only the smallest correction supported by the source and context.")
+
 REVIEW = (
     "Review task:\n"
-    "- Compare each record's existing translation with its source text.\n"
+    "- Keep acceptable translations exactly as written. Review the existing translation rather than "
+    "translating the source again. When unsure, leave the record out.\n"
     "- Report only records with a clear problem: wrong meaning, omitted or invented content, a wrong name or "
-    "term, a voice that doesn't fit the speaker, or clearly unnatural {target}. Leave acceptable ones out.\n"
+    "term, or clearly broken {target}. An alternative phrasing is not a correction. Natural paraphrases, "
+    "conversational wording and implicit subjects are acceptable when faithful to the source.\n"
+    "- Make the smallest necessary edit. Preserve the existing register, rhythm, point of view and sentence "
+    "structure wherever possible. Style guidance does not require rewriting an already natural line. "
+    "Do not invent a subject, pronoun, relationship or emotion that the source and context do not establish.\n"
+    "- The kind 'dialogue' can include narration and internal monologue. It and the speaker metadata never "
+    "require quotation marks. Use “ (opening) and ” (closing) for source quotations. "
+    "Preserve the source's quotation structure: 「うん」 needs quotes around the "
+    "translated speech; うん and unquoted narration do not. Keep quotations within narration in their place; "
+    "do not wrap the whole narration in quotes.\n"
     '- Reply with only this JSON object: {"translations": [{"i": <number>, "t": "<corrected translation>", '
     '"r": "<short reason>"}]}. Use an empty list when nothing needs fixing.\n'
+    "- Give a specific reason identifying the source meaning or concrete error being corrected. Generic "
+    "claims such as 'more natural', 'better nuance' or 'matches dialogue format' are not sufficient.\n"
     "- Keep every placeholder such as ⟦0⟧ exactly once and in the same order. Use \\n for line breaks.\n"
-    '- A translation that starts with the speaker\'s name or a "Name:" label is a problem; correct it to the line '
-    "itself, and never add one yourself.")
+    '- Remove an added "Name:" speaker label absent from the source. Keep character names used as part of '
+    "the sentence when the source mentions them; a sentence beginning with a name is not itself an error.")
 
 DISCOVER = (
     "You prepare a translation glossary for a {source} visual novel that will be translated into {target}.\n"
@@ -203,7 +221,8 @@ def build(sections, languages, rows, batch, *, terms=(), before=5, after=2, task
         if not item["enabled"]:
             continue
         if section.editable:
-            text = fill(item["text"] if item["text"] is not None else DEFAULTS[section.key], languages).strip()
+            default = REVIEW_ROLE if task == "review" and section.key == "role" else DEFAULTS[section.key]
+            text = fill(item["text"] if item["text"] is not None else default, languages).strip()
         elif section.key == "contract":
             text = CONTRACT if task == "translate" else fill(REVIEW, languages)
         elif section.key == "thinking":

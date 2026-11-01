@@ -248,6 +248,14 @@ class Workspace:
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO suggestions VALUES (?, ?, ?, ?)", (row.file, row.id, text, reason))
 
+    def replace_suggestions(self, rows, suggestions):
+        """Publish a successful review batch together, including removal of outdated suggestions."""
+        with self.db:
+            self.db.executemany("DELETE FROM suggestions WHERE file = ? AND id = ?",
+                                ((row.file, row.id) for row in rows))
+            self.db.executemany("INSERT INTO suggestions VALUES (?, ?, ?, ?)",
+                                ((row.file, row.id, text, reason) for row, text, reason in suggestions))
+
     def dismiss(self, row: Row):
         with self.db:
             self.db.execute("DELETE FROM suggestions WHERE file = ? AND id = ?", (row.file, row.id))
