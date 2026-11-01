@@ -84,9 +84,22 @@ THINKING = (
     "- Decisions: how these instructions apply to the key constraints, ambiguities or difficult lines"
 )
 
+REVIEW_THINKING = (
+    'Before answering, review in the reply\'s "why" field, which comes before "translations" in the JSON '
+    "object. Keep it terse and structured:\n"
+    "- Scene: one line on who speaks to whom, their relationship and the mood.\n"
+    "- Then one line per record, in order. Write `<i>: OK` when the translation conveys the source in the "
+    "speaker's voice.\n"
+    "- Otherwise write `<i>:` the exact source words, the translation words that conflict with them and the "
+    "error type. Then argue for the current translation: could the context, a later line, casual speech "
+    "or the character's voice justify it? End the line with `keep` if it survives or `fix` if it does not.\n"
+    '- Put only the records marked fix in "translations", each with the smallest edit that resolves it.'
+)
+
 REVIEW_ROLE = (
     "You proofread existing {target} translations of {source} visual novel scripts.\n"
-    "Preserve fluent wording and make only the smallest correction supported by the source and context."
+    "Preserve fluent wording and make only the smallest correction supported by the source and context. "
+    "Respect each character's casual voice and the mood of the scene."
 )
 
 REVIEW_ERRORS = {
@@ -107,24 +120,33 @@ REVIEW = (
     '- Report a record only for one of these errors, given as "c": meaning (the translation says something '
     "the source does not), omission (source content is missing), addition (content absent from the source), "
     "name (a wrong name or glossary term), honorific (an honorific or form of address translated, dropped or "
-    "changed), grammar (clearly broken {target}), quotes (quotation marks contradict the source). Style, tone, "
+    "changed), grammar ({target} that a native reader would call broken even in casual speech), quotes "
+    "(quotation marks contradict the source). Style, tone, "
     "flow, naturalness, brevity and word choice are never errors, and an alternative phrasing is not a "
     "correction.\n"
+    "- Judge wording by the speaker's voice and the scene's mood, not by formal or textbook {target}. "
+    "Casual, slang, colloquial, regional and non-standard spellings are deliberate and are never typos or "
+    "grammar errors (e.g. gonna, wanna, nggak, udah, kubales for kubalas). Never replace a casual word or "
+    "spelling with its formal or standard form; if a native speaker would say it that way in casual "
+    "conversation, leave it.\n"
     "- Fix only the wrong words and copy the rest of the line unchanged. Never shorten, compress, formalize "
     "or tidy a line: casual register, contractions, slang, fillers, interjections, stammering, repetition, "
     "sentence fragments and implicit subjects are deliberate. Preserve the existing register, rhythm, point "
     "of view and sentence structure. Do not invent a subject, pronoun, relationship or emotion that the "
     "source and context do not establish.\n"
+    "- Write every correction in {target}. Never romanize, transliterate or copy the {source} text, and "
+    'never leave {source} script in it. A record with "rejected" explains why your previous suggestion '
+    "for it was refused: avoid that mistake or leave the record out.\n"
     "- The kind 'dialogue' can include narration and internal monologue. It and the speaker metadata never "
     "require quotation marks. Use “ (opening) and ” (closing) for source quotations. "
     "Preserve the source's quotation structure: 「うん」 needs quotes around the "
     "translated speech; うん and unquoted narration do not. Keep quotations within narration in their place; "
     "do not wrap the whole narration in quotes.\n"
     '- Reply with only this JSON object: {"translations": [{"i": <number>, "c": "<error>", '
-    '"t": "<corrected translation>", "r": "<short reason>"}]}. Use an empty list when nothing needs fixing.\n'
+    '"r": "<short reason>", "t": "<corrected translation>"}]}. Use an empty list when nothing needs fixing.\n'
     "- The reason names the source words and the concrete error, e.g. 'the source 晶穂 names Akiho, not "
-    "Akio'. Generic claims such as 'more natural', 'better nuance', 'smoother' or 'matches dialogue format' "
-    "are not reasons.\n"
+    "Akio'. Generic claims such as 'more natural', 'better nuance', 'smoother', 'matches dialogue format' "
+    "or 'typo' for a casual spelling are not reasons.\n"
     "- Keep every placeholder such as ⟦0⟧ exactly once and in the same order. Use \\n for line breaks.\n"
     '- Remove an added "Name:" speaker label absent from the source. Keep character names used as part of '
     "the sentence when the source mentions them; a sentence beginning with a name is not itself an error."
@@ -287,10 +309,13 @@ def build(
     task="translate",
     pre=(),
     formats=None,
+    notes=None,
 ) -> Prompt:
     """task: "translate" or "review"; `pre` replacement rules rewrite the source text the model sees.
 
-    formats maps each file to its script format, which tells which markers are ruby."""
+    formats maps each file to its script format, which tells which markers are ruby. `notes` maps a row
+    index to why its previous review suggestion was refused."""
+    notes = notes or {}
     formats = formats or {}
     records = [rows[index] for index in batch]
     texts = {id(row): shown(row, formats) for row in records}
@@ -335,8 +360,8 @@ def build(
                 )
             )
         elif section.key == "thinking":
-            thinking = task == "translate"
-            text = THINKING if thinking else ""
+            thinking = True
+            text = THINKING if task == "translate" else REVIEW_THINKING
         elif section.key == "characters":
             found = [entry(term) for term in matched if term.kind == "character"]
             text = "Characters:\n" + "\n".join(found) if found else ""
@@ -359,13 +384,18 @@ def build(
         if text:
             (system if section.role == "system" else user).append(text)
 
-    def record(number, row):
+    def record(number, index):
+        row = rows[index]
         value = dict(i=number, kind=row.kind)
         if row.speaker and row.kind != "speaker":
             value["speaker"] = row.speaker
         value["text"] = glossary.Rules.apply(pre, texts[id(row)])
         if task == "review":
             value["translation"] = row.translation
+            if index in notes:
+                value["rejected"] = (
+                    f"your previous suggestion was refused because {notes[index]}"
+                )
         return json.dumps(value, ensure_ascii=False)
 
     heading = (
@@ -376,7 +406,7 @@ def build(
     user.append(
         heading
         + "\n"
-        + "\n".join(record(number, row) for number, row in enumerate(records, 1))
+        + "\n".join(record(number, index) for number, index in enumerate(batch, 1))
     )
     system_text = "\n\n".join(system)
     return Prompt(

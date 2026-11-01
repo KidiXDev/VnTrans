@@ -162,12 +162,15 @@ class PromptBuildTests(WorkspaceCase):
         enhanced = prompts.build(chain, *args)
         self.assertTrue(enhanced.thinking)
         self.assertIn(prompts.THINKING, enhanced.system)
-        self.assertFalse(prompts.build(chain, *args, task="review").thinking)
-        plain = prompts.build(
-            [dict(item, enabled=item["key"] != "thinking") for item in chain], *args
-        )
+        review = prompts.build(chain, *args, task="review")
+        self.assertTrue(review.thinking)
+        self.assertIn(prompts.REVIEW_THINKING, review.system)
+        self.assertNotIn(prompts.THINKING, review.system)
+        unthinking = [dict(item, enabled=item["key"] != "thinking") for item in chain]
+        plain = prompts.build(unthinking, *args)
         self.assertFalse(plain.thinking)
         self.assertNotIn(prompts.THINKING, plain.system)
+        self.assertFalse(prompts.build(unthinking, *args, task="review").thinking)
 
     def test_review_uses_proofreading_role_and_keeps_custom_instructions(self):
         chain = prompts.chain(
@@ -191,6 +194,8 @@ class PromptBuildTests(WorkspaceCase):
         self.assertIn("Use conversational Indonesian.", prompt.system)
         self.assertIn("keep them exactly as written", prompt.system)
         self.assertIn("Never shorten, compress, formalize", prompt.system)
+        self.assertIn("are never typos or grammar errors", prompt.system)
+        self.assertIn("Respect each character's casual voice", prompt.system)
         self.assertIn(prompts.REVIEW_HONORIFICS, prompt.system)
         self.assertIn("do not wrap the whole narration in quotes", prompt.system)
         self.assertIn(
@@ -952,6 +957,56 @@ class DuplicateTests(WorkspaceCase):
         self.assertIn("1 filled", events[0][1])
 
 
+class ReviewGuardTests(unittest.TestCase):
+    source = "いつもと同じなんだけど、とてもいいなって感じる。"
+    script = quality.residue("Indonesian")
+
+    def test_romaji_spells_hiragana_in_hepburn(self):
+        self.assertEqual(
+            quality.romaji("ちょっといっしょにしゃべってる"), "chottoisshonishabetteru"
+        )
+        self.assertEqual(quality.romaji("きゃー"), "kya")
+
+    def test_romanized_tells_spelled_out_japanese_from_translations(self):
+        for text in (
+            "Itsumo to onaji nan dakedo, totemo ii natte kanjiru.",
+            "Itsumo to onaji nandakedo, totemo ī natte kanjiru.",
+        ):
+            self.assertTrue(quality.romanized(self.source, text), text)
+        for text in (
+            "Rasanya sama seperti biasanya, tapi entah kenapa terasa sangat menyenangkan.",
+            "It's the same as always, but somehow it feels really nice.",
+        ):
+            self.assertFalse(quality.romanized(self.source, text), text)
+        self.assertFalse(
+            quality.romanized("お兄ちゃん、待って！", "Onii-chan, tunggu!")
+        )
+
+    def test_unfit_only_flags_regressions_from_the_current_translation(self):
+        current = "Rasanya sama seperti biasanya, tapi terasa menyenangkan."
+        cases = {
+            "Rasanya sama seperti biasanya, tapi terasa sangat menyenangkan.": "",
+            "Itsumo to onaji nan dakedo, totemo ii natte kanjiru.": "romanizes",
+            self.source: "source-language text",
+            "Rasanya sama, tapi とても menyenangkan.": "source-language text",
+        }
+        for revision, expected in cases.items():
+            with self.subTest(revision=revision):
+                problem = quality.unfit(revision, current, self.source, self.script)
+                if expected:
+                    self.assertIn(expected, problem)
+                else:
+                    self.assertEqual(problem, "")
+        laugh = "うふふふふふ"
+        self.assertEqual(
+            quality.unfit("Ufufufufu~", "Ufufufu...", laugh, self.script), ""
+        )
+        self.assertEqual(
+            quality.unfit("Hello", "Bye", "Hello", quality.residue("English")),
+            "it copies the source text",
+        )
+
+
 class HonorificTests(WorkspaceCase):
     script = "お兄ちゃん、待って！\n紗有ちゃんはどこ？\n"
     terms = [Term("紗有", "Sayu", "character")]
@@ -1223,7 +1278,7 @@ class ReviewTests(WorkspaceCase):
         run = self.review_run(lambda recs, user: {}, indices=[0])
         self.ws.save(self.rows[0], "My manual edit")
         self.ws.suggest(self.rows[0], "Newer suggestion", "Newer reason")
-        result = run.review(
+        records, again = run.review(
             [0],
             Reply(
                 json.dumps(
@@ -1241,8 +1296,68 @@ class ReviewTests(WorkspaceCase):
             ("Newer suggestion", "Newer reason"),
         )
         self.assertEqual(self.rows[0].translation, "My manual edit")
-        self.assertEqual(result[0][3], "ok")
+        self.assertEqual((records[0][3], again), ("ok", {}))
         self.assertEqual(run.found, 0)
+
+    def test_review_reasons_first_and_shows_its_analysis(self):
+        fake = FakeProvider(
+            reply=lambda recs, user: dict(
+                why="Scene: quiet monologue.\n1: OK\n2: OK", translations=[]
+            )
+        )
+        batches = []
+        run = runner.Run(
+            self.ws,
+            self.rows,
+            [0, 1],
+            profile=Profile("p", model="m", keys=["k"]),
+            provider=fake,
+            sections=prompts.chain({}),
+            terms=[],
+            settings={},
+            task="review",
+            on_batch=batches.append,
+        )
+        asyncio.run(run.run())
+        self.assertIs(fake.schemas[0], providers.REVIEW_THINKING_SCHEMA)
+        self.assertEqual(
+            list(fake.schemas[0]["properties"]["translations"]["items"]["properties"]),
+            ["i", "c", "r", "t"],
+        )
+        self.assertIn("1: OK", batches[0].thinking)
+
+    def test_unfit_suggestions_are_asked_again_with_the_reason(self):
+        romaji = "Itsumo to onaji nan dakedo, totemo ii natte kanjiru."
+        fixed = self.natural[0] + " Sekali."
+        users = []
+
+        def reply(recs, user):
+            users.append(user)
+            text = romaji if len(users) == 1 else fixed
+            return dict(translations=[dict(i=1, c="meaning", t=text, r="the source")])
+
+        run = self.review_run(reply, indices=[0])
+        asyncio.run(run.run())
+        self.assertEqual(len(users), 2)
+        self.assertNotIn('"rejected"', users[0])
+        self.assertIn("refused because it romanizes the source", users[1])
+        self.assertEqual(self.ws.suggestions()[("a.ks", self.rows[0].id)][0], fixed)
+        self.assertEqual((run.stats.done, run.stats.failed), (1, 0))
+
+    def test_units_stay_unreviewed_when_every_retry_is_unfit(self):
+        users = []
+
+        def reply(recs, user):
+            users.append(user)
+            return dict(
+                translations=[dict(i=1, c="meaning", t=self.first, r="the source")]
+            )
+
+        run = self.review_run(reply, indices=[0, 1])
+        asyncio.run(run.run())
+        self.assertEqual(len(users), runner.SIDE_RETRIES + 1)
+        self.assertEqual(self.ws.suggestions(), {})
+        self.assertEqual((run.stats.done, run.stats.failed), (1, 1))
 
 
 class ProtectedDuplicateTests(WorkspaceCase):

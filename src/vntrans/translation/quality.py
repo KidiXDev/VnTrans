@@ -2,10 +2,12 @@
 
 import json
 import re
+import unicodedata
+from difflib import SequenceMatcher
 
 from ..model import VnTransError
 from ..text import MARKER, plain
-from .glossary import Address
+from .glossary import ADDRESS, SUFFIXES, Address
 
 LABELS = {
     "residue": "Source script left",
@@ -22,6 +24,32 @@ HONORIFIC = re.compile(
     r"\b[^\W\d_]+-(?:san|chan|kun|sama|senpai|sensei|dono|tan)\b|\b(?:aniki|aneki|senpai|sensei)\b",
     re.IGNORECASE,
 )
+ROMAJI = {
+    kana: spelled
+    for row, spellings in (
+        ("あいうえお", "a i u e o"),
+        ("かきくけこ", "ka ki ku ke ko"),
+        ("さしすせそ", "sa shi su se so"),
+        ("たちつてと", "ta chi tsu te to"),
+        ("なにぬねの", "na ni nu ne no"),
+        ("はひふへほ", "ha hi fu he ho"),
+        ("まみむめも", "ma mi mu me mo"),
+        ("やゆよ", "ya yu yo"),
+        ("らりるれろ", "ra ri ru re ro"),
+        ("わをん", "wa o n"),
+        ("がぎぐげご", "ga gi gu ge go"),
+        ("ざじずぜぞ", "za ji zu ze zo"),
+        ("だぢづでど", "da ji zu de do"),
+        ("ばびぶべぼ", "ba bi bu be bo"),
+        ("ぱぴぷぺぽ", "pa pi pu pe po"),
+        ("ぁぃぅぇぉ", "a i u e o"),
+        ("ゃゅょゎゔ", "ya yu yo wa vu"),
+    )
+    for kana, spelled in zip(row, spellings.split(), strict=True)
+}
+HIRAGANA = re.compile(r"[ぁ-ゖー]+")
+LONG_VOWEL = re.compile(r"ou|oo|([aeiu])\1")
+KEPT_KANA = sorted((*ADDRESS, *SUFFIXES), key=len, reverse=True)
 LABEL = re.compile(r"\s*([^\s:：⟦]+(?: [^\s:：⟦]+){0,2})\s*[:：]\s*")
 QUOTE = re.compile(r"[「『“\"'‘（(]")
 SPEECH = re.compile(r"(?:\s|⟦\d+⟧)*(?:「[^「」]*」|『[^『』]*』)(?:\s|⟦\d+⟧)*")
@@ -149,6 +177,64 @@ def oversteps(current: str, revision: str, error: str, honorifics: bool) -> bool
         and error != "addition"
         and len(HONORIFIC.findall(revision)) < len(HONORIFIC.findall(current))
     )
+
+
+def romaji(kana: str) -> str:
+    """Hepburn spelling of hiragana: small っ doubles the next consonant, small ゃゅょ join the syllable."""
+    spelled, double = [], False
+    for char in kana:
+        if char == "っ":
+            double = True
+            continue
+        if char in "ゃゅょ" and spelled and spelled[-1].endswith("i"):
+            last = spelled.pop()
+            stem = last[:-1] if last.endswith(("shi", "chi", "ji")) else last[:-1] + "y"
+            spelled.append(stem + ROMAJI[char][-1])
+            continue
+        syllable = ROMAJI.get(char, "")
+        if double and syllable:
+            syllable = syllable[0] + syllable
+        double = False
+        spelled.append(syllable)
+    return "".join(spelled)
+
+
+def _letters(text: str) -> str:
+    """Latin letters only, without accents and with long vowels folded, so spelling variants compare equal."""
+    plain_text = unicodedata.normalize("NFKD", text.casefold())
+    return LONG_VOWEL.sub(
+        lambda match: match[1] or "o",
+        "".join(char for char in plain_text if "a" <= char <= "z"),
+    )
+
+
+def romanized(source: str, text: str) -> bool:
+    """True when `text` spells most of the source's hiragana out in Latin letters instead of translating it.
+
+    Honorifics and forms of address are left out: keeping them romanized is intended."""
+    for kana in KEPT_KANA:
+        source = source.replace(kana, " ")
+    spelled = _letters("".join(map(romaji, HIRAGANA.findall(source))))
+    if len(spelled) < 6:
+        return False
+    blocks = SequenceMatcher(
+        None, spelled, _letters(text), autojunk=False
+    ).get_matching_blocks()
+    return 2 * sum(block.size for block in blocks if block.size >= 3) >= len(spelled)
+
+
+def unfit(revision: str, current: str, source: str, script) -> str:
+    """Why `revision` can't replace `current`, or "" when it can: it brings back source-language script,
+    copies the source, or romanizes it. `script` is the pattern from `residue()`."""
+    text, before = MARKER.sub("", revision), MARKER.sub("", current)
+    original = MARKER.sub("", source).strip()
+    if script.search(text) and not script.search(before):
+        return "it leaves source-language text in the line"
+    if text.strip() == original and before.strip() != original:
+        return "it copies the source text"
+    if romanized(source, text) and not romanized(source, before):
+        return "it romanizes the source instead of translating it"
+    return ""
 
 
 def residue(target: str):

@@ -19,6 +19,7 @@ from . import prompts, quality
 from .glossary import Rules, Term
 from .providers import (
     REVIEW_SCHEMA,
+    REVIEW_THINKING_SCHEMA,
     SCHEMA,
     TERMS_SCHEMA,
     THINKING_SCHEMA,
@@ -27,6 +28,7 @@ from .providers import (
 
 SETTINGS = prompts.BATCH | dict(concurrency=4, rpm=0)
 TRANSPORT_TRIES = 5
+SIDE_RETRIES = 2
 FENCE = re.compile(r"^```[\w-]*\s*|\s*```$")
 
 
@@ -191,6 +193,7 @@ class Run:
         self.settings = SETTINGS | settings
         self.languages = dict(ws.manifest["languages"])
         self.honorifics = prompts.keeps_honorifics(sections, self.languages)
+        self.script = quality.residue(self.languages["target"])
         self.planned = {
             index: (rows[index].status, rows[index].translation) for index in indices
         }
@@ -377,8 +380,11 @@ class Run:
                 + f"{self.stats.failed} failed{found}",
             )
 
-    async def side(self, batch, accept):
-        """One review/discovery request; failures never touch translations."""
+    async def side(self, batch, accept, attempt=0, notes=None):
+        """One review/discovery request; failures never touch translations.
+
+        Units whose reply was unreadable or whose suggestion failed validation are asked again, up to
+        SIDE_RETRIES times; `notes` tells the model why its previous suggestion was refused."""
         if self.stopping:
             return
         self.stats.queued += 1
@@ -386,7 +392,7 @@ class Run:
         self.stats.queued -= 1
         if worker is None:
             return
-        moved = False
+        moved, again, problem = False, {}, ""
         try:
             if self.stopping:
                 return
@@ -402,8 +408,9 @@ class Run:
                     task="review",
                     pre=self.rules.pre,
                     formats=self.ws.formats,
+                    notes=notes,
                 )
-                schema = REVIEW_SCHEMA
+                schema = REVIEW_THINKING_SCHEMA if prompt.thinking else REVIEW_SCHEMA
             else:
                 prompt, schema = (
                     prompts.discovery(
@@ -416,9 +423,14 @@ class Run:
                 reply = await self.request(worker, prompt, schema)
                 if reply is None:
                     return
-                records = accept(batch, reply)
-                self.stats.done += len(batch)
-                self.report(worker, prompt, batch, records, reply=reply)
+                if prompt.thinking:
+                    reply.thinking = "\n\n".join(
+                        part for part in (reply.thinking, why(reply.text)) if part
+                    )
+                records, again = accept(batch, reply)
+                self.stats.done += len(batch) - len(again)
+                problem = next(iter(again.values()), "")
+                self.report(worker, prompt, batch, records, reply=reply, depth=attempt)
             except ProviderError as exc:
                 if exc.kind in ("auth", "request"):
                     self.disable(worker, str(exc))
@@ -431,28 +443,39 @@ class Run:
                         prompt,
                         batch,
                         self.outcomes(batch, {}, dict.fromkeys(batch, str(exc))),
+                        depth=attempt,
                         error=str(exc),
                     )
             except ValueError as exc:
-                self.stats.failed += len(batch)
-                self.on_event(
-                    "error", f"{len(batch)} units skipped: unreadable reply ({exc})"
-                )
+                again, problem = dict.fromkeys(batch), f"unreadable reply ({exc})"
                 self.report(
                     worker,
                     prompt,
                     batch,
                     self.outcomes(batch, {}, dict.fromkeys(batch, "unreadable reply")),
                     reply=reply,
+                    depth=attempt,
                     error=f"unreadable reply: {exc}",
                 )
         finally:
             self.release(worker)
         if moved:
-            await self.side(batch, accept)
+            await self.side(batch, accept, attempt, notes)
+        elif again and not self.stopping:
+            if attempt < SIDE_RETRIES:
+                self.on_event("retry", f"Retrying {len(again)} unit(s): {problem}")
+                retry_notes = {index: note for index, note in again.items() if note}
+                await self.side(sorted(again), accept, attempt + 1, retry_notes)
+            else:
+                self.stats.failed += len(again)
+                self.on_event(
+                    "error",
+                    f"{len(again)} units skipped after {attempt + 1} attempts: {problem}",
+                )
 
     def review(self, batch, reply):
-        suggested = {}
+        """Store a batch's valid suggestions; returns its records and the units to ask again, with why."""
+        suggested, rejected = {}, {}
         for item in listed(reply.text, "translations"):
             number, text, reason = item.get("i"), item.get("t"), item.get("r", "")
             error = item.get("c")
@@ -480,19 +503,34 @@ class Run:
                     and MARKER.sub("", prompts.shown(row, self.ws.formats)).strip()
                 ):
                     continue
-                text = self.ws.check(row, text)
-            except VnTransError:
+                checked = self.ws.check(row, text)
+            except VnTransError as exc:
+                message = str(exc).removeprefix(f"{row.id}: ")
+                rejected[index] = (
+                    text,
+                    f"it breaks the line's game commands ({message})",
+                )
                 continue
-            if (
-                row.translation is not None
-                and text != row.translation
-                and not quality.oversteps(row.translation, text, error, self.honorifics)
+            if row.translation is None or checked == row.translation:
+                continue
+            problem = quality.unfit(
+                checked,
+                row.translation,
+                prompts.shown(row, self.ws.formats),
+                self.script,
+            )
+            if problem:
+                rejected[index] = (checked, problem)
+            elif not quality.oversteps(
+                row.translation, checked, error, self.honorifics
             ):
                 suggested[index] = (
-                    text,
+                    checked,
                     f"{prompts.REVIEW_ERRORS[error]}: {reason.strip()}",
                 )
-        reviewed = [index for index in batch if self.pending(index)]
+        reviewed = [
+            index for index in batch if self.pending(index) and index not in rejected
+        ]
         self.ws.replace_suggestions(
             [self.rows[index] for index in reviewed],
             [(self.rows[index], *value) for index, value in suggested.items()],
@@ -500,16 +538,19 @@ class Run:
         self.found += len(suggested)
         for index in suggested:
             self.on_commit(index)
-        return [
+        outcomes = {
+            index: (text, "changed", reason)
+            for index, (text, reason) in suggested.items()
+        } | {index: (text, "failed", why) for index, (text, why) in rejected.items()}
+        records = [
             (
                 row.speaker if row.kind != "speaker" else "",
                 row.source,
-                suggested[index][0] if index in suggested else row.translation or "",
-                "changed" if index in suggested else "ok",
-                suggested[index][1] if index in suggested else "",
+                *outcomes.get(index, (row.translation or "", "ok", "")),
             )
             for index, row in ((index, self.rows[index]) for index in batch)
         ]
+        return records, {index: problem for index, (_, problem) in rejected.items()}
 
     def discover(self, batch, reply):
         known = {term.source for term in self.terms}
@@ -569,7 +610,7 @@ class Run:
                     f"{term.kind}" + (f" · {term.notes}" if term.notes else ""),
                 )
             )
-        return records
+        return records, {}
 
     async def translate(self):
         """Units with matching text and protected controls are sent once; the rest follow as aliases.

@@ -45,15 +45,21 @@ REVIEW_SCHEMA = {
                 "properties": {
                     "i": {"type": "integer"},
                     "c": {"type": "string", "enum": list(REVIEW_ERRORS)},
-                    "t": {"type": "string"},
                     "r": {"type": "string"},
+                    "t": {"type": "string"},
                 },
-                "required": ["i", "c", "t", "r"],
+                "required": ["i", "c", "r", "t"],
                 "additionalProperties": False,
             },
         }
     },
     "required": ["translations"],
+    "additionalProperties": False,
+}
+REVIEW_THINKING_SCHEMA = {
+    "type": "object",
+    "properties": {"why": {"type": "string"}, **REVIEW_SCHEMA["properties"]},
+    "required": ["why", "translations"],
     "additionalProperties": False,
 }
 TERMS_SCHEMA = {
