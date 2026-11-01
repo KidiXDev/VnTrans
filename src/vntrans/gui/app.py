@@ -3,7 +3,7 @@
 import asyncio
 import gc
 from collections import Counter, deque
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta
 from dataclasses import replace
 from itertools import islice
@@ -452,6 +452,7 @@ class Window(UI.AppWindow):
     def update_stats(self):
         included, translated, failed = self.texts.totals
         ui = self.ui
+        ui.suggestion_count = len(self.suggestions)
         ui.total, ui.translated, ui.failed = included, translated, failed
         ui.progress_text = f"{translated:,} / {included:,}"
         ui.status_text = f"{len(self.rows):,} units · {translated:,} translated" + (f" · {failed:,} failed" if failed else "")
@@ -1253,6 +1254,7 @@ class Window(UI.AppWindow):
             self.run = None
             self.terms = self.ws.terms()
             self.suggestions = self.ws.suggestions()
+            ui.suggestion_count = len(self.suggestions)
             self.show_terms()
             self.recheck()
 
@@ -1283,6 +1285,49 @@ class Window(UI.AppWindow):
         if row is not None and self.suggestions.pop((row.file, row.id), None):
             self.ws.dismiss(row)
             self.row_changed(row)
+
+    @slint.callback(global_name="App")
+    async def suggestions_action(self, accept):
+        if not self.ws or self.run or self.editing or not self.suggestions:
+            return
+        ws, texts = self.ws, self.texts
+        suggestions = dict(self.suggestions)
+        if accept:
+            def prepare():
+                entries = []
+                for key, (text, _) in suggestions.items():
+                    if key not in texts.index_of:
+                        continue
+                    row = texts.views[texts.index_of[key]]
+                    entries.append(replace(row, translation=text, error=None,
+                                           status="excluded" if row.status == "excluded" else "edited"))
+                return entries
+            entries = await self.edit("suggestions", prepare, dismiss=True)
+            if entries is not None:
+                self.say(f"Accepted {len(entries):,} suggestions")
+            return
+        def discard():
+            with closing(workspace.Workspace(ws.root)) as worker:
+                worker.dismiss()
+        self.editing = True
+        self.last_action = time.monotonic()
+        try:
+            with self.overlay("Rejecting suggestions…"):
+                await jobs.thread(discard)
+                if ws is not self.ws:
+                    return
+                self.suggestions.clear()
+                self.ui.suggestion_count = 0
+                self.recheck()
+                self.select(self.ui.current)
+                self.show_selection()
+                self.say(f"Rejected {len(suggestions):,} suggestions")
+        except (VnTransError, OSError, sqlite3.Error) as exc:
+            if ws is self.ws:
+                self.fail(exc)
+        finally:
+            self.editing = False
+            self.last_action = time.monotonic()
 
     @slint.callback(global_name="App")
     async def replace_all(self):

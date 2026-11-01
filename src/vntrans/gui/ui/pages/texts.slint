@@ -616,6 +616,44 @@ export component TextsPage inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
             }
 
+            if App.suggestion-count > 0: Card {
+                height: 54px;
+                vertical-stretch: 0;
+                border-color: Theme.violet.transparentize(0.6);
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: App.suggestion-count + " review suggestions across all files";
+                        color: Theme.violet;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        AppButton {
+                            text: "Reject all";
+                            icon: @image-url("../icons/x.svg");
+                            enabled: !App.running;
+                            clicked => { App.suggestions-action(false); }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        AppButton {
+                            text: "Accept all";
+                            icon: @image-url("../icons/check.svg");
+                            primary: true;
+                            enabled: !App.running;
+                            clicked => { App.suggestions-action(true); }
+                        }
+                    }
+                }
+            }
+
             Card {
                 vertical-stretch: 3;
                 clip: true;

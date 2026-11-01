@@ -128,10 +128,12 @@ export global App {
     in property <string> cur-issues;
     in property <string> cur-suggestion;
     in property <string> cur-reason;
+    in property <int> suggestion-count;
     in-out property <bool> replace-open;
     in-out property <string> replace-with;
     callback accept-suggestion();
     callback dismiss-suggestion();
+    callback suggestions-action(bool);
     callback replace-all();
 
     in property <int> sel-count;

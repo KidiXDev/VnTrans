@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 import re
+import sqlite3
 import tempfile
 import threading
 from types import SimpleNamespace
@@ -397,6 +398,111 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(window.fail.call_count, 1)
             finally:
                 ws.close()
+
+
+@unittest.skipIf(filter_rows is None, "gui extra not installed")
+class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        source = root / "source"
+        source.mkdir()
+        (source / "a.ks").write_bytes(b"Hello[l]world\nHello[l]world\n")
+        (source / "b.ks").write_bytes(b"Bye\n")
+        workspace.create(source, root / "work", name="Test")
+        self.ws = workspace.Workspace(root / "work")
+        self.addCleanup(self.ws.close)
+        rows = self.ws.rows()
+        for row, text in zip(rows, ("Old⟦0⟧one", "Leave⟦0⟧alone", "Old goodbye"), strict=True):
+            self.ws.save(row, text, "machine")
+        self.ws.exclude_many([rows[2]], True)
+        self.ws.suggest(rows[0], "Halo⟦0⟧dunia", "Correction")
+        self.ws.suggest(rows[2], "Selamat tinggal", "Correction")
+        texts = TextState(rows, self.ws.formats)
+        self.window = SimpleNamespace(
+            ws=self.ws, rows=rows, texts=texts, index_of=texts.index_of, editing=False, run=None,
+            suggestions=self.ws.suggestions(), ui=SimpleNamespace(current=0, suggestion_count=2, can_undo=False),
+            positions={0: 0}, model=Mock(indices=[0]), overlay=lambda text: nullcontext(), undo_entry=None,
+            update_stats=Mock(), refresh_counts=Mock(), recheck=Mock(), select=Mock(), show_selection=Mock(),
+            say=Mock(), fail=Mock())
+        self.window.edit = lambda *args, **options: Window.edit(self.window, *args, **options)
+        self.window.forget_undo = lambda: Window.forget_undo(self.window)
+        self.original = [replace(row) for row in rows]
+
+    async def invoke(self, callback, *args):
+        before = asyncio.all_tasks()
+        callback(self.window, *args)
+        await asyncio.gather(*(asyncio.all_tasks() - before))
+
+    async def test_accept_all_includes_hidden_files_preserves_exclusion_and_supports_undo(self):
+        await self.invoke(Window.suggestions_action, True)
+        self.assertEqual([row.translation for row in self.ws.rows()],
+                         ["Halo⟦0⟧dunia", "Leave⟦0⟧alone", "Selamat tinggal"])
+        self.assertEqual(self.window.rows[2].status, "excluded")
+        self.assertEqual(self.window.rows[0].status, "edited")
+        self.assertEqual(self.window.suggestions, {})
+        self.assertEqual(self.ws.suggestions(), {})
+        self.assertTrue(self.window.ui.can_undo)
+        self.window.fail.assert_not_called()
+        await self.invoke(Window.undo)
+        self.assertEqual(self.ws.rows(), self.original)
+        self.assertEqual(self.window.rows, self.original)
+        self.assertFalse(self.window.ui.can_undo)
+
+    async def test_reject_all_keeps_translations_and_previous_undo(self):
+        previous_undo = ("previous edit", [])
+        self.window.undo_entry = previous_undo
+        await self.invoke(Window.suggestions_action, False)
+        self.assertEqual(self.ws.suggestions(), {})
+        self.assertEqual(self.window.suggestions, {})
+        self.assertEqual(self.window.ui.suggestion_count, 0)
+        self.assertEqual(self.ws.rows(), self.original)
+        self.assertEqual(self.window.rows, self.original)
+        self.assertIs(self.window.undo_entry, previous_undo)
+        self.window.recheck.assert_called_once()
+        self.window.fail.assert_not_called()
+
+    async def test_invalid_suggestion_prevents_the_whole_accept_batch(self):
+        row = self.window.rows[0]
+        self.ws.suggest(row, "Missing protected command", "Bad suggestion")
+        self.window.suggestions = self.ws.suggestions()
+        await self.invoke(Window.suggestions_action, True)
+        self.assertEqual(self.ws.rows(), self.original)
+        self.assertEqual(self.window.rows, self.original)
+        self.assertEqual(self.window.suggestions, self.ws.suggestions())
+        self.assertEqual(len(self.ws.suggestions()), 2)
+        self.assertIsNone(self.window.undo_entry)
+        self.window.fail.assert_called_once()
+
+    async def test_failed_rejection_keeps_suggestions_visible(self):
+        with patch("vntrans.workspace.Workspace.dismiss", side_effect=sqlite3.OperationalError("write failed")):
+            await self.invoke(Window.suggestions_action, False)
+        self.assertEqual(self.window.suggestions, self.ws.suggestions())
+        self.assertEqual(self.window.ui.suggestion_count, 2)
+        self.assertEqual(len(self.ws.suggestions()), 2)
+        self.assertFalse(self.window.editing)
+        self.window.fail.assert_called_once()
+
+    async def test_actions_do_not_race_an_active_run(self):
+        self.window.run = SimpleNamespace()
+        with patch("vntrans.gui.app.jobs.thread", new_callable=AsyncMock) as thread:
+            await self.invoke(Window.suggestions_action, True)
+            await self.invoke(Window.suggestions_action, False)
+            thread.assert_not_awaited()
+        self.assertEqual(self.ws.rows(), self.original)
+        self.assertEqual(len(self.ws.suggestions()), 2)
+
+    async def test_old_rejection_cannot_clear_a_new_workspaces_suggestions(self):
+        newer = {("new.ks", "line/0"): ("New suggestion", "New reason")}
+        async def change_workspace(function):
+            self.window.ws = SimpleNamespace()
+            self.window.suggestions = newer
+        with patch("vntrans.gui.app.jobs.thread", side_effect=change_workspace):
+            await self.invoke(Window.suggestions_action, False)
+        self.assertEqual(self.window.suggestions, newer)
+        self.assertEqual(self.window.ui.suggestion_count, 2)
+        self.window.say.assert_not_called()
 
 
 class GeometryTests(unittest.TestCase):

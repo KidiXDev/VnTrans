@@ -256,9 +256,12 @@ class Workspace:
             self.db.executemany("INSERT INTO suggestions VALUES (?, ?, ?, ?)",
                                 ((row.file, row.id, text, reason) for row, text, reason in suggestions))
 
-    def dismiss(self, row: Row):
+    def dismiss(self, row: Row | None = None):
         with self.db:
-            self.db.execute("DELETE FROM suggestions WHERE file = ? AND id = ?", (row.file, row.id))
+            if row is None:
+                self.db.execute("DELETE FROM suggestions")
+            else:
+                self.db.execute("DELETE FROM suggestions WHERE file = ? AND id = ?", (row.file, row.id))
 
     def snapshot(self, rows) -> list[tuple]:
         return [(row, row.translation, row.status, row.error) for row in rows]
