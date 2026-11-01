@@ -204,11 +204,33 @@ class WorkspaceTests(unittest.TestCase):
             ws = self.create()
         self.assertTrue(ws.rows())
 
-    def test_cancelled_indexing_preserves_empty_workspace_and_closes_database(self):
+    def test_creation_and_build_progress_use_one_overall_counter(self):
+        for index in range(32):
+            (self.source / f"fast-{index}.ks").write_bytes(b"Hello\n")
+        events = []
+        workspace.create(self.source, self.ws_root, name="Test", progress=lambda *args: events.append(args))
+        self.assertEqual({phase for phase, *_ in events}, {"Scanning scripts", "Extracting"})
+        extracting = [event for event in events if event[0] == "Extracting"]
+        self.assertEqual({total for _, _, total, _ in extracting}, {36})
+        self.assertEqual(extracting[-1], ("Extracting", 36, 36, ""))
+        ratios = [completed / total if total else 0 for _, completed, total, _ in events]
+        self.assertEqual(ratios, sorted(ratios))
+        ws = workspace.Workspace(self.ws_root)
+        self.addCleanup(ws.close)
+        events.clear()
+        ws.build(progress=lambda *args: events.append(args))
+        self.assertEqual({phase for phase, *_ in events}, {"Scanning translations", "Rebuilding", "Writing output"})
+        rebuilding = [event for event in events if event[0] == "Rebuilding"]
+        self.assertEqual({total for _, _, total, _ in rebuilding}, {34})
+        ratios = [completed / total if total else 0 for _, completed, total, _ in events]
+        self.assertEqual(ratios, sorted(ratios))
+        self.assertEqual(events[-1], ("Writing output", 34, 34, ""))
+
+    def test_cancelled_parsing_preserves_empty_workspace_and_closes_database(self):
         self.ws_root.mkdir()
 
         def cancel(phase, completed, total, filename):
-            if phase == "Indexing":
+            if phase == "Extracting" and total and completed == total and not filename:
                 raise RuntimeError("cancelled")
         with self.assertRaisesRegex(RuntimeError, "cancelled"):
             workspace.create(self.source, self.ws_root, name="Test", progress=cancel)
@@ -225,7 +247,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_create_does_not_replace_a_destination_created_during_processing(self):
         def collide(phase, completed, total, filename):
-            if phase == "Indexing" and total and completed == total:
+            if phase == "Extracting" and total and completed == total and not filename:
                 self.ws_root.mkdir()
         with self.assertRaisesRegex(VnTransError, "destination appeared"):
             workspace.create(self.source, self.ws_root, name="Test", progress=collide)

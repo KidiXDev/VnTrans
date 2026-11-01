@@ -271,18 +271,30 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
         barrier = threading.Barrier(4)
         results = await asyncio.gather(*(jobs.thread(barrier.wait, 2) for _ in range(4)))
         self.assertEqual(set(results), {0, 1, 2, 3})
+
     async def test_spawned_build_and_cooperative_cancellation(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             source = root / "source"
             source.mkdir()
             (source / "a.ks").write_bytes(b"Hello[l]world\n")
-            workspace.create(source, root / "work", name="Test")
+            for index in range(32):
+                (source / f"fast-{index}.ks").write_bytes(b"Hello\n")
             updates, cancel = [], threading.Event()
+            await run(workspace.create, source, root / "work", name="Test", cancel=cancel,
+                      progress=lambda *args: updates.append(args))
+            self.assertEqual(updates[-1], ("Extracting", 33, 33, ""))
+            ratios = [completed / total if total else 0 for _, completed, total, _ in updates]
+            self.assertEqual(ratios, sorted(ratios))
+            updates.clear()
             target, report = await run(build, root / "work", cancel=cancel, progress=lambda *args: updates.append(args))
             self.assertTrue((target / "patch/a.ks").is_file())
-            self.assertEqual(report.files, 1)
-            self.assertEqual(updates[-1], ("Writing output", 1, 1, ""))
+            self.assertEqual(report.files, 33)
+            self.assertEqual(updates[-1], ("Writing output", 33, 33, ""))
+            ratios = [completed / total if total else 0 for _, completed, total, _ in updates]
+            self.assertEqual(ratios, sorted(ratios))
+            self.assertLessEqual({phase for phase, *_ in updates},
+                                 {"Scanning translations", "Rebuilding", "Writing output"})
             cancel.set()
             with self.assertRaises(Cancelled):
                 await run(workspace.create, source, root / "cancelled", name="Test", cancel=cancel,

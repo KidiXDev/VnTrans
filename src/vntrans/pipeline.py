@@ -97,7 +97,7 @@ def source_files(path: Path, engine, progress=_no_progress):
     found = False
     with closing(opened_files(candidates)) as opened:
         for index, (item, stream) in enumerate(opened):
-            progress("Reading scripts", index, len(candidates), str(item))
+            progress("Extracting", index, len(candidates), str(item))
             if stream is None:
                 continue
             header = stream.read(8)
@@ -107,7 +107,8 @@ def source_files(path: Path, engine, progress=_no_progress):
             relative = Path(item.name) if path.is_file() else item.relative_to(path)
             found = True
             yield relative, data
-    progress("Reading scripts", len(candidates), len(candidates), "")
+            progress("Extracting", index + 1, len(candidates), str(relative))
+    progress("Extracting", len(candidates), len(candidates), "")
     if not found:
         raise VnTransError("no supported scripts found in input")
 
@@ -237,7 +238,6 @@ def extract(input, *, output, engine="kirikiri", encoding=None, language_index=0
     report = Report()
     with staging(destination) as folder:
         for relative, data in source_files(source, handler, progress):
-            progress("Extracting", report.files, 0, str(relative))
             try:
                 script = handler.extract(str(relative), data, encoding=encoding, language_index=language_index)
                 doc = document(relative, data, engine, script, language_index)
@@ -247,7 +247,6 @@ def extract(input, *, output, engine="kirikiri", encoding=None, language_index=0
                 report.warnings.extend(f"{relative}: {w}" for w in script.warnings)
             except VnTransError as exc:
                 raise VnTransError(f"{relative}: {exc}") from exc
-        progress("Extracting", report.files, report.files, str(relative))
         progress("Writing output", report.files, report.files, "")
     return report
 
@@ -257,7 +256,7 @@ def check_wrap(wrap_columns):
         raise VnTransError("wrap columns must be a positive integer")
 
 
-def translation_sources(source, json_dir, progress=_no_progress):
+def translation_sources(source, json_dir, progress=_no_progress, *, phase="Rebuilding"):
     if not json_dir.is_dir():
         raise VnTransError(f"translation directory does not exist: {json_dir}")
     progress("Scanning translations", 0, 0, str(json_dir))
@@ -273,13 +272,15 @@ def translation_sources(source, json_dir, progress=_no_progress):
         if not isinstance(engine, str):
             raise VnTransError("translation batch must identify one engine")
         handler = get_engine(engine)
-        with closing(source_files(source, handler, progress)) as sources:
+        completed = 0
+        def update(_phase, _completed, _total, filename):
+            progress(phase, completed, len(docs), filename)
+        with closing(source_files(source, handler, update)) as sources:
             for index, (relative, data) in enumerate(sources):
                 item = (first_path, None) if index == 0 else next(opened, None)
                 if item is None or item[0].relative_to(json_dir) != Path(str(relative) + ".json"):
                     raise VnTransError("translation files do not match source scripts; missing or extra JSON")
                 path, stream = item
-                progress("Loading JSON", index, len(docs), str(path.relative_to(json_dir)))
                 try:
                     doc = first if index == 0 else read_document(path, stream)
                 except VnTransError as exc:
@@ -287,8 +288,8 @@ def translation_sources(source, json_dir, progress=_no_progress):
                 first = None
                 if doc.get("engine") != engine:
                     raise VnTransError("translation batch must identify one engine")
-                progress("Loading JSON", index + 1, len(docs), "")
                 yield relative, data, doc, engine, len(docs)
+                completed += 1
         if next(opened, None) is not None:
             raise VnTransError("translation files do not match source scripts; missing or extra JSON")
 
@@ -325,7 +326,7 @@ def _rebuild(input, translations, *, output=None, wrap_columns=None, output_enco
     report = Report()
     phase = "Rebuilding" if destination is not None else "Validating"
     with staging(destination) if destination is not None else nullcontext(None) as folder:
-        for relative, data, doc, engine, total in translation_sources(source, json_dir, progress):
+        for relative, data, doc, engine, total in translation_sources(source, json_dir, progress, phase=phase):
             progress(phase, report.files, total, str(relative))
             rebuilt = rebuild_file(relative, data, doc, engine, report,
                                    wrap_columns=wrap_columns, output_encoding=output_encoding)

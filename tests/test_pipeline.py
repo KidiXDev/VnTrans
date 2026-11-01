@@ -169,16 +169,40 @@ class PipelineTests(unittest.TestCase):
         events = []
         callback = lambda *args: events.append(args)
         extract(self.source, output=self.json_dir, progress=callback)
-        self.assertIn(("Extracting", 2, 2, "test.ks"), events)
+        self.assertIn(("Extracting", 3, 3, "test.ks"), events)
         self.assertEqual(events[-1], ("Writing output", 2, 2, ""))
         events.clear()
         validate(self.source, translations=self.json_dir, progress=callback)
-        self.assertIn(("Loading JSON", 2, 2, ""), events)
+        self.assertEqual({phase for phase, *_ in events}, {"Scanning translations", "Validating"})
         self.assertEqual(events[-1], ("Validating", 2, 2, "test.ks"))
         events.clear()
         rebuild(self.source, translations=self.json_dir, output=self.output, progress=callback)
         self.assertIn(("Rebuilding", 2, 2, "test.ks"), events)
         self.assertEqual(events[-1], ("Writing output", 2, 2, ""))
+
+    def test_fast_batch_progress_is_overall_and_never_resets(self):
+        for index in range(32):
+            (self.source / f"fast-{index}.ks").write_bytes(b"Hello\n")
+        (self.source / "readme.txt").write_bytes(b"not a script")
+        (self.source / "empty").mkdir()
+        for operation, options, phase in (
+                (extract, dict(output=self.json_dir), "Extracting"),
+                (validate, dict(translations=self.json_dir), "Validating"),
+                (rebuild, dict(translations=self.json_dir, output=self.output), "Rebuilding")):
+            with self.subTest(operation=operation.__name__):
+                events = []
+                operation(self.source, **options, progress=lambda *args: events.append(args))
+                active = [event for event in events if event[0] == phase]
+                totals = {total for _, _, total, _ in active}
+                self.assertEqual(len(totals), 1)
+                self.assertNotIn(0, totals)
+                self.assertEqual(active[0][1], 0)
+                self.assertEqual(active[-1][1], active[-1][2])
+                ratios = [completed / total if total else 0 for _, completed, total, _ in events]
+                self.assertEqual(ratios, sorted(ratios))
+                self.assertEqual({name for name, *_ in events},
+                                 {"Scanning scripts" if phase == "Extracting" else "Scanning translations", phase}
+                                 | ({"Writing output"} if operation != validate else set()))
 
     def test_symlinks_and_traversal(self):
         link = self.root / "link"

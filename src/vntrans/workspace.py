@@ -143,9 +143,7 @@ def create(original, root, *, name, engine="kirikiri", encoding=None, language_i
         db = connect(folder / DATABASE)
         try:
             with db:
-                count = 0
                 for relative, data in pipeline.source_files(original, handler, progress):
-                    progress("Extracting", count, 0, str(relative))
                     try:
                         script = handler.extract(str(relative), data, encoding=encoding, language_index=language_index)
                         doc = pipeline.document(relative, data, engine, script, language_index)
@@ -154,15 +152,12 @@ def create(original, root, *, name, engine="kirikiri", encoding=None, language_i
                     pipeline.write_file(folder / "source", relative, data)
                     pipeline.write_file(folder / "extracted", Path(str(relative) + ".json"),
                                         pipeline.encode_document(doc))
-                    progress("Indexing", count, 0, str(relative))
                     db.execute("INSERT INTO files VALUES (?, ?)", (doc["source"], doc["format"]))
                     db.executemany(
                         "INSERT INTO units(file, id, ord, kind, source, speaker, scene, context) VALUES (?,?,?,?,?,?,?,?)",
                         ((doc["source"], unit["id"], ord, unit["kind"], unit["source"], speaker,
                           scene(unit["context"]), json.dumps(unit["context"], ensure_ascii=False))
                          for ord, (unit, speaker) in enumerate(zip(doc["units"], speakers(doc["units"]), strict=True))))
-                    count += 1
-                progress("Indexing", count, count, "")
         finally:
             db.close()
         write_json(folder / MANIFEST, dict(
