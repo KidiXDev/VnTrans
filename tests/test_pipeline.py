@@ -146,6 +146,47 @@ class PipelineTests(unittest.TestCase):
         report = validate(self.source, translations=self.json_dir, wrap_columns=3)
         self.assertTrue(any("test.ks: unbreakable word" in w for w in report.warnings))
 
+    def test_worker_processes_match_inline_rebuild(self):
+        for index in range(20):
+            (self.source / f"extra-{index:02}.ks").write_bytes(b"Another line\n")
+        self.export()
+        for name in ("extra-03.ks.json", "extra-17.ks.json", "test.ks.json"):
+            self.edit(
+                name, lambda doc: doc["units"][0].update(translation="unbreakable")
+            )
+        self.edit(
+            "nested/test.ks.scn.json",
+            lambda doc: next(u for u in doc["units"] if u["kind"] == "dialogue").update(
+                translation="Translated"
+            ),
+        )
+
+        def files(folder):
+            return {
+                p.relative_to(folder): p.read_bytes()
+                for p in folder.rglob("*")
+                if p.is_file()
+            }
+
+        options = dict(translations=self.json_dir, wrap_columns=3)
+        inline = rebuild(self.source, output=self.output, **options)
+        with patch("vntrans.pipeline.PARALLEL_BYTES", 0):
+            parallel = rebuild(self.source, output=self.root / "parallel", **options)
+            self.edit(
+                "extra-09.ks.json",
+                lambda doc: doc["units"][0].update(translation=123),
+            )
+            with self.assertRaisesRegex(VnTransError, "^extra-09.ks: "):
+                rebuild(self.source, output=self.root / "failed", **options)
+        self.assertEqual(files(self.root / "parallel"), files(self.output))
+        self.assertEqual(
+            (parallel.files, parallel.units, parallel.warnings),
+            (inline.files, inline.units, inline.warnings),
+        )
+        self.assertGreaterEqual(len(inline.warnings), 3)
+        self.assertFalse((self.root / "failed").exists())
+        self.assertFalse(list(self.root.glob(".vntrans-*")))
+
     def test_invalid_edits_fail_before_output(self):
         self.export()
         path = self.json_dir / "test.ks.json"

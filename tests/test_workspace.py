@@ -218,6 +218,9 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(ws.builds(), [target])
         second, _ = ws.build()
         self.assertNotEqual(second, target)
+        with patch("vntrans.pipeline.PARALLEL_BYTES", 0):
+            third, _ = ws.build()
+        self.assertEqual(digest(third), digest(second))
 
     def test_machine_commit_checks_every_row_before_writing(self):
         ws = self.create()

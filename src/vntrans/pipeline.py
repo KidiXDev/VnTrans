@@ -2,13 +2,14 @@
 
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
 import tempfile
 import warnings
 from collections import deque
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from itertools import islice
@@ -384,6 +385,58 @@ def rebuild_file(
         raise VnTransError(f"{relative}: {exc}") from exc
 
 
+# Below this much input, starting worker processes costs more than it saves.
+PARALLEL_BYTES = 1 << 20
+
+
+def _rebuild_job(relative, data, doc, engine, options):
+    part = Report()
+    return rebuild_file(relative, data, doc, engine, part, **options), part
+
+
+def _merge(item, report):
+    relative, doc, total, future = item
+    rebuilt, part = future.result()
+    report.files += part.files
+    report.units += part.units
+    report.warnings += part.warnings
+    return relative, doc, rebuilt, total
+
+
+def rebuilt_files(sources, report, **options):
+    """Yield (relative, doc, rebuilt, total) in source order; large batches use worker processes."""
+    # Each worker can peak near 200 MiB on large PSB scenarios.
+    workers = min(8, os.process_cpu_count() or 1)
+    pending = deque()
+    pool = None
+    size = 0
+    try:
+        for relative, data, doc, engine, total in sources:
+            size += len(data)
+            if pool is None and (workers == 1 or size < PARALLEL_BYTES):
+                rebuilt = rebuild_file(relative, data, doc, engine, report, **options)
+                yield relative, doc, rebuilt, total
+                continue
+            if pool is None:
+                pool = ProcessPoolExecutor(
+                    workers, mp_context=multiprocessing.get_context("spawn")
+                )
+            future = pool.submit(_rebuild_job, relative, data, doc, engine, options)
+            pending.append((relative, doc, total, future))
+            if len(pending) >= 2 * workers:
+                yield _merge(pending.popleft(), report)
+        while pending:
+            yield _merge(pending.popleft(), report)
+    finally:
+        if pool is not None:
+            pool.shutdown(cancel_futures=True)
+
+
+def files_done(progress, report):
+    """Count finished files; reading runs ahead of rebuilding in worker processes."""
+    return lambda phase, _read, total, name: progress(phase, report.files, total, name)
+
+
 def _rebuild(
     input,
     translations,
@@ -402,22 +455,17 @@ def _rebuild(
     with (
         staging(destination) if destination is not None else nullcontext(None) as folder
     ):
-        for relative, data, doc, engine, total in translation_sources(
-            source, json_dir, progress, phase=phase
-        ):
-            progress(phase, report.files, total, str(relative))
-            rebuilt = rebuild_file(
-                relative,
-                data,
-                doc,
-                engine,
-                report,
-                wrap_columns=wrap_columns,
-                output_encoding=output_encoding,
-            )
-            if folder is not None:
-                write_file(folder, relative, rebuilt)
-            progress(phase, report.files, total, str(relative))
+        sources = translation_sources(
+            source, json_dir, files_done(progress, report), phase=phase
+        )
+        results = rebuilt_files(
+            sources, report, wrap_columns=wrap_columns, output_encoding=output_encoding
+        )
+        with closing(results):
+            for relative, _doc, rebuilt, total in results:
+                if folder is not None:
+                    write_file(folder, relative, rebuilt)
+                progress(phase, report.files, total, str(relative))
         progress(phase, report.files, report.files, str(relative))
         if folder is not None:
             progress("Writing output", report.files, report.files, "")

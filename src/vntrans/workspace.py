@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -677,29 +678,32 @@ class Workspace:
             pipeline.safe_path(self.root / "extracted"),
         )
         pipeline.disjoint(source, extracted, pipeline.safe_path(target))
-        with pipeline.staging(target) as folder:
+
+        def filled():
             for relative, data, doc, engine, total in pipeline.translation_sources(
-                source, extracted, progress
+                source, extracted, pipeline.files_done(progress, report)
             ):
                 progress("Rebuilding", report.files, total, str(relative))
                 for unit in doc["units"]:
                     unit["translation"] = translations.get((doc["source"], unit["id"]))
-                rebuilt = pipeline.rebuild_file(
-                    relative,
-                    data,
-                    doc,
-                    engine,
-                    report,
-                    wrap_columns=wrap_columns,
-                    output_encoding=output_encoding,
-                )
-                pipeline.write_file(
-                    folder / "json",
-                    Path(str(relative) + ".json"),
-                    pipeline.encode_document(doc),
-                )
-                pipeline.write_file(folder / "patch", relative, rebuilt)
-                progress("Rebuilding", report.files, total, str(relative))
+                yield relative, data, doc, engine, total
+
+        with pipeline.staging(target) as folder:
+            results = pipeline.rebuilt_files(
+                filled(),
+                report,
+                wrap_columns=wrap_columns,
+                output_encoding=output_encoding,
+            )
+            with closing(results):
+                for relative, doc, rebuilt, total in results:
+                    pipeline.write_file(
+                        folder / "json",
+                        Path(str(relative) + ".json"),
+                        pipeline.encode_document(doc),
+                    )
+                    pipeline.write_file(folder / "patch", relative, rebuilt)
+                    progress("Rebuilding", report.files, total, str(relative))
             write_json(
                 folder / "report.json",
                 dict(
