@@ -141,15 +141,21 @@ class ScnScript:
                 )
         if not changes:
             return self.data
-        # Reparse for repeatable API calls; never mutate the source model.
-        psb = PSB(self.data)
-        for id, text in changes.items():
-            path = id.split("/")
-            node = psb.root
-            for part in path[:-1]:
-                node = node.value[int(part) if node.tag == 32 else part]
-            key = int(path[-1]) if node.tag == 32 else path[-1]
-            node.value[key] = Node.string(text)
-        result = psb.build()
+        # Copy only containers on changed paths so the source model stays reusable.
+        root = Node(self.psb.root.tag, self.psb.root.value.copy())
+        copies = {id(root)}
+        for unit_id, text in changes.items():
+            *parents, last = unit_id.split("/")
+            node = root
+            for part in parents:
+                key = int(part) if node.tag == 32 else part
+                child = node.value[key]
+                if id(child) not in copies:
+                    child = Node(child.tag, child.value.copy())
+                    copies.add(id(child))
+                    node.value[key] = child
+                node = child
+            node.value[int(last) if node.tag == 32 else last] = Node.string(text)
+        result = self.psb.build(root)
         PSB(result)
         return result

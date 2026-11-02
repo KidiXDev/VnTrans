@@ -45,6 +45,21 @@ class ScnTests(unittest.TestCase):
             self.assertEqual(script.rebuild({}), data)
             parse.assert_not_called()
 
+    def test_rebuild_is_repeatable_and_keeps_the_source_model(self):
+        data = scenario(many_strings=True)
+        script = ScnScript(data, 0)
+        before = plain(script.psb.root)
+        values = {u.id: f"Changed {i}" for i, u in enumerate(script.units)}
+        first = script.rebuild(values)
+        self.assertEqual(script.rebuild(values), first)
+        self.assertEqual(plain(script.psb.root), before)
+        self.assertEqual(plain(script.psb.root), plain(PSB(data).root))
+        rebuilt = ScnScript(first, 0)
+        self.assertEqual(
+            {u.id: u.source for u in rebuilt.units},
+            {u.id: values[u.id] for u in script.units},
+        )
+
     def test_occurrence_isolation_and_resource_preservation(self):
         original = scenario(many_strings=True)
         script = ScnScript(original, 0)
