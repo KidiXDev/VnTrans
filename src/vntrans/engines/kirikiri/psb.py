@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from ...model import VnTransError
 
 
-@dataclass
+@dataclass(slots=True)
 class Node:
     tag: int
     value: object
@@ -124,10 +124,13 @@ class PSB:
         p += 1
         if not 1 <= width <= 8 or count > (limit - p) // width:
             raise VnTransError("PSB array exceeds section")
-        return (
-            [self.uint(p + i * width, width, limit) for i in range(count)],
-            p + count * width,
-        )
+        end = p + count * width
+        data = self.data
+        if width == 1:
+            return list(data[p:end]), end
+        return [
+            int.from_bytes(data[i : i + width], "little") for i in range(p, end, width)
+        ], end
 
     def _name(self, index: int) -> str:
         first, second, third = self._name_arrays
@@ -204,22 +207,18 @@ class PSB:
             raise VnTransError(f"unsupported PSB value tag 0x{tag:02x} at 0x{start:x}")
         return Node(tag, value, self.data[start:p])
 
-    def _encode(self, node, strings):
+    def _encode(self, node, strings, names):
         if node.raw is not None:
             return node.raw
         if node.tag in (32, 33):
             children = node.value.values() if node.tag == 33 else node.value
-            parts = [self._encode(child, strings) for child in children]
+            parts = [self._encode(child, strings, names) for child in children]
             offsets = []
             length = 0
             for part in parts:
                 offsets.append(length)
                 length += len(part)
-            keys = (
-                pack_array([self.names.index(k) for k in node.value])
-                if node.tag == 33
-                else b""
-            )
+            keys = pack_array([names[k] for k in node.value]) if node.tag == 33 else b""
             return bytes([node.tag]) + keys + pack_array(offsets) + b"".join(parts)
         if node.tag == 21 and isinstance(node.value, str):
             index = len(strings)
@@ -228,9 +227,12 @@ class PSB:
             return bytes([20 + size]) + index.to_bytes(size, "little")
         raise VnTransError("cannot serialize a newly constructed non-string PSB scalar")
 
-    def build(self) -> bytes:
+    def build(self, root: Node | None = None) -> bytes:
         strings = list(self.strings)
-        entries_data = self._encode(self.root, strings)
+        names = {}
+        for index, name in enumerate(self.names):
+            names.setdefault(name, index)
+        entries_data = self._encode(self.root if root is None else root, strings, names)
         offsets = []
         parts = []
         length = 0
