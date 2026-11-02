@@ -104,6 +104,7 @@ REVIEW_ROLE = (
 
 REVIEW_ERRORS = {
     "meaning": "Mistranslation",
+    "language": "Wrong language",
     "omission": "Missing content",
     "addition": "Added content",
     "name": "Name or term",
@@ -118,7 +119,8 @@ REVIEW = (
     "reply. Review the existing translation rather than translating the source again. When unsure, leave "
     "the record out.\n"
     '- Report a record only for one of these errors, given as "c": meaning (the translation says something '
-    "the source does not), omission (source content is missing), addition (content absent from the source), "
+    "the source does not), language (the translation, or part of it, is written in another language than "
+    "{target}; translate it into {target}), omission (source content is missing), addition (content absent from the source), "
     "name (a wrong name or glossary term), honorific (an honorific or form of address translated, dropped or "
     "changed), grammar ({target} that a native reader would call broken even in casual speech), quotes "
     "(quotation marks contradict the source). Style, tone, "

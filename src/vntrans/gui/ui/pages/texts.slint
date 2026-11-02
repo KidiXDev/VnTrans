@@ -631,7 +631,7 @@ export component TextsPage inherits Rectangle {
                     height: 28px;
                     model: ["All issues", "Source script left", "Glossary term missing", "Same as source",
                         "Line breaks differ", "Fails checks", "Speaker name added", "Furigana kept", "Quote marks wrong",
-                        "Honorific missing"];
+                        "Honorific missing", "Wrong language"];
                     current-index <=> App.issue-index;
                     selected => { App.filter-changed(); }
                 }

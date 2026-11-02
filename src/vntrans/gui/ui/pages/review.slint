@@ -6,7 +6,7 @@ import { RunSettings } from "translate.slint";
 
 global Tones {
     public pure function of(label: string) -> color {
-        if (label == "Mistranslation") { return Theme.danger; }
+        if (label == "Mistranslation" || label == "Wrong language") { return Theme.danger; }
         if (label == "Missing content" || label == "Added content") { return Theme.warning; }
         if (label == "Name or term") { return Theme.info; }
         if (label == "Honorific") { return Theme.violet; }

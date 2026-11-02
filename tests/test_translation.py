@@ -959,7 +959,7 @@ class DuplicateTests(WorkspaceCase):
 
 class ReviewGuardTests(unittest.TestCase):
     source = "いつもと同じなんだけど、とてもいいなって感じる。"
-    script = quality.residue("Indonesian")
+    target = "Indonesian"
 
     def test_romaji_spells_hiragana_in_hepburn(self):
         self.assertEqual(
@@ -1002,22 +1002,52 @@ class ReviewGuardTests(unittest.TestCase):
             "Itsumo to onaji nan dakedo, totemo ii natte kanjiru.": "romanizes",
             self.source: "source-language text",
             "Rasanya sama, tapi とても menyenangkan.": "source-language text",
+            "It's the same as always, but somehow it feels really nice.": "not written in Indonesian",
         }
         for revision, expected in cases.items():
             with self.subTest(revision=revision):
-                problem = quality.unfit(revision, current, self.source, self.script)
+                problem = quality.unfit(revision, current, self.source, self.target)
                 if expected:
                     self.assertIn(expected, problem)
                 else:
                     self.assertEqual(problem, "")
         laugh = "うふふふふふ"
         self.assertEqual(
-            quality.unfit("Ufufufufu~", "Ufufufu...", laugh, self.script), ""
+            quality.unfit("Ufufufufu~", "Ufufufu...", laugh, self.target), ""
         )
         self.assertEqual(
-            quality.unfit("Hello", "Bye", "Hello", quality.residue("English")),
+            quality.unfit("Hello", "Bye", "Hello", "English"),
             "it copies the source text",
         )
+
+    def test_foreign_tells_wrong_language_from_quotes_and_names(self):
+        english = "It's the same as always, but somehow it feels really nice."
+        indonesian = "Rasanya sama seperti biasanya, tapi entah kenapa terasa sangat menyenangkan."
+        for text, target in (
+            (english, "Indonesian"),
+            (indonesian, "English"),
+            ("I don't know what you mean⟦0⟧.", "German"),
+            ("Are you okay?", "Korean"),
+            (english, "Chinese (Simplified)"),
+            ("Tôi không biết bạn đang nói gì.", "Spanish"),
+        ):
+            with self.subTest(text=text, target=target):
+                self.assertTrue(quality.foreign(text, target))
+        for text, target in (
+            (english, "English"),
+            (indonesian, "Indonesian"),
+            ("Dia bilang “I love you” padaku.", "Indonesian"),
+            ("Il a dit « I love you ».", "French"),
+            ("Onii-chan, wait for me!", "English"),
+            ("Onii-chan!", "Russian"),
+            ("Он сказал: I love you.", "Russian"),
+            ("괜찮아? Are you okay?", "Korean"),
+            ("Tôi không biết bạn đang nói gì.", "Vietnamese"),
+            ("What?", "Indonesian"),
+            ("……", "Thai"),
+        ):
+            with self.subTest(text=text, target=target):
+                self.assertFalse(quality.foreign(text, target))
 
 
 class HonorificTests(WorkspaceCase):
@@ -1207,6 +1237,34 @@ class ReviewTests(WorkspaceCase):
         self.assertEqual(self.ws.suggestions()[("a.ks", self.rows[2].id)][0], "“Ya”")
         self.assertEqual(self.rows[2].translation, "Ya")
         self.assertEqual(run.found, 1)
+
+    def test_wrong_language_is_flagged_and_review_fixes_it(self):
+        english = "It's the same as always, but somehow it feels really nice."
+        self.ws.save(self.rows[0], english)
+        checker = quality.Checker(self.ws.check, "Indonesian", [])
+        self.assertIn("language", checker.issues(self.rows[0]))
+        self.assertNotIn("language", checker.issues(self.rows[1]))
+        run = self.review_run(
+            lambda recs, user: dict(
+                translations=[
+                    dict(
+                        i=1,
+                        c="language",
+                        t=self.natural[0],
+                        r="The translation is English, not Indonesian.",
+                    )
+                ]
+            ),
+            indices=[0],
+        )
+        asyncio.run(run.run())
+        self.assertEqual(
+            self.ws.suggestions()[("a.ks", self.rows[0].id)],
+            (
+                self.natural[0],
+                "Wrong language: The translation is English, not Indonesian.",
+            ),
+        )
 
     def test_review_has_nearby_context_and_retains_real_corrections(self):
         self.ws.save(

@@ -18,6 +18,7 @@ LABELS = {
     "ruby": "Furigana kept",
     "quote": "Quote marks wrong",
     "honorific": "Honorific missing",
+    "language": "Wrong language",
 }
 HONORIFIC = re.compile(
     r"\b[^\W\d_]+-(?:san|chan|kun|sama|senpai|sensei|dono|tan)\b|\b(?:aniki|aneki|senpai|sensei)\b",
@@ -61,6 +62,55 @@ LETTERS = {
     "Japanese": re.compile(f"[ぁ-ゖゝゞァ-ヺヽヾㇰ-ㇿｦ-ｯｱ-ﾝ々]|{KANJI.pattern}"),
     "Chinese": KANJI,
     "Korean": re.compile(f"[ㄱ-ㆎ]|{HANGUL.pattern}|{KANJI.pattern}"),
+}
+SCRIPTS = {
+    "Japanese": LETTERS["Japanese"],
+    "Chinese": KANJI,
+    "Korean": HANGUL,
+    "Thai": re.compile(r"[฀-๿]"),
+    "Russian": re.compile(r"[Ѐ-ӿ]"),
+}
+WORDS = re.compile(r"[^\W\d_]+")
+FUNCTION_WORDS = {
+    language: frozenset(words.split())
+    for language, words in (
+        (
+            "English",
+            "i you the and is are it that what this were have with your be of just not "
+            "why there they we he she his her would can know but for my",
+        ),
+        (
+            "Indonesian",
+            "yang dan aku kamu kau tidak nggak gak enggak ini itu apa ada dengan untuk sudah "
+            "udah akan saya juga tapi bisa ke dari di lagi kenapa begitu sih kok aja mereka "
+            "kita kami sangat banget belum jadi harus kalau dia",
+        ),
+        (
+            "Vietnamese",
+            "không của và có tôi anh này đó được một những cho với người gì thì mà đi cậu chị "
+            "rồi vậy đây bạn nhé ở",
+        ),
+        (
+            "Spanish",
+            "el los las del pero muy yo tú qué sí eso esto estoy soy tengo también una hay "
+            "ahora aquí usted puedo quiero verdad",
+        ),
+        (
+            "Portuguese",
+            "não você muito uma isso isto estou sou tenho também agora aqui ele ela eles "
+            "então obrigado obrigada sim nós já ao é meu minha vou",
+        ),
+        (
+            "French",
+            "je est et une pas ne vous nous il elle ce ça mais oui avec pour dans sur très "
+            "suis moi toi qui quoi ai sont le les au",
+        ),
+        (
+            "German",
+            "ich nicht und ist der den dem ein eine sie wir mit auf nein aber auch noch schon "
+            "wie mich mir dich dir bin hast habe sind wenn dass nur jetzt hier doch zu von sehr",
+        ),
+    )
 }
 
 
@@ -167,13 +217,17 @@ def review_text(text: str, row, names, formats) -> str:
 
 
 def oversteps(current: str, revision: str, error: str, honorifics: bool) -> bool:
-    """A revision that trims the line by over a fifth without a meaning or added-content error, or that
-    loses a romanized honorific the current translation has."""
-    if len(revision) < 0.8 * len(current) and error not in ("meaning", "addition"):
+    """A revision that trims the line by over a fifth without a meaning, added-content or language error,
+    or that loses a romanized honorific the current translation has outside a language fix."""
+    if len(revision) < 0.8 * len(current) and error not in (
+        "meaning",
+        "addition",
+        "language",
+    ):
         return True
     return (
         honorifics
-        and error != "addition"
+        and error not in ("addition", "language")
         and len(HONORIFIC.findall(revision)) < len(HONORIFIC.findall(current))
     )
 
@@ -225,17 +279,42 @@ def romanized(source: str, text: str) -> bool:
     return len(found) >= 2 and 5 * len("".join(found)) >= 3 * len("".join(phrases))
 
 
-def unfit(revision: str, current: str, source: str, script) -> str:
+def foreign(text: str, target: str) -> bool:
+    """True when `text` reads as another language than `target`.
+
+    A target with its own script must use it at all; otherwise another language's function words must
+    outnumber the target's twice over and make up a quarter of the words, so a quoted phrase or a kept
+    name is not flagged."""
+    text = unicodedata.normalize("NFC", MARKER.sub("", text))
+    script = next(
+        (pattern for name, pattern in SCRIPTS.items() if target.startswith(name)), None
+    )
+    if script and script.search(text):
+        return False
+    words = WORDS.findall(text.casefold())
+    hits = {
+        language: sum(word in vocabulary for word in words)
+        for language, vocabulary in FUNCTION_WORDS.items()
+    }
+    own = hits.pop(target, 0)
+    best = max(hits.values())
+    return best >= 2 and best > 2 * own and 4 * best >= len(words)
+
+
+def unfit(revision: str, current: str, source: str, target: str) -> str:
     """Why `revision` can't replace `current`, or "" when it can: it brings back source-language script,
-    copies the source, or romanizes it. `script` is the pattern from `residue()`."""
+    copies the source, romanizes it, or isn't written in `target`."""
     text, before = MARKER.sub("", revision), MARKER.sub("", current)
     original = MARKER.sub("", source).strip()
+    script = residue(target)
     if script.search(text) and not script.search(before):
         return "it leaves source-language text in the line"
     if text.strip() == original and before.strip() != original:
         return "it copies the source text"
     if romanized(source, text) and not romanized(source, before):
         return "it romanizes the source instead of translating it"
+    if foreign(text, target) and not foreign(before, target):
+        return f"it is not written in {target}"
     return ""
 
 
@@ -263,6 +342,7 @@ class Checker:
         self.check = check
         self.names = names
         self.formats = formats or {}
+        self.target = target
         self.residue = residue(target)
         self.honorifics = honorifics
         self.address = Address(terms) if honorifics else None
@@ -315,4 +395,6 @@ class Checker:
             for target in self.address.found(row.source).values()
         ):
             found.append("honorific")
+        if foreign(row.translation, self.target):
+            found.append("language")
         return found

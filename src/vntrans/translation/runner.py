@@ -193,7 +193,6 @@ class Run:
         self.settings = SETTINGS | settings
         self.languages = dict(ws.manifest["languages"])
         self.honorifics = prompts.keeps_honorifics(sections, self.languages)
-        self.script = quality.residue(self.languages["target"])
         self.planned = {
             index: (rows[index].status, rows[index].translation) for index in indices
         }
@@ -517,7 +516,7 @@ class Run:
                 checked,
                 row.translation,
                 prompts.shown(row, self.ws.formats),
-                self.script,
+                self.languages["target"],
             )
             if problem:
                 rejected[index] = (checked, problem)
