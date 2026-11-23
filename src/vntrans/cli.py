@@ -2,6 +2,7 @@ import argparse
 import sys
 
 from . import pipeline
+from .engines import ENGINES
 from .model import VnTransError
 from .progress import Progress
 
@@ -14,7 +15,7 @@ def main(argv=None) -> int:
     extract = commands.add_parser("extract", help="export translation JSON")
     extract.add_argument("input")
     extract.add_argument("--output", required=True)
-    extract.add_argument("--engine", default="kirikiri")
+    extract.add_argument("--engine", choices=ENGINES, default="kirikiri")
     extract.add_argument("--encoding")
     extract.add_argument("--language-index", type=int, default=0)
     for name in ("validate", "rebuild"):

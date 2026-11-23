@@ -55,6 +55,13 @@ FreeMote was consulted as a cross-check of PSB format behavior and header
 checksum fields: https://github.com/UlyssesWu/FreeMote . No FreeMote library or
 implementation is included or required by VnTrans.
 
+The HexenHaus format was cross-checked with GARbro's ARCC reader
+(https://github.com/morkt/GARbro/blob/master/ArcFormats/Hexenhaus/ArcARCC.cs)
+and msg-tool's NORI script reader
+(https://github.com/lifegpc/msg-tool/blob/master/src/scripts/hexen_haus/bin.rs).
+The Python handlers use the bytecode references and checksums verified against
+the sample archive, and run without either reference tool.
+
 ## LinguaGacha
 
 Source: https://github.com/neavo/LinguaGacha

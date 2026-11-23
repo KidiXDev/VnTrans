@@ -172,6 +172,6 @@ def render(unit: Unit, translated: str, format: str, columns: int | None = None)
         if not unit.context.get("literal"):
             translated = translated.replace("[", "[[")
         translated = translated.replace("\n", "[r]")
-    else:
+    elif format != "nori":
         translated = translated.replace("\n", r"\n")
     return MARKER.sub(lambda m: controls[int(m[1])], translated)
