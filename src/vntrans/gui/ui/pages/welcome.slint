@@ -213,7 +213,7 @@ export component WelcomePage inherits Rectangle {
                             spacing: 12px;
                             ActionTile {
                                 title: "New Project";
-                                description: "Extract scripts (.ks / .scn) and start fresh";
+                                description: "Extract game scripts and start fresh";
                                 icon: @image-url("../icons/folder-plus.svg");
                                 icon-tint: Theme.accent-light;
                                 primary: true;
@@ -259,9 +259,18 @@ export component WelcomePage inherits Rectangle {
                                 placeholder-text: "Enter project name...";
                             }
                         }
+                        Field {
+                            label: "Engine";
+                            ComboBox {
+                                model: ["Kirikiri", "HexenHaus"];
+                                current-index <=> App.new-engine;
+                            }
+                        }
                         PathField {
-                            label: "Game script folder";
-                            placeholder: "Select or enter directory containing .ks or .scn files...";
+                            label: App.new-engine == 1 ? "Scenario archive or script" : "Game script folder";
+                            placeholder: App.new-engine == 1
+                                ? "Select rio.arc or a NORI .bin file, or enter a folder path..."
+                                : "Select or enter a folder containing .ks or .scn files...";
                             value <=> App.new-original;
                             browse => { App.browse("original"); }
                         }
@@ -288,7 +297,7 @@ export component WelcomePage inherits Rectangle {
                                 }
                             }
                         }
-                        HorizontalLayout {
+                        if App.new-engine == 0: HorizontalLayout {
                             spacing: 12px;
                             Field {
                                 label: "Encoding (KS scripts)";

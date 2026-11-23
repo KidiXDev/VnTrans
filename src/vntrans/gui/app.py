@@ -354,7 +354,12 @@ class Window(UI.AppWindow):
         titles = dict(
             open="Open workspace", original="Game scripts", workspace="Workspace folder"
         )
-        path = await jobs.thread(pick, titles[target])
+        if target == "original" and self.ui.new_engine == 1:
+            path = await jobs.thread(
+                pick, "HexenHaus scenario archive or script", False
+            )
+        else:
+            path = await jobs.thread(pick, titles[target])
         if not path:
             return
         if target == "open":
@@ -362,7 +367,10 @@ class Window(UI.AppWindow):
         elif target == "original":
             self.ui.new_original = path
             if not self.ui.new_name:
-                self.ui.new_name = Path(path).name
+                selected = Path(path)
+                self.ui.new_name = (
+                    selected.stem if self.ui.new_engine == 1 else selected.name
+                )
         else:
             self.ui.new_workspace = path
 
@@ -382,7 +390,10 @@ class Window(UI.AppWindow):
     @slint.callback(global_name="App")
     async def create_project(self):
         ui = self.ui
-        encoding = list(self.Languages.encodings)[ui.new_encoding]
+        hexenhaus = ui.new_engine == 1
+        encoding = (
+            "Auto" if hexenhaus else list(self.Languages.encodings)[ui.new_encoding]
+        )
         self.busy("Creating project")
         try:
             root = await jobs.run(
@@ -390,8 +401,9 @@ class Window(UI.AppWindow):
                 Path(ui.new_original).expanduser(),
                 Path(ui.new_workspace).expanduser(),
                 name=ui.new_name.strip(),
+                engine="hexenhaus" if hexenhaus else "kirikiri",
                 encoding=None if encoding == "Auto" else encoding,
-                language_index=ui.new_language_index,
+                language_index=0 if hexenhaus else ui.new_language_index,
                 source_language=list(self.Languages.sources)[ui.new_source],
                 target_language=list(self.Languages.targets)[ui.new_target],
                 progress=self.progress(),
