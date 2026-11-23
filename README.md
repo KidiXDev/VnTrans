@@ -1,11 +1,12 @@
 # VnTrans
 
-VnTrans helps you translate Kirikiri visual novels without editing game scripts
+VnTrans helps you translate visual novels without editing game scripts
 by hand. Extract text, translate and review it, then rebuild scripts while
 preserving game commands and unchanged content.
 
-Supports plain Kirikiri/KAG `.ks` scripts and unencrypted PSB v3 `.scn` files,
-including `.ks.scn`.
+- Kirikiri/KAG plain `.ks` scripts and unencrypted PSB v3 `.scn` files, including
+  `.ks.scn`.
+- HexenHaus NORI 1.0 scripts (`.bin`) and ARCC v2 scenario archives (`rio.arc`).
 
 ## What it can do
 
@@ -27,11 +28,13 @@ cd VnTrans
 uv run --extra gui vntrans-gui
 ```
 
-1. Unpack the game's scripts with GARbro or another external unpacker.
-2. Create a workspace in VnTrans and select the unpacked scripts folder.
+1. For Kirikiri, unpack the game's scripts with GARbro or another external unpacker.
+2. Create a workspace and select the engine. Choose the unpacked script folder
+   for Kirikiri, or select `data/rio.arc` or a standalone `.bin` for HexenHaus.
 3. Edit manually, or add your Gemini/OpenRouter API key in Settings to translate
    and review with AI.
-4. Build a patch and package it using the game's patch workflow.
+4. Build a patch. For HexenHaus, the rebuilt archive can replace a backed-up
+   `data/rio.arc` in the game folder.
 
 Manual editing and the CLI work offline. AI features require your own provider
 API key.
@@ -55,9 +58,21 @@ uv run vntrans rebuild unpacked/scenario --translations work/json --output work/
 Choose a new output folder for each extraction or rebuild. Run
 `uv run vntrans --help` for more options.
 
-VnTrans does not unpack archives, decode encrypted scripts, repack games or patch
-fonts. These steps depend on the game and require external tools. Keep a backup
-and test the rebuilt scripts in the target game.
+For HexenHaus, select the engine during extraction and use the same archive
+for validation and rebuilding.
+
+```sh
+uv run vntrans extract data/rio.arc --engine hexenhaus --output work/json
+uv run vntrans validate data/rio.arc --translations work/json
+uv run vntrans rebuild data/rio.arc --translations work/json --output work/patch
+```
+
+HexenHaus translations can exceed the original byte length. When a translation
+contains dashes or Latin accents outside CP932, the build uses compatible
+characters where possible. With wrapping enabled, the builder can expand a dialogue
+to three lines and reports dialogues that still exceed the target width. Without
+wrapping, excess lines are joined into the last slot. Test text width and wrapping
+in the target game.
 
 ## Development
 
