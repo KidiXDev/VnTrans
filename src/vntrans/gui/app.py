@@ -44,7 +44,7 @@ from .texts import (
 UI = slint.load_file(Path(__file__).parent / "ui" / "main.slint", style="fluent-dark")
 ISSUES = ("",) + tuple(quality.LABELS)
 TASKS = ("translate", "discover")
-REVIEW_CATEGORIES = (*prompts.REVIEW_ERRORS.values(), "Other")
+REVIEW_CATEGORIES = (workspace.MANUAL_REVIEW, *prompts.REVIEW_ERRORS.values(), "Other")
 
 
 def styled_diff(old, new):
@@ -1806,6 +1806,14 @@ class Window(UI.AppWindow):
         }
         if not suggestions:
             return
+        suggestions = {
+            key: value
+            for key, value in suggestions.items()
+            if category(value[1]) != workspace.MANUAL_REVIEW
+        }
+        if not suggestions:
+            self.say("Review flagged translations individually")
+            return
         if accept:
 
             def prepare():
@@ -1924,7 +1932,8 @@ class Window(UI.AppWindow):
             dict(
                 category=labels[index],
                 speaker=self.rows[index].speaker,
-                translation=self.rows[index].translation or "",
+                translation=self.rows[index].translation
+                or self.suggestions[self.key_of(index)][0],
             )
             for index in queue
         )

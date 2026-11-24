@@ -67,6 +67,8 @@ CONTRACT = (
     '- Reply with only this JSON object: {"translations": [{"i": <number>, "t": "<translation>"}]}, '
     'with one entry per input record, reusing its "i".\n'
     '- Translate only each record\'s "text". Context, glossary and character notes are reference material.\n'
+    "- Write every line in {target}. Translate each phrase, including interjections and sound effects.\n"
+    '- If a record has "rejected", fix that problem in the new translation for that record.\n'
     '- Each translation is only the line itself. Never add the speaker\'s name, a label or a "Name:" prefix; '
     '"speaker" only tells you who is talking.\n'
     "- For a record with kind 'speaker', return only the translated name from its own text.\n"
@@ -318,7 +320,7 @@ def build(
     """task: "translate" or "review"; `pre` replacement rules rewrite the source text the model sees.
 
     formats maps each file to its script format, which tells which markers are ruby. `notes` maps a row
-    index to why its previous review suggestion was refused."""
+    index to why its previous translation or review suggestion was refused."""
     notes = notes or {}
     formats = formats or {}
     records = [rows[index] for index in batch]
@@ -356,7 +358,7 @@ def build(
             ).strip()
         elif section.key == "contract":
             text = (
-                CONTRACT
+                fill(CONTRACT, languages)
                 if task == "translate"
                 else fill(
                     REVIEW + ("\n" + REVIEW_HONORIFICS if honorifics else ""),
@@ -396,10 +398,12 @@ def build(
         value["text"] = glossary.Rules.apply(pre, texts[id(row)])
         if task == "review":
             value["translation"] = row.translation
-            if index in notes:
-                value["rejected"] = (
-                    f"your previous suggestion was refused because {notes[index]}"
-                )
+        if index in notes:
+            value["rejected"] = (
+                f"your previous suggestion was refused because {notes[index]}"
+                if task == "review"
+                else notes[index]
+            )
         return json.dumps(value, ensure_ascii=False)
 
     heading = (

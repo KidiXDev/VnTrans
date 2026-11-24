@@ -368,6 +368,20 @@ class ReviewStateTests(unittest.TestCase):
         self.assertEqual(category("Correction"), "Other")
         self.assertEqual(category("Note: unlabelled"), "Other")
 
+    def test_manual_review_includes_untranslated_rows(self):
+        key = (self.rows[2].file, self.rows[2].id)
+        self.suggestions[key] = ("Three!", "Manual review: language check")
+        files = review_files(
+            self.rows, self.reviews, self.suggestions, ["a.ks", "b.ks"]
+        )
+        self.assertEqual(files[0], dict(name="a.ks", total=3, done=1, pending=2))
+        self.assertEqual(
+            review_queue(
+                self.rows, self.suggestions, self.index_of, label="Manual review"
+            ),
+            [2],
+        )
+
 
 class TextStateTests(unittest.TestCase):
     def test_snapshots_and_incremental_counts(self):
@@ -743,6 +757,31 @@ class SuggestionActionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.ws.suggestions()), 2)
         self.assertIsNone(self.window.undo_entry)
         self.window.fail.assert_called_once()
+
+    async def test_manual_review_requires_an_individual_verdict(self):
+        window = self.window
+        row = window.rows[0]
+        key = (row.file, row.id)
+        self.ws.mark_errors(
+            [row], "Language check", review=("Halo⟦0⟧dunia", "Language check")
+        )
+        window.suggestions = self.ws.suggestions()
+        await self.invoke(Window.suggestions_action, True)
+        await self.invoke(Window.suggestions_action, False)
+        self.assertEqual(list(self.ws.suggestions()), [key])
+        self.assertEqual(self.ws.rows()[0].translation, "Old⟦0⟧one")
+
+        window.review_row = lambda: row
+        window.row_committed = Mock()
+        for name in ("current_row", "settle"):
+            setattr(window, name, getattr(Window, name).__get__(window))
+        Window.review_accept(window, "Hai⟦0⟧semua")
+        saved = self.ws.rows()[0]
+        self.assertEqual(
+            (saved.translation, saved.status, saved.error),
+            ("Hai⟦0⟧semua", "edited", None),
+        )
+        self.assertEqual(self.ws.suggestions(), {})
 
     async def test_failed_rejection_keeps_suggestions_visible(self):
         with patch(

@@ -18,6 +18,7 @@ from .translation.quality import translatable
 
 MANIFEST = "manifest.json"
 DATABASE = "project.db"
+MANUAL_REVIEW = "Manual review"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files(file TEXT PRIMARY KEY, format TEXT NOT NULL);
@@ -335,16 +336,31 @@ class Workspace:
                     "WHERE file = ? AND id = ? AND status = ? AND translation IS ?",
                     (text, row.file, row.id, status, translation),
                 ).rowcount:
-                    row.translation, row.status, row.error = text, "machine", None
-                    committed.append(row)
-        return committed
+                    self.db.execute(
+                        "DELETE FROM suggestions WHERE file = ? AND id = ? AND reason LIKE ?",
+                        (row.file, row.id, f"{MANUAL_REVIEW}: %"),
+                    )
+                    committed.append((row, text))
+        for row, text in committed:
+            row.translation, row.status, row.error = text, "machine", None
+        return [row for row, _ in committed]
 
-    def mark_errors(self, rows, message: str):
+    def mark_errors(self, rows, message: str, *, review=None):
+        """Record failures and, when available, a candidate with its language check reason."""
         with self.db:
             self.db.executemany(
                 "UPDATE units SET error = ? WHERE file = ? AND id = ?",
                 [(message, row.file, row.id) for row in rows],
             )
+            if review is not None:
+                text, reason = review
+                self.db.executemany(
+                    "INSERT OR REPLACE INTO suggestions VALUES (?, ?, ?, ?)",
+                    (
+                        (row.file, row.id, text, f"{MANUAL_REVIEW}: {reason}")
+                        for row in rows
+                    ),
+                )
         for row in rows:
             row.error = message
 

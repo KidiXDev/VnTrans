@@ -150,7 +150,7 @@ class PromptBuildTests(WorkspaceCase):
             records(first.user),
             [dict(i=1, kind="dialogue", speaker="Bob", text="How are you?")],
         )
-        self.assertTrue(first.system.endswith(prompts.CONTRACT))
+        self.assertTrue(first.system.endswith(prompts.fill(prompts.CONTRACT, args[1])))
         self.assertIn("into natural, fluent English", first.system)
         quiet = prompts.build(*args, before=0, after=0)
         self.assertNotIn("reference only", quiet.user)
@@ -476,15 +476,18 @@ class RunnerTests(WorkspaceCase):
         row = self.rows[hello]
         self.assertEqual((row.status, row.translation), ("new", None))
         self.assertIn("placeholders", row.error)
+        self.assertEqual(self.ws.suggestions(), {})
         self.assertEqual(run.stats.failed, 1)
         self.assertEqual(run.stats.done, len(self.rows) - 1)
         single_tries = [
             call
             for call in fake.calls
-            if call
-            == [dict(i=1, kind="dialogue", speaker="Alice", text="Hello⟦0⟧world")]
+            if len(call) == 1 and call[0]["text"] == "Hello⟦0⟧world"
         ]
         self.assertEqual(len(single_tries), 2)
+        self.assertTrue(
+            all("placeholders" in call[0]["rejected"] for call in single_tries)
+        )
         rerun, _ = self.run_with(FakeProvider())
         self.assertEqual(
             (rerun.stats.total, row.status, row.error), (1, "machine", None)
@@ -955,6 +958,109 @@ class DuplicateTests(WorkspaceCase):
             ("Mine", "machine", 1),
         )
         self.assertIn("1 filled", events[0][1])
+
+    def test_does_not_reuse_wrong_language_machine_translation(self):
+        self.ws.manifest["languages"]["target"] = "Indonesian"
+        first, second = [i for i, row in enumerate(self.rows) if row.source == "Fine."]
+        self.ws.save(self.rows[first], "I am fine, thank you.", status="machine")
+        fake = FakeProvider(lambda record, call: "Aku baik-baik saja.")
+        self.run_with(fake, indices=[second])
+        self.assertEqual(len(fake.calls), 1)
+        self.assertEqual(self.rows[second].translation, "Aku baik-baik saja.")
+
+
+class TranslationGuardTests(WorkspaceCase):
+    line = "「いつもと同じなんだけど、とてもいいなって感じる。」"
+    script = line + "\nお兄ちゃん、待って！\n「…………っ」\n「……[l]……っ！」\n"
+    run_with = RunnerTests.run_with
+
+    def setUp(self):
+        super().setUp()
+        self.ws.manifest["languages"]["target"] = "Indonesian"
+
+    def test_retries_only_unfit_lines_with_the_rejection_reason(self):
+        def translate(record, call):
+            if record["text"] != self.line:
+                return "Onii-chan, tunggu!"
+            if call == 1:
+                return "It's the same as always, but somehow it feels really nice."
+            if call == 2:
+                return self.line
+            return "Rasanya sama seperti biasanya, tapi kali ini terasa menyenangkan."
+
+        fake = FakeProvider(translate)
+        run, _ = self.run_with(fake)
+        self.assertEqual([len(batch) for batch in fake.calls], [2, 1, 1])
+        self.assertIn("Indonesian", fake.calls[1][0]["rejected"])
+        self.assertIn("source-language text", fake.calls[2][0]["rejected"])
+        self.assertTrue(self.rows[0].translation.startswith("“Rasanya"))
+        self.assertEqual(self.rows[1].translation, "Onii-chan, tunggu!")
+        self.assertEqual((run.stats.done, run.stats.failed), (4, 0))
+        self.assertEqual(self.ws.suggestions(), {})
+
+    def test_standalone_pauses_are_localized_with_controls_intact(self):
+        self.ws.save(self.rows[2], "“…………っ”", status="machine")
+        fake = FakeProvider()
+        run, _ = self.run_with(fake, indices=[2, 3])
+        self.assertEqual(run.stats.requests, 0)
+        self.assertEqual(self.rows[2].translation, "“...!”")
+        self.assertEqual(self.rows[3].translation, "“...⟦0⟧...!”")
+        self.ws.build()
+
+    def test_exhausted_retries_keep_last_usable_candidate_for_manual_review(self):
+        def reply(records, user):
+            candidates = (
+                "What do you mean by that?",
+                "It feels the same as always.",
+                None,
+            )
+            text = candidates[len(fake.calls) - 1]
+            return dict(translations=[dict(i=1, t=text)] if text is not None else [])
+
+        fake = FakeProvider(reply=reply)
+        run, events = self.run_with(fake, indices=[0])
+        row = self.ws.rows()[0]
+        self.assertEqual((row.status, row.translation), ("new", None))
+        self.assertIn("missing from reply", row.error)
+        self.assertEqual((run.stats.requests, run.stats.failed), (3, 1))
+        self.assertEqual(
+            self.ws.suggestions(),
+            {
+                (row.file, row.id): (
+                    "“It feels the same as always.”",
+                    "Manual review: translation is not written in Indonesian",
+                )
+            },
+        )
+        self.assertIn("1 waiting for manual review", events[-1][1])
+
+        corrected = FakeProvider(
+            lambda record, call: "Rasanya masih sama seperti biasa."
+        )
+        self.run_with(corrected, indices=[0])
+        self.assertEqual(self.ws.suggestions(), {})
+        self.assertEqual(
+            self.ws.rows()[0].translation, "“Rasanya masih sama seperti biasa.”"
+        )
+
+    def test_detects_copy_romanization_and_punctuation_only_output(self):
+        jp = self.ws.manifest["languages"]
+        en = jp | {"source": "English"}
+        for source, text, languages, reason in (
+            ("Good morning.", "Good morning!", en, "copied"),
+            (
+                self.line,
+                "Itsumo to onaji nan dakedo, totemo ii natte kanjiru.",
+                jp,
+                "romanized",
+            ),
+            ("行こう⟦0⟧よ", "…⟦0⟧！", jp, "missing translated text"),
+        ):
+            with self.subTest(text=text):
+                self.assertIn(
+                    reason,
+                    quality.translation_problem(source, text, "dialogue", languages),
+                )
 
 
 class ReviewGuardTests(unittest.TestCase):

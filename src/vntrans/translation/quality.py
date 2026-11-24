@@ -1,4 +1,4 @@
-"""Review signals: they flag translations for a human and never block a build."""
+"""Text cleanup and language checks for machine translation and review."""
 
 import json
 import re
@@ -56,10 +56,11 @@ SPEECH = re.compile(r"(?:\s|⟦\d+⟧)*(?:「[^「」]*」|『[^『』]*』)(?:\
 EDGES = re.compile(r"((?:\s|⟦\d+⟧)*)(.*?)((?:\s|⟦\d+⟧)*)", re.S)
 MARKS = '"“”„«»「」『』'
 KANA = re.compile(r"[぀-ヿｦ-ﾟ]")
+KANA_LETTERS = r"[ぁ-ゖゝゞァ-ヺヽヾㇰ-ㇿｦ-ｯｱ-ﾝ]"
 KANJI = re.compile(r"[㐀-䶿一-鿿]")
 HANGUL = re.compile(r"[가-힯]")
 LETTERS = {
-    "Japanese": re.compile(f"[ぁ-ゖゝゞァ-ヺヽヾㇰ-ㇿｦ-ｯｱ-ﾝ々]|{KANJI.pattern}"),
+    "Japanese": re.compile(f"{KANA_LETTERS}|々|{KANJI.pattern}"),
     "Chinese": KANJI,
     "Korean": re.compile(f"[ㄱ-ㆎ]|{HANGUL.pattern}|{KANJI.pattern}"),
 }
@@ -207,6 +208,16 @@ def _unquote(text: str) -> str:
     return text
 
 
+def abrupt_pause(source: str) -> str | None:
+    """Localize a standalone Japanese catch of breath, preserving game markers."""
+    visible = _unquote(MARKER.sub("", source).strip())
+    if not re.fullmatch(r"[.…‥． \t]*[っッｯ]+[!！?？ \t]*", visible):
+        return None
+    text = re.sub(r"[.…‥．]+", "...", source)
+    text = re.sub(r"[っッｯ]+[!！]*", "!", text).replace("？", "?")
+    return requote(text, source)
+
+
 def review_text(text: str, row, names, formats) -> str:
     """Normalize a revision without introducing outer quotes absent from both source and current text."""
     text = tidy(text, row, names, formats)
@@ -282,9 +293,8 @@ def romanized(source: str, text: str) -> bool:
 def foreign(text: str, target: str) -> bool:
     """True when `text` reads as another language than `target`.
 
-    A target with its own script must use it at all; otherwise another language's function words must
-    outnumber the target's twice over and make up a quarter of the words, so a quoted phrase or a kept
-    name is not flagged."""
+    A match for the target's script counts as evidence for the target. Otherwise another language's
+    function words must outnumber the target's twice over and make up a quarter of the words."""
     text = unicodedata.normalize("NFC", MARKER.sub("", text))
     script = next(
         (pattern for name, pattern in SCRIPTS.items() if target.startswith(name)), None
@@ -299,6 +309,40 @@ def foreign(text: str, target: str) -> bool:
     own = hits.pop(target, 0)
     best = max(hits.values())
     return best >= 2 and best > 2 * own and 4 * best >= len(words)
+
+
+def translation_problem(source: str, text: str, kind: str, languages: dict) -> str:
+    """Return a reason to retry a machine translation with a clear language problem."""
+    original = MARKER.sub("", source).strip()
+    visible = MARKER.sub("", text).strip()
+    target = languages["target"]
+    if not visible and original:
+        return "empty translation"
+    if residue(target).search(visible):
+        return "source-language text left in the translation"
+    if kind == "speaker":
+        return ""
+    if not any(char.isalnum() for char in visible) and any(
+        char.isalnum() for char in original
+    ):
+        return "missing translated text"
+    if (
+        languages["source"] == "Japanese"
+        and not target.startswith("Japanese")
+        and romanized(original, visible)
+    ):
+        return "source text romanized instead of translated"
+    if languages["source"] == "English" and target != "English":
+        words = WORDS.findall(original.casefold())
+        if (
+            len(words) > 1
+            and not original.istitle()
+            and words == WORDS.findall(visible.casefold())
+        ):
+            return "source text copied instead of translated"
+    if foreign(visible, target):
+        return f"translation is not written in {target}"
+    return ""
 
 
 def unfit(revision: str, current: str, source: str, target: str) -> str:
@@ -323,10 +367,10 @@ def residue(target: str):
     if target.startswith("Japanese"):
         return HANGUL
     if target.startswith("Chinese"):
-        return re.compile(f"{KANA.pattern}|{HANGUL.pattern}")
+        return re.compile(f"{KANA_LETTERS}|{HANGUL.pattern}")
     if target.startswith("Korean"):
-        return re.compile(f"{KANA.pattern}|{KANJI.pattern}")
-    return re.compile(f"{KANA.pattern}|{KANJI.pattern}|{HANGUL.pattern}")
+        return re.compile(f"{KANA_LETTERS}|{KANJI.pattern}")
+    return re.compile(f"{KANA_LETTERS}|{KANJI.pattern}|{HANGUL.pattern}")
 
 
 class Checker:

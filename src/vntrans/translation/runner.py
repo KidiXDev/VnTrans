@@ -212,6 +212,7 @@ class Run:
             for worker in self.workers:
                 self.pool.put_nowait(worker)
         self.aliases = {}
+        self.review_candidates: dict[int, tuple[str, str]] = {}
 
     def stop(self):
         self.stopping = True
@@ -336,7 +337,12 @@ class Run:
             group = [
                 i for i in (index, *self.aliases.get(index, ())) if self.pending(i)
             ]
-            self.ws.mark_errors([self.rows[i] for i in group], message)
+            candidate = self.review_candidates.pop(index, None)
+            self.ws.mark_errors(
+                [self.rows[i] for i in group], message, review=candidate
+            )
+            if candidate is not None:
+                self.found += len(group)
             self.stats.failed += len(group)
             for i in group:
                 self.on_commit(i)
@@ -365,7 +371,7 @@ class Run:
             )
             await self.gather(*(self.side(batch, self.discover) for batch in batches))
         found = dict(
-            translate="",
+            translate=f", {self.found} waiting for manual review" if self.found else "",
             review=f", {self.found} suggestions",
             discover=f", {self.found} new terms",
         )[self.task]
@@ -614,7 +620,8 @@ class Run:
     async def translate(self):
         """Units with matching text and protected controls are sent once; the rest follow as aliases.
 
-        New units reuse an identical translation from outside the run, preferring manual edits."""
+        New units reuse an identical translation from outside the run, preferring manual edits.
+        Standalone Japanese pauses can be localized without a request."""
         glossary = {
             term.source: term.target
             for term in self.terms
@@ -629,14 +636,29 @@ class Run:
             ):
                 key = row.translation_key(self.ws.formats[row.file])
                 if row.status == "edited" or key not in earlier:
-                    earlier[key] = row.translation
+                    earlier[key] = row
         exact, representatives = [], {}
         for index in self.indices:
             row = self.rows[index]
             key = row.translation_key(self.ws.formats[row.file])
             known = glossary.get(row.source) if row.kind == "speaker" else None
-            if known is None and row.status == "new" and key in earlier:
-                known = quality.tidy(earlier[key], row, self.names, self.ws.formats)
+            previous = earlier.get(key) if row.status == "new" else None
+            if (
+                row.kind == "dialogue"
+                and not self.languages["target"].startswith("Japanese")
+                and (previous is None or previous.status != "edited")
+            ):
+                pause = quality.abrupt_pause(prompts.shown(row, self.ws.formats))
+                if pause is not None:
+                    known = Rules.apply(self.rules.post, pause)
+            if known is None and previous is not None:
+                known = quality.tidy(
+                    previous.translation, row, self.names, self.ws.formats
+                )
+                if previous.status == "machine" and self.translation_problem(
+                    row, known
+                ):
+                    known = None
             if known is not None:
                 try:
                     exact.append((index, self.ws.check(row, known)))
@@ -668,18 +690,14 @@ class Run:
         self.on_event(
             "info",
             f"{self.stats.total} units in {len(name_batches) + len(batches)} batches"
-            + (
-                f", {len(exact)} filled from glossary or identical lines"
-                if exact
-                else ""
-            ),
+            + (f", {len(exact)} filled without a model request" if exact else ""),
         )
         await self.gather(
             *(self.handle(batch, context=False) for batch in name_batches),
             *(self.handle(batch) for batch in batches),
         )
 
-    async def handle(self, batch, depth=0, context=True):
+    async def handle(self, batch, depth=0, context=True, notes=None):
         batch = [index for index in batch if self.pending(index)]
         if not batch or self.stopping:
             return
@@ -702,6 +720,7 @@ class Run:
                 after=self.settings["context_after"] if context else 0,
                 pre=self.rules.pre,
                 formats=self.ws.formats,
+                notes=notes,
             )
             try:
                 reply = await self.request(
@@ -743,16 +762,19 @@ class Run:
         finally:
             self.release(worker)
         if moved:
-            await self.handle(batch, depth, context)
+            await self.handle(batch, depth, context, notes)
         elif failed and not self.stopping:
-            await self.retry(failed, depth)
+            await self.retry(failed, depth, context)
 
-    async def retry(self, failed, depth):
+    async def retry(self, failed, depth, context):
         rest = sorted(failed)
         if len(rest) > 1:
             if depth < 2:
                 half = len(rest) // 2
-                jobs = [(rest[:half], depth + 1, True), (rest[half:], depth + 1, True)]
+                jobs = [
+                    (rest[:half], depth + 1, context),
+                    (rest[half:], depth + 1, context),
+                ]
             else:
                 jobs = [([index], 3, False) for index in rest]
         elif depth < 4:
@@ -762,7 +784,15 @@ class Run:
             return
         self.on_event("retry", f"Retrying {len(rest)} unit(s): {failed[rest[0]]}")
         await self.gather(
-            *(self.handle(batch, d, context) for batch, d, context in jobs)
+            *(
+                self.handle(batch, d, use_context, failed)
+                for batch, d, use_context in jobs
+            )
+        )
+
+    def translation_problem(self, row, text) -> str:
+        return quality.translation_problem(
+            prompts.shown(row, self.ws.formats), text, row.kind, self.languages
         )
 
     def accept(self, batch, reply) -> tuple[dict[int, str], dict[int, str]]:
@@ -790,16 +820,19 @@ class Run:
                 failed[index] = "missing from reply" + (
                     " (cut off)" if reply.finish == "length" else ""
                 )
-            elif (
-                not text.strip()
-                and MARKER.sub("", prompts.shown(row, self.ws.formats)).strip()
-            ):
-                failed[index] = "empty translation"
             else:
                 try:
-                    accepted.append((index, self.ws.check(row, text)))
+                    checked = self.ws.check(row, text)
                 except VnTransError as exc:
                     failed[index] = str(exc).removeprefix(f"{row.id}: ")
+                    continue
+                if problem := self.translation_problem(row, checked):
+                    failed[index] = problem
+                    if MARKER.sub("", checked).strip():
+                        self.review_candidates[index] = (checked, problem)
+                else:
+                    self.review_candidates.pop(index, None)
+                    accepted.append((index, checked))
         if accepted:
             self.commit(accepted)
         return failed, outputs

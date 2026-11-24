@@ -8,7 +8,7 @@ from difflib import SequenceMatcher
 from .. import workspace
 from ..translation.prompts import REVIEW_ERRORS
 
-REVIEW_LABELS = frozenset(REVIEW_ERRORS.values())
+REVIEW_LABELS = frozenset((*REVIEW_ERRORS.values(), workspace.MANUAL_REVIEW))
 TOKENS = re.compile(r"\s+|\w+|[^\w\s]")
 MARKDOWN = re.compile(r"([\\`*_{}\[\]()#+\-.!|~<>&])")
 EDGE_SPACE = re.compile(r"(\s*)(.*?)(\s*)", re.S)
@@ -88,11 +88,12 @@ def review_files(rows, reviews, suggestions, names) -> list[dict]:
     """Per file: reviewable lines, lines reviewed with their current translation, and suggestions waiting."""
     stats = {name: [0, 0, 0] for name in names}
     for row in rows:
-        if not reviewable(row):
+        waiting = (row.file, row.id) in suggestions
+        if row.status == "excluded" or not (waiting or reviewable(row)):
             continue
         counts = stats[row.file]
         counts[0] += 1
-        if (row.file, row.id) in suggestions:
+        if waiting:
             counts[2] += 1
         elif reviewed(row, reviews):
             counts[1] += 1
