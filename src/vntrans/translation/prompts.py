@@ -69,6 +69,7 @@ CONTRACT = (
     '- Translate only each record\'s "text". Context, glossary and character notes are reference material.\n'
     '- Each translation is only the line itself. Never add the speaker\'s name, a label or a "Name:" prefix; '
     '"speaker" only tells you who is talking.\n'
+    "- For a record with kind 'speaker', return only the translated name from its own text.\n"
     "- Use “ (opening) and ” (closing) when converting source 「…」 or 『…』 quotation marks. "
     "Leave unquoted narration unquoted.\n"
     "- Keep every placeholder such as ⟦0⟧ exactly once and in the same order. Placeholders stand for game "
@@ -144,6 +145,7 @@ REVIEW = (
     "Preserve the source's quotation structure: 「うん」 needs quotes around the "
     "translated speech; うん and unquoted narration do not. Keep quotations within narration in their place; "
     "do not wrap the whole narration in quotes.\n"
+    "- For a record with kind 'speaker', only correct the translated name.\n"
     '- Reply with only this JSON object: {"translations": [{"i": <number>, "c": "<error>", '
     '"r": "<short reason>", "t": "<corrected translation>"}]}. Use an empty list when nothing needs fixing.\n'
     "- The reason names the source words and the concrete error, e.g. 'the source 晶穂 names Akiho, not "

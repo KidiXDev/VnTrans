@@ -69,10 +69,12 @@ uv run vntrans rebuild data/rio.arc --translations work/json --output work/patch
 
 HexenHaus translations can exceed the original byte length. When a translation
 contains dashes or Latin accents outside CP932, the build uses compatible
-characters where possible. With wrapping enabled, the builder can expand a dialogue
-to three lines and reports dialogues that still exceed the target width. Without
-wrapping, excess lines are joined into the last slot. Test text width and wrapping
-in the target game.
+characters where possible. Speaker names must fit on one line. VnTrans checks them
+against a conservative 24-column limit, or the width of the original name when
+it is longer. Choice text must also stay on one line. With wrapping enabled, the
+builder can expand a dialogue to three lines and reports dialogues that still
+exceed the target width. Without wrapping, excess lines are joined into the last
+slot. Test text width and wrapping in the target game.
 
 ## Development
 

@@ -1,12 +1,15 @@
 import tempfile
 import unittest
 from binascii import crc_hqx
+from contextlib import closing
 from pathlib import Path
 from struct import pack, pack_into, unpack_from
 
-from vntrans import pipeline
+from vntrans import pipeline, workspace
 from vntrans.engines import get_engine
 from vntrans.model import VnTransError
+
+MISPLACED_DIALOGUE = "This entire sentence belongs in the dialogue."
 
 
 def checked(data):
@@ -113,13 +116,71 @@ class HexenHausTests(unittest.TestCase):
     def test_rebuild_fits_translated_text_to_cp932_and_dialogue_slots(self):
         script = self.engine.extract("scene.bin", nori())
         dialogue, choice = script.units[1:]
-        translated = "Tōkyō — café\nSatu – dua\n忍"
+        translated = "Tōkyō — café\nSatu\t– dua\n忍"
         with self.assertWarnsRegex(UserWarning, "NORI line slot"):
             rebuilt = script.rebuild({dialogue.id: translated})
         parsed = self.engine.extract("scene.bin", rebuilt)
         self.assertEqual(parsed.units[1].source, "Tokyo ― cafe\nSatu - dua 忍")
         with self.assertRaisesRegex(VnTransError, "line slot"):
             script.rebuild({choice.id: "One\nTwo"})
+
+    def test_workspace_rejects_misplaced_dialogue_before_storing_speaker_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "rio.arc"
+            source.write_bytes(arcc([("scene.bin", nori())]))
+            project = workspace.create(
+                source, root / "work", name="Test", engine="hexenhaus"
+            )
+            with closing(workspace.Workspace(project)) as ws:
+                speaker, dialogue, choice = ws.rows()
+                message = r"0/0/speaker: speaker name is \d+ columns \(limit 24\)"
+                with self.assertRaisesRegex(VnTransError, message):
+                    ws.save(speaker, MISPLACED_DIALOGUE)
+                with self.assertRaisesRegex(VnTransError, message):
+                    ws.commit([(speaker, MISPLACED_DIALOGUE, "new", None)])
+                for row, value, error in (
+                    (speaker, " ", "cannot be blank"),
+                    (choice, "One\nTwo", "one line slot"),
+                    (dialogue, "Invalid 🙂", r"U\+1F642.*CP932"),
+                    (dialogue, "Invalid\x0b", r"control character U\+000B"),
+                ):
+                    with (
+                        self.subTest(kind=row.kind, value=value),
+                        self.assertRaisesRegex(VnTransError, error),
+                    ):
+                        ws.save(row, value)
+                self.assertEqual(ws.translations(), {})
+                folder = root / "import"
+                folder.mkdir()
+                workspace.write_json(
+                    folder / "rio.arc.json",
+                    [
+                        {"name": MISPLACED_DIALOGUE, "message": "Hello"},
+                        {"message": "Yes"},
+                    ],
+                )
+                pairs, skipped, ignored = ws.import_messages(folder, ws.rows())
+                self.assertEqual(
+                    [(row.kind, value) for row, value in pairs],
+                    [
+                        ("dialogue", "Hello"),
+                        ("choice", "Yes"),
+                    ],
+                )
+                self.assertEqual((skipped, ignored), (1, []))
+                with self.assertRaisesRegex(VnTransError, message):
+                    ws.build({(speaker.file, speaker.id): MISPLACED_DIALOGUE})
+                self.assertEqual(ws.builds(), [])
+                ws.save(speaker, "Kakak Laki-laki Ai")
+                ws.save(dialogue, "Tōkyō — café")
+                self.assertEqual(
+                    ws.translations(),
+                    {
+                        (speaker.file, speaker.id): "Kakak Laki-laki Ai",
+                        (dialogue.file, dialogue.id): "Tōkyō — café",
+                    },
+                )
 
     def test_wrap_reflows_and_relocates_later_label_when_adding_a_line(self):
         script = self.engine.extract("scene.bin", nori())
@@ -159,6 +220,16 @@ class HexenHausTests(unittest.TestCase):
             )
             doc_path = docs / "rio.arc.json"
             doc = pipeline.read_document(doc_path)
+            doc["units"][0]["translation"] = MISPLACED_DIALOGUE
+            doc_path.write_bytes(pipeline.encode_document(doc))
+            with self.assertRaisesRegex(
+                VnTransError, r"rio\.arc: 0/0/speaker: speaker name"
+            ):
+                pipeline.validate(source, translations=docs)
+            with self.assertRaisesRegex(VnTransError, "speaker name"):
+                pipeline.rebuild(source, translations=docs, output=root / "patch")
+            self.assertFalse((root / "patch").exists())
+            doc["units"][0]["translation"] = None
             doc["units"][-1]["translation"] = "Of course I will"
             doc_path.write_bytes(pipeline.encode_document(doc))
             pipeline.validate(source, translations=docs)

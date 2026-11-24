@@ -17,6 +17,11 @@ KS_CONTROL = re.compile(
 KS_RUBY = re.compile(r"\[ruby(?:\s|\])", re.I)
 # The SCN engine reads &, # and $ as the start of an inline command even without a closing ;.
 SCN_LITERALS = str.maketrans("&#$", "＆＃＄")
+NORI_ENCODING = "cp932"
+NORI_DASHES = {"—": "―", "–": "-"}
+NORI_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+# shortcut: use a conservative name width until per-game textbox metrics are available.
+NORI_SPEAKER_COLUMNS = 24
 
 
 def make_unit(id: str, kind: str, raw: str, format: str, **context) -> Unit:
@@ -139,6 +144,54 @@ def wrap(text: str, columns: int, controls: list[str], format: str = "scn") -> s
     return "\n".join(lines)
 
 
+def _nori_character(char: str, unit_id: str) -> str:
+    try:
+        char.encode(NORI_ENCODING)
+    except UnicodeEncodeError as exc:
+        if char in NORI_DASHES:
+            return NORI_DASHES[char]
+        base, *marks = unicodedata.normalize("NFD", char)
+        if (
+            marks
+            and base.isascii()
+            and base.isalpha()
+            and all(map(unicodedata.combining, marks))
+        ):
+            return base
+        raise VnTransError(
+            f"{unit_id}: U+{ord(char):04X} ({char!r}) cannot be encoded in CP932"
+        ) from exc
+    return char
+
+
+def _render_nori(unit: Unit, translated: str) -> str:
+    if unit.kind == "choice" and "\n" in translated:
+        raise VnTransError(f"{unit.id}: a HexenHaus choice has one line slot")
+    if control := NORI_CONTROL.search(translated):
+        raise VnTransError(
+            f"{unit.id}: control character U+{ord(control[0]):04X} is invalid in NORI text"
+        )
+    translated = translated.replace("\t", " ")
+    try:
+        translated.encode(NORI_ENCODING)
+    except UnicodeEncodeError:
+        translated = "".join(
+            _nori_character(char, unit.id)
+            for char in unicodedata.normalize("NFC", translated)
+        )
+    if unit.kind == "speaker":
+        if not translated.strip():
+            raise VnTransError(f"{unit.id}: speaker name cannot be blank")
+        columns = width(translated)
+        limit = max(NORI_SPEAKER_COLUMNS, width(unit.source))
+        if columns > limit:
+            raise VnTransError(
+                f"{unit.id}: speaker name is {columns} columns (limit {limit}); "
+                "enter only a short name"
+            )
+    return translated
+
+
 def render(unit: Unit, translated: str, format: str, columns: int | None = None) -> str:
     try:
         translated.encode("utf-8")
@@ -174,4 +227,5 @@ def render(unit: Unit, translated: str, format: str, columns: int | None = None)
         translated = translated.replace("\n", "[r]")
     elif format != "nori":
         translated = translated.replace("\n", r"\n")
-    return MARKER.sub(lambda m: controls[int(m[1])], translated)
+    rendered = MARKER.sub(lambda m: controls[int(m[1])], translated)
+    return _render_nori(unit, rendered) if format == "nori" else rendered

@@ -507,7 +507,7 @@ class Run:
                 message = str(exc).removeprefix(f"{row.id}: ")
                 rejected[index] = (
                     text,
-                    f"it breaks the line's game commands ({message})",
+                    f"it fails the game's text checks ({message})",
                 )
                 continue
             if row.translation is None or checked == row.translation:

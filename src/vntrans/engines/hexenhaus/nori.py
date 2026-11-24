@@ -4,16 +4,14 @@ import warnings
 from binascii import crc_hqx
 from codecs import lookup
 from struct import iter_unpack, pack, pack_into, unpack_from
-from unicodedata import combining, normalize
 
 from ...model import VnTransError
+from ...text import NORI_ENCODING as ENCODING
 from ...text import make_unit, render, width, wrap
 
 NORI = b"NORI\0\0\x01\0"
 FORMAT = "nori"
-ENCODING = "cp932"
 XOR = bytes(value ^ 0x53 for value in range(256))
-CP932_DASHES = {"—": "―", "–": "-"}
 MAX_DIALOGUE_LINES = 3
 
 
@@ -30,20 +28,6 @@ def check_encoding(encoding):
         raise VnTransError(f"unknown encoding: {encoding}") from exc
     if name != ENCODING:
         raise VnTransError("HexenHaus scripts use CP932")
-
-
-def encode_character(char, unit_id):
-    try:
-        return char.encode(ENCODING)
-    except UnicodeEncodeError as exc:
-        if char in CP932_DASHES:
-            return CP932_DASHES[char].encode(ENCODING)
-        base, *marks = normalize("NFD", char)
-        if marks and base.isascii() and base.isalpha() and all(map(combining, marks)):
-            return base.encode(ENCODING)
-        raise VnTransError(
-            f"{unit_id}: U+{ord(char):04X} ({char!r}) cannot be encoded in CP932"
-        ) from exc
 
 
 def wrap_dialogue(lines, columns, slots, unit_id):
@@ -201,17 +185,19 @@ class NoriScript:
             value = translations.get(unit.id)
             if value is None or value == unit.source:
                 continue
-            lines = render(unit, value, FORMAT).split("\n")
+            rendered = render(unit, value, FORMAT)
+            if rendered != value:
+                warnings.warn(
+                    f"{unit.id}: normalized text for NORI/CP932 in the patch",
+                    stacklevel=2,
+                )
+            lines = rendered.split("\n")
             fields = self.fields[unit.id]
             if wrap_columns is not None and unit.kind == "dialogue":
                 lines = wrap_dialogue(
                     lines, wrap_columns, max(len(fields), MAX_DIALOGUE_LINES), unit.id
                 )
             elif len(lines) > len(fields):
-                if unit.kind != "dialogue":
-                    raise VnTransError(
-                        f"{unit.id}: this record has {len(fields)} line slot(s)"
-                    )
                 warnings.warn(
                     f"{unit.id}: joined extra line breaks to fit {len(fields)} NORI line slot(s)",
                     stacklevel=2,
@@ -219,20 +205,7 @@ class NoriScript:
                 last = len(fields) - 1
                 lines[last:] = [" ".join(lines[last:])]
             lines.extend([""] * (len(fields) - len(lines)))
-            try:
-                encoded = [line.encode(ENCODING) for line in lines]
-            except UnicodeEncodeError:
-                encoded = [
-                    b"".join(
-                        encode_character(char, unit.id)
-                        for char in normalize("NFC", line)
-                    )
-                    for line in lines
-                ]
-                warnings.warn(
-                    f"{unit.id}: used CP932-compatible characters in the patch",
-                    stacklevel=2,
-                )
+            encoded = [line.encode(ENCODING) for line in lines]
             if any(len(line) > 0xFFFF for line in encoded):
                 raise VnTransError(f"{unit.id}: a NORI line exceeds 65535 bytes")
             replacements.update(zip(fields, encoded[: len(fields)], strict=True))
